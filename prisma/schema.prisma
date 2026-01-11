@@ -1,0 +1,73 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Channel {
+  id                  Int      @id @default(autoincrement())
+  name                String
+  telegram_channel_id BigInt
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+  posts               Post[]
+  weeks               Week[]
+
+  @@map("channels")
+}
+
+model Week {
+  id            Int      @id @default(autoincrement())
+  channel_id    Int
+  week_start    DateTime @db.Date
+  week_end      DateTime @db.Date
+  theme         String
+  status        String
+  regen_attempt Int      @default(0)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+  posts         Post[]
+  channel       Channel  @relation(fields: [channel_id], references: [id])
+
+  @@unique([channel_id, week_start, week_end])
+  @@map("weeks")
+}
+
+model Post {
+  id                  Int      @id @default(autoincrement())
+  week_id             Int
+  channel_id          Int
+  slot_date           DateTime @db.Date
+  slot_index          Int
+  publish_at          DateTime @db.Timestamptz(6)
+  topic_index         Int
+  topic               String?
+  category            String?
+  tags                String[] @default([])
+  generated_text      String?
+  final_text          String?
+  status              String
+  approval_message_id BigInt?
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+  channel             Channel  @relation(fields: [channel_id], references: [id])
+  week                Week     @relation(fields: [week_id], references: [id])
+
+  @@index([week_id])
+  @@index([publish_at])
+  @@index([status])
+  @@map("posts")
+}
+
+model Event {
+  id          Int      @id @default(autoincrement())
+  ts          DateTime @default(now()) @db.Timestamptz(6)
+  entity_type String
+  entity_id   Int
+  event_type  String
+  payload     Json?
+
+  @@map("events")
+}

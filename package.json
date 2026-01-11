@@ -1,0 +1,40 @@
+{
+  "name": "ba_post_planner",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "migrate": "npx prisma migrate dev",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@fastify/formbody": "^8.0.2",
+    "@prisma/adapter-pg": "^7.2.0",
+    "@prisma/client": "^7.2.0",
+    "date-fns": "^4.1.0",
+    "dotenv": "^17.2.3",
+    "fastify": "^5.6.2",
+    "fastify-plugin": "^5.1.0",
+    "openai": "^6.15.0",
+    "pg": "^8.16.3",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.3",
+    "@types/pg": "^8.16.0",
+    "nodemon": "^3.1.11",
+    "prisma": "^7.2.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
+  }
+}
