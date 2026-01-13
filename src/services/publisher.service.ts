@@ -44,7 +44,16 @@ class PublisherService {
                 // Note: telegram_channel_id is stored as BigInt in DB, needs to be converted or used as string
                 const targetChannelId = channel.telegram_channel_id.toString();
 
-                await telegramService.sendMessage(targetChannelId, post.final_text || post.generated_text || '');
+                if (post.image_url) {
+                    await telegramService.sendPhoto(targetChannelId, post.image_url, {
+                        caption: post.final_text || post.generated_text || '',
+                        parse_mode: 'Markdown'
+                    });
+                } else {
+                    await telegramService.sendMessage(targetChannelId, post.final_text || post.generated_text || '', {
+                        parse_mode: 'Markdown'
+                    });
+                }
 
                 // Update status to published
                 await prisma.post.update({

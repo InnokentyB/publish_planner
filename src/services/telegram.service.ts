@@ -109,8 +109,17 @@ class TelegramService {
             }
 
             // Delegate everything else to the AI Agent
-            const response = await agentService.processMessage(text);
-            await ctx.reply(response, { parse_mode: 'Markdown' });
+            try {
+                const response = await agentService.processMessage(text);
+                await ctx.reply(response, { parse_mode: 'Markdown' });
+            } catch (err: any) {
+                console.error('Error processing message:', err);
+                if (err?.code === 'insufficient_quota') {
+                    await ctx.reply('⚠️ **Ошибка доступа к AI**: Закончились средства на балансе OpenAI API. Пожалуйста, пополните счет.');
+                } else {
+                    await ctx.reply('Произошла ошибка при обработке вашего запроса.');
+                }
+            }
         });
 
         this.bot.action(/^approve_topics_(\d+)$/, async (ctx) => {
@@ -147,6 +156,33 @@ class TelegramService {
             const weekId = parseInt(ctx.match[1], 10);
             await this.handleReviewPending(ctx, weekId);
         });
+        this.bot.action(/^generate_image_(\d+)$/, async (ctx) => {
+            await ctx.answerCbQuery();
+            // @ts-ignore
+            const postId = parseInt(ctx.match[1], 10);
+            await this.handleGenerateImage(ctx, postId);
+        });
+
+        this.bot.action(/^approve_image_(\d+)$/, async (ctx) => {
+            await ctx.answerCbQuery();
+            // @ts-ignore
+            const postId = parseInt(ctx.match[1], 10);
+            await this.handleApproveImage(ctx, postId);
+        });
+
+        this.bot.action(/^regen_image_(\d+)$/, async (ctx) => {
+            await ctx.answerCbQuery();
+            // @ts-ignore
+            const postId = parseInt(ctx.match[1], 10);
+            await this.handleGenerateImage(ctx, postId); // Reuse generation logic
+        });
+
+        this.bot.action(/^skip_image_(\d+)$/, async (ctx) => {
+            await ctx.answerCbQuery();
+            // @ts-ignore
+            const postId = parseInt(ctx.match[1], 10);
+            await this.handlePostApprove(ctx, postId, true); // True = skip image check
+        });
     }
 
     private async handleTheme(ctx: Context, theme: string) {
@@ -173,7 +209,7 @@ class TelegramService {
         await plannerService.saveTopics(weekId, topics);
 
         // 4. Send Review
-        const response = topics.map((t, i) => `${(i + 1).toString().padStart(2, '0')}. ${t}`).join('\n');
+        const response = topics.map((t, i) => `${(i + 1).toString().padStart(2, '0')}. ${t.topic} [${t.category}]`).join('\n');
         await ctx.reply(`Вот предложенные темы:\n\n${response}`,
             Markup.inlineKeyboard([
                 [Markup.button.callback('✅ Ок', `approve_topics_${weekId}`)],
@@ -220,7 +256,7 @@ class TelegramService {
                 });
 
                 const dateStr = format(new Date(post.publish_at), 'dd.MM HH:mm');
-                let messageText = `📝 **Пост ${count}/14 на ${dateStr}**\nТема: ${post.topic}\n\n${text}`;
+                let messageText = `📝 **Пост ${count}/14 на ${dateStr}**\nТема: ${post.topic}\nКатегория: ${post.category || 'N/A'}\nТеги: ${post.tags.join(', ')}\n\n${text}`;
 
                 if (messageText.length > 4000) {
                     messageText = messageText.substring(0, 3990) + '... (текст обрезан для лимита Telegram)';
@@ -231,7 +267,7 @@ class TelegramService {
                     {
                         parse_mode: 'Markdown',
                         ...Markup.inlineKeyboard([
-                            [Markup.button.callback('👍 Утвердить', `approve_post_${post.id}`)],
+                            [Markup.button.callback('👍 Утвердить текст', `approve_post_${post.id}`)],
                             [Markup.button.callback('🔄 Перегенерировать', `regen_post_${post.id}`)]
                         ])
                     }
@@ -247,21 +283,85 @@ class TelegramService {
         await ctx.reply('Генерация всех постов завершена!');
     }
 
-    async handlePostApprove(ctx: Context, postId: number) {
+    async handlePostApprove(ctx: Context, postId: number, skipImage = false) {
         const post = await plannerService.getPostById(postId);
         if (!post) return;
 
+        // If not skipping image and no image yet, ask for image
+        if (!skipImage && !post.image_url) {
+            await ctx.editMessageReplyMarkup({
+                inline_keyboard: [
+                    [{ text: '🖼 Сгенерировать иллюстрацию', callback_data: `generate_image_${postId}` }],
+                    [{ text: '🚫 Без картинки (В план)', callback_data: `skip_image_${postId}` }]
+                ]
+            });
+            // @ts-ignore
+            await ctx.reply('Текст утвержден! Хотите добавить иллюстрацию?', { reply_parameters: { message_id: ctx.callbackQuery?.message?.message_id } });
+            return;
+        }
+
+        // Finalize post (Scheduled)
         await plannerService.updatePost(postId, { status: 'scheduled' });
-        await ctx.editMessageReplyMarkup(undefined);
+
+        // Final confirmation message
+        if (ctx.callbackQuery?.message) {
+            const msgId = ctx.callbackQuery.message.message_id;
+            // Try to edit the markup to remove buttons
+            try {
+                await ctx.telegram.editMessageReplyMarkup(ctx.chat?.id, msgId, undefined, { inline_keyboard: [] });
+            } catch (e) { /* ignore */ }
+        }
 
         // Check if it's already time to publish
         const now = new Date();
         if (new Date(post.publish_at) <= now) {
-            await ctx.reply(`Пост ${postId} утвержден и публикуется прямо сейчас! 🚀`);
+            await ctx.reply(`Пост ${postId} полностью готов и публикуется прямо сейчас! 🚀`);
             await publisherService.publishDuePosts();
         } else {
-            await ctx.reply(`Пост ${postId} утвержден и запланирован! ✅`);
+            await ctx.reply(`Пост ${postId} полностью готов и запланирован! ✅`);
         }
+    }
+
+    async handleGenerateImage(ctx: Context, postId: number) {
+        await ctx.reply('🎨 Придумываю промпт и рисую... (это займет около 15-30 сек)');
+        const post = await plannerService.getPostById(postId);
+        if (!post || !post.generated_text || !post.topic) return;
+
+        try {
+            const prompt = await generatorService.generateImagePrompt(post.topic, post.generated_text);
+            console.log(`Image Prompt for ${postId}:`, prompt);
+
+            const imageUrl = await generatorService.generateImage(prompt);
+            console.log(`Image Generated:`, imageUrl);
+
+            // Save to DB
+            await plannerService.updatePost(postId, { image_url: imageUrl });
+
+            // Send preview
+            await ctx.replyWithPhoto(imageUrl, {
+                caption: `Иллюстрация к посту "${post.topic}"`,
+                ...Markup.inlineKeyboard([
+                    [Markup.button.callback('👍 Утвердить картинку', `approve_image_${postId}`)],
+                    [Markup.button.callback('🔄 Перерисовать', `regen_image_${postId}`)],
+                    [Markup.button.callback('🚫 Отмена (без картинки)', `skip_image_${postId}`)]
+                ])
+            });
+
+        } catch (e) {
+            console.error('Image Gen Error:', e);
+            await ctx.reply('Ошибка при генерации картинки. Попробуйте еще раз или пропустите.',
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('🔄 Попробовать снова', `regen_image_${postId}`)],
+                    [Markup.button.callback('🚫 Без картинки', `skip_image_${postId}`)]
+                ])
+            );
+        }
+    }
+
+    async handleApproveImage(ctx: Context, postId: number) {
+        await ctx.editMessageReplyMarkup({ inline_keyboard: [] }); // Remove buttons from image preview
+        await ctx.reply('Картинка утверждена!');
+        await this.handlePostApprove(ctx, postId, true); // Proceed to schedule
     }
 
     async handlePostRegen(ctx: Context, postId: number) {
@@ -273,7 +373,8 @@ class TelegramService {
         await plannerService.updatePost(postId, {
             generated_text: text,
             final_text: text,
-            status: 'generated'
+            status: 'generated',
+            image_url: null // Reset image on text regen
         });
 
         const dateStr = format(new Date(post.publish_at), 'dd.MM HH:mm');
@@ -288,7 +389,7 @@ class TelegramService {
             {
                 parse_mode: 'Markdown',
                 ...Markup.inlineKeyboard([
-                    [Markup.button.callback('👍 Утвердить', `approve_post_${post.id}`)],
+                    [Markup.button.callback('👍 Утвердить текст', `approve_post_${post.id}`)],
                     [Markup.button.callback('🔄 Перегенерировать', `regen_post_${post.id}`)]
                 ])
             }
@@ -327,7 +428,7 @@ class TelegramService {
         const topics = await generatorService.generateTopics(existingWeek.theme);
         await plannerService.saveTopics(existingWeek.id, topics);
 
-        const response = topics.map((t, i) => `${i + 1}. ${t}`).join('\n');
+        const response = topics.map((t, i) => `${i + 1}. ${t.topic}`).join('\n');
         await ctx.reply(`Вот НОВЫЕ предложенные темы:\n\n${response}`,
             Markup.inlineKeyboard([
                 [Markup.button.callback('✅ Ок', `approve_topics_${existingWeek.id}`)],
@@ -366,7 +467,7 @@ class TelegramService {
                     {
                         parse_mode: 'Markdown',
                         ...Markup.inlineKeyboard([
-                            [Markup.button.callback('👍 Утвердить', `approve_post_${post.id}`)],
+                            [Markup.button.callback('👍 Утвердить текст', `approve_post_${post.id}`)],
                             [Markup.button.callback('🔄 Перегенерировать', `regen_post_${post.id}`)]
                         ])
                     }
@@ -396,7 +497,8 @@ class TelegramService {
             const hour = date.getHours();
             const timeLabel = hour < 14 ? 'утро' : 'вечер';
             const num = p.topic_index.toString().padStart(2, '0');
-            return `${num}. [${dateStr} ${timeLabel}] ${p.status === 'scheduled' ? '✅' : '⏳'} ${p.topic || 'Без темы'}`;
+            const hasImage = p.image_url ? '🖼' : '';
+            return `${num}. [${dateStr} ${timeLabel}] ${p.status === 'scheduled' ? '✅' : '⏳'} ${p.topic || 'Без темы'} ${hasImage}`;
         }).join('\n');
 
         const weekRange = `${format(new Date(week.week_start), 'dd.MM')} — ${format(new Date(week.week_end), 'dd.MM')}`;
@@ -432,6 +534,10 @@ class TelegramService {
 
     async sendMessage(chatId: string | number, text: string, extra?: any) {
         return this.bot.telegram.sendMessage(chatId, text, extra);
+    }
+
+    async sendPhoto(chatId: string | number, photo: string, extra?: any) {
+        return this.bot.telegram.sendPhoto(chatId, photo, extra);
     }
 
     async handleUpdate(update: any) {

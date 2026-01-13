@@ -69,6 +69,52 @@ class GeneratorService {
 
         return response.choices[0].message.content || '';
     }
+
+    async generateImagePrompt(topic: string, text: string): Promise<string> {
+        const prompt = `
+        На основе темы и текста поста создай детальный промпт для генерации иллюстрации в DALL-E 3.
+        
+        Тема: ${topic}
+        Текст (фрагмент): ${text.substring(0, 500)}...
+
+        Требования к иллюстрации:
+        - Стиль: Современный, минималистичный, технологичный (IT, Digital).
+        - Цвета: Спокойные, профессиональные.
+        - Без текста на изображении.
+        - Абстракции, схемы, или метафорические образы, подходящие для IT-аналитики.
+
+        Верни ТОЛЬКО текст промпта на английском языке.
+        `;
+
+        const response = await this.openai.chat.completions.create({
+            model: 'gpt-4o', // Using 4o for better prompt engineering
+            messages: [{ role: 'user', content: prompt }],
+        });
+
+        return response.choices[0].message.content || '';
+    }
+
+    async generateImage(prompt: string): Promise<string> {
+        try {
+            const response = await this.openai.images.generate({
+                model: "dall-e-3",
+                prompt: prompt,
+                n: 1,
+                size: "1024x1024",
+                quality: "standard",
+                response_format: "url",
+            });
+
+            if (!response.data || !response.data[0]) {
+                throw new Error('No image data returned from DALL-E');
+            }
+
+            return response.data[0].url || '';
+        } catch (e) {
+            console.error('Failed to generate image', e);
+            throw e;
+        }
+    }
 }
 
 export default new GeneratorService();

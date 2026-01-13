@@ -46,6 +46,7 @@ model Post {
   topic               String?
   category            String?
   tags                String[] @default([])
+  image_url           String?
   generated_text      String?
   final_text          String?
   status              String
