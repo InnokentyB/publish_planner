@@ -72,3 +72,12 @@ model Event {
 
   @@map("events")
 }
+
+model PromptSettings {
+  id         Int      @id @default(autoincrement())
+  key        String   @unique
+  value      String
+  updated_at DateTime @updatedAt
+
+  @@map("prompt_settings")
+}

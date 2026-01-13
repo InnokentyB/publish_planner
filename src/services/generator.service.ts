@@ -1,15 +1,115 @@
+import { PrismaClient } from '@prisma/client';
+import { Pool } from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
 import OpenAI from 'openai';
 import { config } from 'dotenv';
 import { POST_SYSTEM_PROMPT } from '../config/prompts';
 
 config();
 
+const connectionString = process.env.DATABASE_URL;
+const pool = new Pool({ connectionString });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
+
 class GeneratorService {
     private openai: OpenAI;
+    private readonly PROMPT_KEY = 'image_generation_prompt';
+    // Default prompt backup
+    private readonly DEFAULT_PROMPT = `
+        You are an Image Prompt Engineer for an educational Telegram channel called
+        “Аналитик, который думал”.
+        
+        Your task:
+        Based on a Telegram post (topic + text), generate a clear, detailed image prompt
+        for a professional illustration that visually supports the idea of the post.
+        
+        Context:
+        The channel focuses on:
+        - system analysis
+        - product thinking
+        - use cases
+        - requirements
+        - business context
+        - analytical mistakes and insights
+        Audience:
+        IT professionals, analysts, product managers.
+        
+        Image goals:
+        - Support thinking, not entertain
+        - Convey abstract concepts via visual metaphors
+        - Look professional, calm, and intelligent
+        - Be suitable as a Telegram post image
+        
+        Style requirements:
+        - Modern flat or semi-flat illustration
+        - Soft neutral colors
+        - Clean composition
+        - Minimalistic
+        - No text inside the image
+        - No logos, watermarks, UI screenshots, or code snippets
+        - No memes, no cartoons, no exaggerated emotions
+        
+        Preferred visual metaphors:
+        - Person or small team thinking, discussing, or explaining
+        - Whiteboard, sticky notes, diagrams (abstract, not literal)
+        - Chaos vs structure
+        - Light bulb, puzzle, system blocks, layers, flow
+        - Analyst explaining complexity in a simple way
+        
+        Avoid:
+        - Cartoon characters
+        - Comic or childish style
+        - Funny or meme aesthetics
+        - Literal diagrams with readable text
+        - Overloaded details
+        - Dark, aggressive, or cyberpunk styles
+        
+        Output format:
+        Return ONLY the final image prompt text in English.
+        Do NOT include explanations, comments, or formatting.
+        Do NOT mention Telegram, post length, or UI elements.
+        
+        Input you will receive:
+        - Post topic \${topic}
+        - Post text (may be long)\${text.substring(0, 500)}
+        
+        Your job is to:
+        1) Extract the core idea of the post
+        2) Choose a suitable visual metaphor
+        3) Describe a single coherent illustration scene
+        4) Produce a high-quality prompt ready for DALL·E image generation
+        `;
 
     constructor() {
         this.openai = new OpenAI({
             apiKey: process.env.OPENAI_API_KEY,
+        });
+    }
+
+    async getImagePromptTemplate(): Promise<string> {
+        const setting = await prisma.promptSettings.findUnique({
+            where: { key: this.PROMPT_KEY }
+        });
+
+        if (setting) return setting.value;
+
+        // If not set, initialize with default
+        await prisma.promptSettings.create({
+            data: {
+                key: this.PROMPT_KEY,
+                value: this.DEFAULT_PROMPT
+            }
+        });
+
+        return this.DEFAULT_PROMPT;
+    }
+
+    async updateImagePromptTemplate(newPrompt: string): Promise<void> {
+        await prisma.promptSettings.upsert({
+            where: { key: this.PROMPT_KEY },
+            update: { value: newPrompt },
+            create: { key: this.PROMPT_KEY, value: newPrompt }
         });
     }
 
@@ -71,24 +171,16 @@ class GeneratorService {
     }
 
     async generateImagePrompt(topic: string, text: string): Promise<string> {
-        const prompt = `
-        На основе темы и текста поста создай детальный промпт для генерации иллюстрации в DALL-E 3.
-        
-        Тема: ${topic}
-        Текст (фрагмент): ${text.substring(0, 500)}...
+        let template = await this.getImagePromptTemplate();
 
-        Требования к иллюстрации:
-        - Стиль: Современный, минималистичный, технологичный (IT, Digital).
-        - Цвета: Спокойные, профессиональные.
-        - Без текста на изображении.
-        - Абстракции, схемы, или метафорические образы, подходящие для IT-аналитики.
-
-        Верни ТОЛЬКО текст промпта на английском языке.
-        `;
+        // Replace placeholders safely
+        const filledPrompt = template
+            .replace('${topic}', topic)
+            .replace('${text.substring(0, 500)}', text.substring(0, 500));
 
         const response = await this.openai.chat.completions.create({
             model: 'gpt-4o', // Using 4o for better prompt engineering
-            messages: [{ role: 'user', content: prompt }],
+            messages: [{ role: 'user', content: filledPrompt }],
         });
 
         return response.choices[0].message.content || '';
