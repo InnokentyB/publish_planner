@@ -8,6 +8,7 @@ import plannerService from './planner.service';
 import generatorService from './generator.service';
 import publisherService from './publisher.service';
 import agentService from './agent.service';
+import multiAgentService from './multi_agent.service';
 
 config();
 
@@ -19,6 +20,7 @@ const prisma = new PrismaClient({ adapter });
 class TelegramService {
     public bot: Telegraf;
     private isWebhook = false;
+    private promptEditState: Map<number, string> = new Map(); // userId -> promptKey being edited
 
     constructor() {
         const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -44,21 +46,56 @@ class TelegramService {
         });
 
         this.bot.command('image_prompt', async (ctx) => {
-            const prompt = await generatorService.getImagePromptTemplate();
-            await ctx.reply(`🎨 **Текущий промпт для картинок:**\n\n\`${prompt}\``, { parse_mode: 'Markdown' });
-            await ctx.reply('Чтобы изменить, отправь команду:\n`/set_image_prompt <новый текст промпта>`', { parse_mode: 'Markdown' });
+            // Alias for DALL-E
+            const prompt = await generatorService.getImagePromptTemplate('dalle');
+            await ctx.reply(`🎨 **Текущий промпт для DALL-E:**\n\n\`${prompt}\``, { parse_mode: 'Markdown' });
+            await ctx.reply('Чтобы изменить, используй: `/set_prompt_dalle ...`');
+        });
+
+        this.bot.command('prompt_dalle', async (ctx) => {
+            const prompt = await generatorService.getImagePromptTemplate('dalle');
+            await ctx.reply(`🎨 **Текущий промпт для DALL-E:**\n\n\`${prompt}\``, { parse_mode: 'Markdown' });
+        });
+
+        this.bot.command('prompt_nano', async (ctx) => {
+            const prompt = await generatorService.getImagePromptTemplate('nano');
+            await ctx.reply(`🍌 **Текущий промпт для Nano Banana:**\n\n\`${prompt}\``, { parse_mode: 'Markdown' });
         });
 
         this.bot.command('set_image_prompt', async (ctx) => {
+            // Legacy alias
             // @ts-ignore
             const newPrompt = ctx.message.text.replace('/set_image_prompt', '').trim();
             if (!newPrompt) {
-                await ctx.reply('Пожалуйста, укажите текст промпта после команды.\nПример: `/set_image_prompt My new prompt...`', { parse_mode: 'Markdown' });
+                await ctx.reply('Укажите промпт.');
+                return;
+            }
+            await generatorService.updateImagePromptTemplate(newPrompt, 'dalle');
+            await ctx.reply('✅ Промпт для DALL-E обновлен!');
+        });
+
+        this.bot.command('set_prompt_dalle', async (ctx) => {
+            // @ts-ignore
+            const newPrompt = ctx.message.text.replace('/set_prompt_dalle', '').trim();
+            if (!newPrompt) {
+                await ctx.reply('Пожалуйста, укажите текст промпта после команды.', { parse_mode: 'Markdown' });
                 return;
             }
 
-            await generatorService.updateImagePromptTemplate(newPrompt);
-            await ctx.reply('✅ Промпт для генерации картинок обновлен!');
+            await generatorService.updateImagePromptTemplate(newPrompt, 'dalle');
+            await ctx.reply('✅ Промпт для DALL-E обновлен!');
+        });
+
+        this.bot.command('set_prompt_nano', async (ctx) => {
+            // @ts-ignore
+            const newPrompt = ctx.message.text.replace('/set_prompt_nano', '').trim();
+            if (!newPrompt) {
+                await ctx.reply('Пожалуйста, укажите текст промпта после команды.', { parse_mode: 'Markdown' });
+                return;
+            }
+
+            await generatorService.updateImagePromptTemplate(newPrompt, 'nano');
+            await ctx.reply('✅ Промпт для Nano Banana обновлен!');
         });
 
         this.bot.hears('📋 Список планов', async (ctx) => {
@@ -109,6 +146,21 @@ class TelegramService {
             // @ts-ignore
             const fromId = ctx.from.id;
             const ownerId = parseInt(process.env.OWNER_CHAT_ID || '0', 10);
+
+            // Check if editing prompt
+            if (this.promptEditState.has(fromId)) {
+                const key = this.promptEditState.get(fromId)!;
+                // Update prompt
+                await prisma.promptSettings.upsert({
+                    where: { key: key },
+                    update: { value: text },
+                    create: { key: key, value: text }
+                });
+
+                this.promptEditState.delete(fromId);
+                await ctx.reply(`✅ Промпт **${key}** успешно обновлен!`, { parse_mode: 'Markdown' });
+                return;
+            }
 
             // Verify owner
             if (fromId.toString() !== process.env.OWNER_CHAT_ID && fromId !== ownerId) {
@@ -174,11 +226,18 @@ class TelegramService {
             const weekId = parseInt(ctx.match[1], 10);
             await this.handleReviewPending(ctx, weekId);
         });
-        this.bot.action(/^generate_image_(\d+)$/, async (ctx) => {
+        this.bot.action(/^gen_img_dalle_(\d+)$/, async (ctx) => {
             await ctx.answerCbQuery();
             // @ts-ignore
             const postId = parseInt(ctx.match[1], 10);
-            await this.handleGenerateImage(ctx, postId);
+            await this.handleGenerateImage(ctx, postId, 'dalle');
+        });
+
+        this.bot.action(/^gen_img_nano_(\d+)$/, async (ctx) => {
+            await ctx.answerCbQuery();
+            // @ts-ignore
+            const postId = parseInt(ctx.match[1], 10);
+            await this.handleGenerateImage(ctx, postId, 'nano');
         });
 
         this.bot.action(/^approve_image_(\d+)$/, async (ctx) => {
@@ -189,10 +248,11 @@ class TelegramService {
         });
 
         this.bot.action(/^regen_image_(\d+)$/, async (ctx) => {
+            // Legacy support
             await ctx.answerCbQuery();
             // @ts-ignore
             const postId = parseInt(ctx.match[1], 10);
-            await this.handleGenerateImage(ctx, postId); // Reuse generation logic
+            await this.handleGenerateImage(ctx, postId, 'dalle');
         });
 
         this.bot.action(/^skip_image_(\d+)$/, async (ctx) => {
@@ -202,6 +262,65 @@ class TelegramService {
             await this.handlePostApprove(ctx, postId, true); // True = skip image check
         });
 
+        // --- Prompt Management ---
+
+        this.bot.command('edit_prompts', async (ctx) => {
+            await ctx.reply('Выберите промпт для редактирования:',
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('✍️ Creator Agent', `view_prompt_${multiAgentService.KEY_CREATOR}`)],
+                    [Markup.button.callback('🤔 Critic Agent', `view_prompt_${multiAgentService.KEY_CRITIC}`)],
+                    [Markup.button.callback('🔧 Fixer Agent', `view_prompt_${multiAgentService.KEY_FIXER}`)]
+                ])
+            );
+        });
+
+        this.bot.action(/^view_prompt_(.+)$/, async (ctx) => {
+            await ctx.answerCbQuery();
+            // @ts-ignore
+            const key = ctx.match[1];
+
+            // We need a way to get the current prompt. 
+            // Since `getPrompt` is private in MultiAgentService, we might need to expose a getter 
+            // OR use prisma directly here. Let's use Prisma directly to avoid changing service interface if possible, 
+            // OR better, add a public getter to MultiAgentService. 
+            // For now, I'll access Prisma via existing reference in this file.
+
+            const setting = await prisma.promptSettings.findUnique({ where: { key } });
+            const value = setting?.value || 'Is not set (using default)';
+
+            await ctx.reply(`📜 **Текущий промпт (${key}):**\n\n\`${value}\``,
+                {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.callback('✏️ Редактировать', `edit_prompt_${key}`)],
+                        [Markup.button.callback('🔙 Назад', `back_to_prompts`)]
+                    ])
+                }
+            );
+        });
+
+        this.bot.action('back_to_prompts', async (ctx) => {
+            await ctx.answerCbQuery();
+            await ctx.editMessageText('Выберите промпт для редактирования:',
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('✍️ Creator Agent', `view_prompt_${multiAgentService.KEY_CREATOR}`)],
+                    [Markup.button.callback('🤔 Critic Agent', `view_prompt_${multiAgentService.KEY_CRITIC}`)],
+                    [Markup.button.callback('🔧 Fixer Agent', `view_prompt_${multiAgentService.KEY_FIXER}`)]
+                ])
+            );
+        });
+
+        this.bot.action(/^edit_prompt_(.+)$/, async (ctx) => {
+            await ctx.answerCbQuery();
+            // @ts-ignore
+            const key = ctx.match[1];
+            // @ts-ignore
+            const userId = ctx.from.id;
+
+            this.promptEditState.set(userId, key);
+
+            await ctx.reply(`Введите новый текст для промпта **${key}**.\n\nОтправьте текст одним сообщением.`, { parse_mode: 'Markdown' });
+        });
 
     }
 
@@ -313,16 +432,19 @@ class TelegramService {
         if (!skipImage && !post.image_url) {
             await ctx.editMessageReplyMarkup({
                 inline_keyboard: [
-                    [{ text: '🖼 Сгенерировать иллюстрацию', callback_data: `generate_image_${postId}` }],
+                    [
+                        { text: '🎨 DALL-E', callback_data: `gen_img_dalle_${postId}` },
+                        { text: '🍌 Nano Banana', callback_data: `gen_img_nano_${postId}` }
+                    ],
                     [{ text: '🚫 Без картинки (В план)', callback_data: `skip_image_${postId}` }]
                 ]
             });
             // @ts-ignore
-            await ctx.reply('Текст утвержден! Хотите добавить иллюстрацию?', { reply_parameters: { message_id: ctx.callbackQuery?.message?.message_id } });
+            await ctx.reply('Текст утвержден! Выберите нейросеть для иллюстрации:', { reply_parameters: { message_id: ctx.callbackQuery?.message?.message_id } });
             return;
         }
 
-        // Finalize post (Scheduled)
+        // Finalize post (Scheduled Internal)
         await plannerService.updatePost(postId, { status: 'scheduled' });
 
         // Delete the preview message
@@ -332,22 +454,26 @@ class TelegramService {
             } catch (e) { /* ignore */ }
         }
 
-        // Check if it's already time to publish
         const now = new Date();
         if (new Date(post.publish_at) <= now) {
-            await ctx.reply(`Пост ${postId} полностью готов и публикуется прямо сейчас! 🚀`);
-            await publisherService.publishDuePosts();
+            // Send immediately
+            await publisherService.publishPostNow(post.id);
+            await ctx.reply(`Пост ${postId} опубликован прямо сейчас! 🚀`);
         } else {
-            await ctx.reply(`Пост ${postId} полностью готов и запланирован! ✅`);
+            // Internal Schedule
+            const dateStr = format(new Date(post.publish_at), 'dd.MM HH:mm');
+            await ctx.reply(`Пост ${postId} запланирован на ${dateStr} (внутренний планировщик). ✅\nОн будет опубликован автоматически в назначенное время.`);
         }
     }
 
-    async handleGenerateImage(ctx: Context, postId: number) {
+    async handleGenerateImage(ctx: Context, postId: number, provider: 'dalle' | 'nano') {
         try {
             await ctx.deleteMessage();
         } catch (e) { }
 
-        const loadingMsg = await ctx.reply('🎨 Придумываю промпт и рисую... (это займет около 15-30 сек)');
+        const providerName = provider === 'nano' ? 'Nano Banana' : 'DALL-E';
+        const loadingMsg = await ctx.reply(`🎨 (${providerName}) Придумываю промпт и рисую... (это займет около 15-30 сек)`);
+
         const post = await plannerService.getPostById(postId);
         if (!post || !post.generated_text || !post.topic) {
             try { await ctx.telegram.deleteMessage(ctx.chat?.id!, loadingMsg.message_id); } catch (e) { }
@@ -355,10 +481,23 @@ class TelegramService {
         }
 
         try {
-            const prompt = await generatorService.generateImagePrompt(post.topic, post.generated_text);
-            console.log(`Image Prompt for ${postId}:`, prompt);
+            if (provider === 'nano' && !process.env.GOOGLE_API_KEY) {
+                throw new Error('GOOGLE_API_KEY is not configured for Nano Banana.');
+            }
 
-            const imageUrl = await generatorService.generateImage(prompt);
+            const prompt = await generatorService.generateImagePrompt(post.topic, post.generated_text, provider);
+            console.log(`Image Prompt for ${postId} (${provider}):`, prompt);
+
+            // Show prompt to user
+            await ctx.reply(`📝 **Генерация промпта (${providerName}):**\n\n\`${prompt}\`\n\n⏳ Начинаю рисовать...`, { parse_mode: 'Markdown' });
+
+            let imageUrl = '';
+            if (provider === 'nano') {
+                imageUrl = await generatorService.generateImageNanoBanana(prompt);
+            } else {
+                imageUrl = await generatorService.generateImage(prompt);
+            }
+
             console.log(`Image Generated:`, imageUrl);
 
             // Save to DB
@@ -368,22 +507,31 @@ class TelegramService {
             try { await ctx.telegram.deleteMessage(ctx.chat?.id!, loadingMsg.message_id); } catch (e) { }
 
             // Send preview
-            await ctx.replyWithPhoto(imageUrl, {
-                caption: `Иллюстрация к посту "${post.topic}"`,
+            let photoSource: any = imageUrl;
+            if (imageUrl.startsWith('data:')) {
+                // Extract base64
+                const base64Data = imageUrl.split(',')[1];
+                photoSource = { source: Buffer.from(base64Data, 'base64') };
+            }
+
+            await ctx.replyWithPhoto(photoSource, {
+                caption: `Иллюстрация к посту "${post.topic}" (${providerName})`,
                 ...Markup.inlineKeyboard([
                     [Markup.button.callback('👍 Утвердить картинку', `approve_image_${postId}`)],
-                    [Markup.button.callback('🔄 Перерисовать', `regen_image_${postId}`)],
+                    [Markup.button.callback('🔄 Перерисовать (DALL-E)', `gen_img_dalle_${postId}`)],
+                    [Markup.button.callback('🔄 Перерисовать (Nano)', `gen_img_nano_${postId}`)],
                     [Markup.button.callback('🚫 Отмена (без картинки)', `skip_image_${postId}`)]
                 ])
             });
 
-        } catch (e) {
+        } catch (e: any) {
             console.error('Image Gen Error:', e);
-            try { await ctx.telegram.deleteMessage(ctx.chat?.id!, loadingMsg.message_id); } catch (e) { }
+            try { await ctx.telegram.deleteMessage(ctx.chat?.id!, loadingMsg.message_id); } catch (error) { }
 
-            await ctx.reply('Ошибка при генерации картинки. Попробуйте еще раз или пропустите.',
+            await ctx.reply(`Ошибка при генерации картинки (${providerName}): ${e.message}`,
                 Markup.inlineKeyboard([
-                    [Markup.button.callback('🔄 Попробовать снова', `regen_image_${postId}`)],
+                    [Markup.button.callback('🔄 DALL-E', `gen_img_dalle_${postId}`)],
+                    [Markup.button.callback('🔄 Nano Banana', `gen_img_nano_${postId}`)],
                     [Markup.button.callback('🚫 Без картинки', `skip_image_${postId}`)]
                 ])
             );
@@ -563,11 +711,47 @@ class TelegramService {
     }
 
     async sendMessage(chatId: string | number, text: string, extra?: any) {
+        console.log(`[TelegramService] Sending Message to ${chatId}. Extra:`, JSON.stringify(extra));
         return this.bot.telegram.sendMessage(chatId, text, extra);
     }
 
-    async sendPhoto(chatId: string | number, photo: string, extra?: any) {
+    async sendPhoto(chatId: string | number, photo: string | { source: Buffer }, extra?: any) {
+        // Truncate binary data from logging if possible, or just log extra
+        console.log(`[TelegramService] Sending Photo to ${chatId}. Extra:`, JSON.stringify(extra));
         return this.bot.telegram.sendPhoto(chatId, photo, extra);
+    }
+
+    async scheduleMessage(chatId: string | number, text: string, timestamp: number, extra: any = {}) {
+        console.log(`[TelegramService] Scheduling Message to ${chatId} at ${timestamp}`);
+        return this.bot.telegram.callApi('sendMessage', {
+            chat_id: chatId,
+            text,
+            parse_mode: extra.parse_mode,
+            schedule_date: timestamp,
+            ...extra
+        });
+    }
+
+    async schedulePhoto(chatId: string | number, photo: string | { source: Buffer }, timestamp: number, extra: any = {}) {
+        console.log(`[TelegramService] Scheduling Photo to ${chatId} at ${timestamp}`);
+
+        if (typeof photo === 'string') {
+            // Use callApi directly for URLs/FileIDs to ensure scheduling params are passed correctly
+            return this.bot.telegram.callApi('sendPhoto', {
+                chat_id: chatId,
+                photo: photo,
+                caption: extra.caption,
+                parse_mode: extra.parse_mode,
+                schedule_date: timestamp,
+                ...extra
+            });
+        } else {
+            // For Buffers, rely on Telegraf's sendPhoto but ensure schedule_date is in extra
+            return this.bot.telegram.sendPhoto(chatId, photo, {
+                ...extra,
+                schedule_date: timestamp
+            });
+        }
     }
 
     async handleUpdate(update: any) {
@@ -575,5 +759,4 @@ class TelegramService {
     }
 }
 
-const telegramService = new TelegramService();
-export default telegramService;
+export default new TelegramService();

@@ -4,6 +4,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import OpenAI from 'openai';
 import { config } from 'dotenv';
 import { POST_SYSTEM_PROMPT } from '../config/prompts';
+import multiAgentService from './multi_agent.service';
 
 config();
 
@@ -13,83 +14,38 @@ const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 class GeneratorService {
-    private openai: OpenAI;
-    private readonly PROMPT_KEY = 'image_generation_prompt';
-    // Default prompt backup
-    private readonly DEFAULT_PROMPT = `
-        You are an Image Prompt Engineer for an educational Telegram channel called
-        “Аналитик, который думал”.
-        
-        Your task:
-        Based on a Telegram post (topic + text), generate a clear, detailed image prompt
-        for a professional illustration that visually supports the idea of the post.
-        
-        Context:
-        The channel focuses on:
-        - system analysis
-        - product thinking
-        - use cases
-        - requirements
-        - business context
-        - analytical mistakes and insights
-        Audience:
-        IT professionals, analysts, product managers.
-        
-        Image goals:
-        - Support thinking, not entertain
-        - Convey abstract concepts via visual metaphors
-        - Look professional, calm, and intelligent
-        - Be suitable as a Telegram post image
-        
-        Style requirements:
-        - Modern flat or semi-flat illustration
-        - Soft neutral colors
-        - Clean composition
-        - Minimalistic
-        - No text inside the image
-        - No logos, watermarks, UI screenshots, or code snippets
-        - No memes, no cartoons, no exaggerated emotions
-        
-        Preferred visual metaphors:
-        - Person or small team thinking, discussing, or explaining
-        - Whiteboard, sticky notes, diagrams (abstract, not literal)
-        - Chaos vs structure
-        - Light bulb, puzzle, system blocks, layers, flow
-        - Analyst explaining complexity in a simple way
-        
-        Avoid:
-        - Cartoon characters
-        - Comic or childish style
-        - Funny or meme aesthetics
-        - Literal diagrams with readable text
-        - Overloaded details
-        - Dark, aggressive, or cyberpunk styles
-        
-        Output format:
-        Return ONLY the final image prompt text in English.
-        Do NOT include explanations, comments, or formatting.
-        Do NOT mention Telegram, post length, or UI elements.
-        
-        Input you will receive:
-        - Post topic \${topic}
-        - Post text (may be long)\${text.substring(0, 500)}
-        
-        Your job is to:
-        1) Extract the core idea of the post
-        2) Choose a suitable visual metaphor
-        3) Describe a single coherent illustration scene
-        4) Produce a high-quality prompt ready for DALL·E image generation
-        `;
+    private openai!: OpenAI;
+    private genAI: any;
+
+    private PROMPT_KEY_DALLE = 'image_generation_prompt';
+    private PROMPT_KEY_NANO = 'nano_banana_image_prompt';
+
+    private DEFAULT_PROMPT_DALLE = "Create a modern, flat vector illustration for a tech blog post about: ${topic}. \n\nStyle: Minimalist, clean lines, corporate colors (blue, grey, white). \nUse metaphors related to: ${text.substring(0, 500)} \nNo text in the image.";
+    private DEFAULT_PROMPT_NANO = "Generate a photorealistic image for a post about ${topic}. Context: ${text.substring(0, 500)}. High quality, professional lighting.";
 
     constructor() {
-        this.openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY,
-        });
+        if (process.env.OPENAI_API_KEY) {
+            this.openai = new OpenAI({
+                apiKey: process.env.OPENAI_API_KEY,
+            });
+        }
+
+        if (process.env.GOOGLE_API_KEY) {
+            try {
+                const { GoogleGenerativeAI } = require('@google/generative-ai');
+                this.genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+            } catch (e) {
+                console.error('Failed to initialize Google AI', e);
+            }
+        }
     }
 
-    async getImagePromptTemplate(): Promise<string> {
+    async getImagePromptTemplate(provider: 'dalle' | 'nano' = 'dalle'): Promise<string> {
+        const key = provider === 'nano' ? this.PROMPT_KEY_NANO : this.PROMPT_KEY_DALLE;
+        const defaultPrompt = provider === 'nano' ? this.DEFAULT_PROMPT_NANO : this.DEFAULT_PROMPT_DALLE;
+
         const setting = await prisma.promptSettings.findUnique({
-            where: { key: this.PROMPT_KEY }
+            where: { key: key }
         });
 
         if (setting) return setting.value;
@@ -97,56 +53,26 @@ class GeneratorService {
         // If not set, initialize with default
         await prisma.promptSettings.create({
             data: {
-                key: this.PROMPT_KEY,
-                value: this.DEFAULT_PROMPT
+                key: key,
+                value: defaultPrompt
             }
         });
 
-        return this.DEFAULT_PROMPT;
+        return defaultPrompt;
     }
 
-    async updateImagePromptTemplate(newPrompt: string): Promise<void> {
+    async updateImagePromptTemplate(value: string, provider: 'dalle' | 'nano' = 'dalle') {
+        const key = provider === 'nano' ? this.PROMPT_KEY_NANO : this.PROMPT_KEY_DALLE;
+
         await prisma.promptSettings.upsert({
-            where: { key: this.PROMPT_KEY },
-            update: { value: newPrompt },
-            create: { key: this.PROMPT_KEY, value: newPrompt }
+            where: { key: key },
+            update: { value },
+            create: { key: key, value }
         });
     }
 
     async generateTopics(theme: string): Promise<{ topic: string, category: string, tags: string[] }[]> {
-        const prompt = `
-    Сгенерируй 14 уникальных и интересных тем для постов в Telegram-канале.
-    Тема недели: "${theme}".
-    
-    Для каждой темы укажи категорию из списка: "Soft Skills", "Technologies", "Integrations", "Requirements".
-    Также сгенерируй 2-4 тега для каждого поста.
-
-    Верни ТОЛЬКО JSON массив объектов. Без markdown форматирования.
-    Пример: [{"topic": "Тема 1", "category": "Soft Skills", "tags": ["tag1", "tag2"]}]
-    `;
-
-        const response = await this.openai.chat.completions.create({
-            model: 'gpt-4o-mini', // or 'gpt-3.5-turbo' if preferred
-            messages: [{ role: 'user', content: prompt }],
-        });
-
-        try {
-            const content = response.choices[0].message.content || '[]';
-            // Clean potential markdown code blocks
-            const clean = content.replace(/```json/g, '').replace(/```/g, '').trim();
-            const topics = JSON.parse(clean);
-
-            // Validate that we got objects, not just strings
-            if (topics.length > 0 && typeof topics[0] === 'string') {
-                // Fallback if model returned strings
-                return topics.map((t: string) => ({ topic: t, category: 'Technologies', tags: [] }));
-            }
-
-            return topics;
-        } catch (e) {
-            console.error('Failed to parse topics', e);
-            return [];
-        }
+        return await multiAgentService.refineTopics(theme);
     }
 
     async generatePostText(theme: string, topic: string) {
@@ -170,8 +96,8 @@ class GeneratorService {
         return response.choices[0].message.content || '';
     }
 
-    async generateImagePrompt(topic: string, text: string): Promise<string> {
-        let template = await this.getImagePromptTemplate();
+    async generateImagePrompt(topic: string, text: string, provider: 'dalle' | 'nano' = 'dalle'): Promise<string> {
+        let template = await this.getImagePromptTemplate(provider);
 
         // Replace placeholders safely
         const filledPrompt = template
@@ -179,11 +105,13 @@ class GeneratorService {
             .replace('${text.substring(0, 500)}', text.substring(0, 500));
 
         const response = await this.openai.chat.completions.create({
-            model: 'gpt-4o', // Using 4o for better prompt engineering
-            messages: [{ role: 'user', content: filledPrompt }],
+            model: 'gpt-4o',
+            messages: [{ role: 'user', content: filledPrompt }], // Simplification: just use the template as the prompt
         });
 
-        return response.choices[0].message.content || '';
+        const generatedPrompt = response.choices[0].message.content || '';
+
+        return generatedPrompt;
     }
 
     async generateImage(prompt: string): Promise<string> {
@@ -203,7 +131,56 @@ class GeneratorService {
 
             return response.data[0].url || '';
         } catch (e) {
-            console.error('Failed to generate image', e);
+            console.error('Failed to generate image (DALL-E)', e);
+            throw e;
+        }
+    }
+
+    async generateImageNanoBanana(prompt: string): Promise<string> {
+        if (!process.env.GOOGLE_API_KEY) {
+            throw new Error('GOOGLE_API_KEY is not set');
+        }
+
+        try {
+            // Updated to use Imagen 4.0 as per available models list
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${process.env.GOOGLE_API_KEY}`;
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    instances: [
+                        { prompt: prompt }
+                    ],
+                    parameters: {
+                        sampleCount: 1,
+                        aspectRatio: "1:1" // Optional, but usually good for posts
+                    }
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Google API Error: ${response.status} ${response.statusText} - ${errorText}`);
+            }
+
+            const data = await response.json();
+
+            // Check for valid response structure
+            if (!data.predictions || !data.predictions[0] || !data.predictions[0].bytesBase64Encoded) {
+                console.error("Unexpected Google API Query Response", JSON.stringify(data));
+                throw new Error('No image data returned from Google Imagen');
+            }
+
+            const base64Image = data.predictions[0].bytesBase64Encoded;
+            // Return as Data URI so it can be stored in the DB (Postgres TEXT field should handle ~500KB-1MB usually)
+            // Just ensure generated image isn't too huge. Default standard quality usually fits.
+            return `data:image/jpeg;base64,${base64Image}`;
+
+        } catch (e) {
+            console.error('Failed to generate image (Nano Banana)', e);
             throw e;
         }
     }

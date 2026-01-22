@@ -14,6 +14,8 @@ server.register(require('@fastify/formbody'));
 server.register(telegramRoutes);
 server.register(jobRoutes);
 
+import publisherService from './services/publisher.service';
+
 const start = async () => {
     try {
         // Initialize Telegram Bot
@@ -21,6 +23,23 @@ const start = async () => {
 
         await server.listen({ port: 3000, host: '0.0.0.0' });
         console.log('Server is running on port 3000');
+
+        // Internal Scheduler: Check for due posts every 60 seconds
+        console.log('Starting internal scheduler (every 60s)...');
+        setInterval(async () => {
+            try {
+                const count = await publisherService.publishDuePosts();
+                if (count > 0) {
+                    console.log(`[Scheduler] Published ${count} posts.`);
+                }
+            } catch (e) {
+                console.error('[Scheduler] Error publishing due posts:', e);
+            }
+        }, 60000);
+
+        // Run once immediately on startup
+        publisherService.publishDuePosts().catch(e => console.error('[Scheduler] Initial check failed:', e));
+
     } catch (err) {
         server.log.error(err);
         process.exit(1);

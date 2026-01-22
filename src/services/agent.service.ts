@@ -7,6 +7,7 @@ import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import generatorService from './generator.service';
+import multiAgentService from './multi_agent.service';
 import { format } from 'date-fns';
 
 config();
@@ -90,6 +91,20 @@ class AgentService {
                             publishTime: { type: 'string', description: 'Время публикации в формате ISO или относительное (например, "через 5 минут", "завтра в 10:00")' }
                         },
                         required: ['topic', 'text', 'publishTime']
+                    }
+                }
+            },
+            {
+                type: 'function',
+                function: {
+                    name: 'create_refined_post',
+                    description: 'Создать качественный пост с помощью мульти-агентной системы (Создатель -> Критик -> Исправитель). Используй это для создания контента.',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            topic: { type: 'string', description: 'Тема поста' }
+                        },
+                        required: ['topic']
                     }
                 }
             }
@@ -215,6 +230,13 @@ class AgentService {
                         } else {
                             result = { success: true, message: `Пост "${post.topic}" создан и запланирован на ${format(publishAt, 'dd.MM HH:mm')}.`, postId: post.id };
                         }
+                    } else if (name === 'create_refined_post') {
+                        const multiResult = await multiAgentService.run((args as any).topic);
+                        result = {
+                            success: true,
+                            data: multiResult,
+                            message: `Пост создан! Итоговый балл: ${multiResult.score} после ${multiResult.iterations} итераций.\n\nТекст:\n${multiResult.finalText}`
+                        };
                     }
                 } catch (err: any) {
                     console.error(`Tool error: ${name}`, err);

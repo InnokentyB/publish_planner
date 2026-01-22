@@ -81,3 +81,30 @@ model PromptSettings {
 
   @@map("prompt_settings")
 }
+
+model AgentRun {
+  id               Int              @id @default(autoincrement())
+  topic            String
+  final_score      Int              @default(0)
+  total_iterations Int              @default(0)
+  created_at       DateTime         @default(now())
+  iterations       AgentIteration[]
+
+  @@map("agent_runs")
+}
+
+model AgentIteration {
+  id               Int      @id @default(autoincrement())
+  run_id           Int
+  iteration_number Int
+  agent_role       String
+  input            String
+  output           String
+  score            Int?
+  critique         String?
+  created_at       DateTime @default(now())
+  run              AgentRun @relation(fields: [run_id], references: [id])
+
+  @@index([run_id])
+  @@map("agent_iterations")
+}

@@ -18,7 +18,9 @@ class PublisherService {
         // Find all scheduled posts that are due
         const duePosts = await prisma.post.findMany({
             where: {
-                status: 'scheduled',
+                status: {
+                    in: ['scheduled', 'scheduled_native'] // Include both, though scheduled_native are handled by Telegram
+                },
                 publish_at: { lte: now }
             },
             include: {
@@ -26,9 +28,14 @@ class PublisherService {
             }
         });
 
-        console.log(`Found ${duePosts.length} posts due for publishing.`);
+        console.log(`Found ${duePosts.length} posts due (or past due) for publishing.`);
 
         for (const post of duePosts) {
+            // Skip if it was native scheduled and we assume Telegram handled it
+            // But if we want to support "manual" publishing of missed native posts, we might need check.
+            // For now, let's assume 'scheduled' means "waiting for bot to publish".
+            if (post.status === 'scheduled_native') continue;
+
             try {
                 // Get the channel for this post
                 const channel = await prisma.channel.findUnique({
@@ -40,17 +47,35 @@ class PublisherService {
                     continue;
                 }
 
-                // Send to Telegram
-                // Note: telegram_channel_id is stored as BigInt in DB, needs to be converted or used as string
                 const targetChannelId = channel.telegram_channel_id.toString();
+                const text = post.final_text || post.generated_text || '';
 
                 if (post.image_url) {
-                    await telegramService.sendPhoto(targetChannelId, post.image_url, {
-                        caption: post.final_text || post.generated_text || '',
-                        parse_mode: 'Markdown'
-                    });
+                    let photoSource: any = post.image_url;
+                    if (post.image_url.startsWith('data:')) {
+                        const base64Data = post.image_url.split(',')[1];
+                        photoSource = { source: Buffer.from(base64Data, 'base64') };
+                    }
+
+                    // Check length for caption (limit 1024)
+                    if (text.length > 1024) {
+                        // Send photo with title/topic only
+                        await telegramService.sendPhoto(targetChannelId, photoSource, {
+                            caption: post.topic ? `**${post.topic}**` : '',
+                            parse_mode: 'Markdown'
+                        });
+                        // Send full text as separate message
+                        await telegramService.sendMessage(targetChannelId, text, {
+                            parse_mode: 'Markdown'
+                        });
+                    } else {
+                        await telegramService.sendPhoto(targetChannelId, photoSource, {
+                            caption: text,
+                            parse_mode: 'Markdown'
+                        });
+                    }
                 } else {
-                    await telegramService.sendMessage(targetChannelId, post.final_text || post.generated_text || '', {
+                    await telegramService.sendMessage(targetChannelId, text, {
                         parse_mode: 'Markdown'
                     });
                 }
@@ -68,6 +93,66 @@ class PublisherService {
         }
 
         return duePosts.length;
+    }
+    async publishPostNow(postId: number) {
+        // 1. Fetch Post with Channel info
+        const post = await prisma.post.findUnique({
+            where: { id: postId },
+            include: { channel: true } // Ensure channel is fetched
+        });
+
+        if (!post) {
+            throw new Error(`Post ${postId} not found`);
+        }
+
+        // 2. Get Channel ID
+        const channel = await prisma.channel.findUnique({ where: { id: post.channel_id } });
+        if (!channel || !channel.telegram_channel_id) {
+            throw new Error(`Channel not found for post ${postId}`);
+        }
+        const targetChannelId = channel.telegram_channel_id.toString();
+
+        // 3. Send Immediately
+        const text = post.final_text || post.generated_text || '';
+
+        if (post.image_url) {
+            let photoSource: any = post.image_url;
+            if (post.image_url.startsWith('data:')) {
+                const base64Data = post.image_url.split(',')[1];
+                photoSource = { source: Buffer.from(base64Data, 'base64') };
+            }
+
+            if (text.length > 1024) {
+                // Split: Photo then Text
+                // Send Photo
+                await telegramService.sendPhoto(targetChannelId, photoSource, {
+                    caption: post.topic ? `**${post.topic}**` : '',
+                    parse_mode: 'Markdown'
+                });
+
+                // Send Text
+                await telegramService.sendMessage(targetChannelId, text, {
+                    parse_mode: 'Markdown'
+                });
+            } else {
+                await telegramService.sendPhoto(targetChannelId, photoSource, {
+                    caption: text,
+                    parse_mode: 'Markdown'
+                });
+            }
+        } else {
+            await telegramService.sendMessage(targetChannelId, text, {
+                parse_mode: 'Markdown'
+            });
+        }
+
+        // 4. Update DB Status to published
+        await prisma.post.update({
+            where: { id: postId },
+            data: { status: 'published' }
+        });
+
+        return true;
     }
 }
 
