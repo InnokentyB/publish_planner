@@ -32,11 +32,12 @@ class AgentService {
                 type: 'function',
                 function: {
                     name: 'plan_next_week',
-                    description: 'Создать план постов на следующую свободную неделю по заданной теме',
+                    description: 'Создать план постов на неделю по заданной теме. Можно указать конкретную дату начала (или "текущая неделя"), иначе будет выбрана следующая свободная.',
                     parameters: {
                         type: 'object',
                         properties: {
-                            theme: { type: 'string', description: 'Тема недели' }
+                            theme: { type: 'string', description: 'Тема недели' },
+                            startDate: { type: 'string', description: 'Дата начала недели (или любая дата внутри недели) в формате YYYY-MM-DD или описание "текущая неделя".' }
                         },
                         required: ['theme']
                     }
@@ -113,7 +114,7 @@ class AgentService {
         let response = await openai.chat.completions.create({
             model: 'gpt-4o',
             messages: [
-                { role: 'system', content: AGENT_SYSTEM_PROMPT },
+                { role: 'system', content: `${AGENT_SYSTEM_PROMPT}\n\nТекущая дата: ${new Date().toISOString()}` },
                 ...this.history
             ],
             tools,
@@ -134,13 +135,40 @@ class AgentService {
 
                 try {
                     if (name === 'plan_next_week') {
-                        const { start, end } = await plannerService.getNextWeekRange();
+                        let start, end;
+                        if (args.startDate) {
+                            // Try to parse date
+                            const date = new Date(args.startDate);
+                            if (isNaN(date.getTime())) {
+                                // Default checks if "current" or "this week"
+                                const lower = args.startDate.toLowerCase();
+                                if (lower.includes('текущ') || lower.includes('this') || lower.includes('сейчас')) {
+                                    const range = await plannerService.getCurrentWeekRange();
+                                    start = range.start;
+                                    end = range.end;
+                                } else {
+                                    throw new Error(`Invalid date format: ${args.startDate}`);
+                                }
+                            } else {
+                                const range = await plannerService.getWeekRangeForDate(date);
+                                start = range.start;
+                                end = range.end;
+                            }
+                        } else {
+                            const range = await plannerService.getNextWeekRange();
+                            start = range.start;
+                            end = range.end;
+                        }
+
+                        console.log(`Planning for week: ${format(start, 'yyyy-MM-dd')} - ${format(end, 'yyyy-MM-dd')}`);
+
                         const week = await plannerService.createWeek(1, args.theme, start, end);
                         await plannerService.generateSlots(week.id, 1, start);
                         const topics = await generatorService.generateTopics(args.theme);
                         // topics is now { topic, category, tags }[]
                         await plannerService.saveTopics(week.id, topics);
                         result = { success: true, message: `План создан на ${format(start, 'dd.MM')} - ${format(end, 'dd.MM')}. Темы сгенерированы.`, weekId: week.id };
+
                     } else if (name === 'get_current_status') {
                         const weeks = await prisma.week.findMany({
                             take: 3,

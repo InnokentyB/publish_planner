@@ -139,6 +139,67 @@ class TelegramService {
             await this.sendWeekDetails(ctx, week.id);
         });
 
+
+        // --- Prompt Management ---
+
+        this.bot.command('edit_prompts', async (ctx) => {
+            await ctx.reply('Выберите промпт для редактирования:',
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('✍️ Creator Agent', `view_prompt_${multiAgentService.KEY_CREATOR}`)],
+                    [Markup.button.callback('🤔 Critic Agent', `view_prompt_${multiAgentService.KEY_CRITIC}`)],
+                    [Markup.button.callback('🔧 Fixer Agent', `view_prompt_${multiAgentService.KEY_FIXER}`)]
+                ])
+            );
+        });
+
+        this.bot.action(/^view_prompt_(.+)$/, async (ctx) => {
+            await ctx.answerCbQuery();
+            // @ts-ignore
+            const key = ctx.match[1];
+
+            // We need a way to get the current prompt. 
+            // Since `getPrompt` is private in MultiAgentService, we might need to expose a getter 
+            // OR use prisma directly here. Let's use Prisma directly to avoid changing service interface if possible, 
+            // OR better, add a public getter to MultiAgentService. 
+            // For now, I'll access Prisma via existing reference in this file.
+
+            const setting = await prisma.promptSettings.findUnique({ where: { key } });
+            const value = setting?.value || 'Is not set (using default)';
+
+            await ctx.reply(`📜 **Текущий промпт (${key}):**\n\n\`${value}\``,
+                {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.callback('✏️ Редактировать', `edit_prompt_${key}`)],
+                        [Markup.button.callback('🔙 Назад', `back_to_prompts`)]
+                    ])
+                }
+            );
+        });
+
+        this.bot.action('back_to_prompts', async (ctx) => {
+            await ctx.answerCbQuery();
+            await ctx.editMessageText('Выберите промпт для редактирования:',
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('✍️ Creator Agent', `view_prompt_${multiAgentService.KEY_CREATOR}`)],
+                    [Markup.button.callback('🤔 Critic Agent', `view_prompt_${multiAgentService.KEY_CRITIC}`)],
+                    [Markup.button.callback('🔧 Fixer Agent', `view_prompt_${multiAgentService.KEY_FIXER}`)]
+                ])
+            );
+        });
+
+        this.bot.action(/^edit_prompt_(.+)$/, async (ctx) => {
+            await ctx.answerCbQuery();
+            // @ts-ignore
+            const key = ctx.match[1];
+            // @ts-ignore
+            const userId = ctx.from.id;
+
+            this.promptEditState.set(userId, key);
+
+            await ctx.reply(`Введите новый текст для промпта **${key}**.\n\nОтправьте текст одним сообщением.`, { parse_mode: 'Markdown' });
+        });
+
         this.bot.on('text', async (ctx: Context) => {
             console.log('Received text:', ctx.message);
             // @ts-ignore
@@ -264,63 +325,7 @@ class TelegramService {
 
         // --- Prompt Management ---
 
-        this.bot.command('edit_prompts', async (ctx) => {
-            await ctx.reply('Выберите промпт для редактирования:',
-                Markup.inlineKeyboard([
-                    [Markup.button.callback('✍️ Creator Agent', `view_prompt_${multiAgentService.KEY_CREATOR}`)],
-                    [Markup.button.callback('🤔 Critic Agent', `view_prompt_${multiAgentService.KEY_CRITIC}`)],
-                    [Markup.button.callback('🔧 Fixer Agent', `view_prompt_${multiAgentService.KEY_FIXER}`)]
-                ])
-            );
-        });
 
-        this.bot.action(/^view_prompt_(.+)$/, async (ctx) => {
-            await ctx.answerCbQuery();
-            // @ts-ignore
-            const key = ctx.match[1];
-
-            // We need a way to get the current prompt. 
-            // Since `getPrompt` is private in MultiAgentService, we might need to expose a getter 
-            // OR use prisma directly here. Let's use Prisma directly to avoid changing service interface if possible, 
-            // OR better, add a public getter to MultiAgentService. 
-            // For now, I'll access Prisma via existing reference in this file.
-
-            const setting = await prisma.promptSettings.findUnique({ where: { key } });
-            const value = setting?.value || 'Is not set (using default)';
-
-            await ctx.reply(`📜 **Текущий промпт (${key}):**\n\n\`${value}\``,
-                {
-                    parse_mode: 'Markdown',
-                    ...Markup.inlineKeyboard([
-                        [Markup.button.callback('✏️ Редактировать', `edit_prompt_${key}`)],
-                        [Markup.button.callback('🔙 Назад', `back_to_prompts`)]
-                    ])
-                }
-            );
-        });
-
-        this.bot.action('back_to_prompts', async (ctx) => {
-            await ctx.answerCbQuery();
-            await ctx.editMessageText('Выберите промпт для редактирования:',
-                Markup.inlineKeyboard([
-                    [Markup.button.callback('✍️ Creator Agent', `view_prompt_${multiAgentService.KEY_CREATOR}`)],
-                    [Markup.button.callback('🤔 Critic Agent', `view_prompt_${multiAgentService.KEY_CRITIC}`)],
-                    [Markup.button.callback('🔧 Fixer Agent', `view_prompt_${multiAgentService.KEY_FIXER}`)]
-                ])
-            );
-        });
-
-        this.bot.action(/^edit_prompt_(.+)$/, async (ctx) => {
-            await ctx.answerCbQuery();
-            // @ts-ignore
-            const key = ctx.match[1];
-            // @ts-ignore
-            const userId = ctx.from.id;
-
-            this.promptEditState.set(userId, key);
-
-            await ctx.reply(`Введите новый текст для промпта **${key}**.\n\nОтправьте текст одним сообщением.`, { parse_mode: 'Markdown' });
-        });
 
     }
 

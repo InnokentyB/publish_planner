@@ -19,7 +19,7 @@ class PublisherService {
         const duePosts = await prisma.post.findMany({
             where: {
                 status: {
-                    in: ['scheduled', 'scheduled_native'] // Include both, though scheduled_native are handled by Telegram
+                    in: ['scheduled', 'scheduled_native']
                 },
                 publish_at: { lte: now }
             },
@@ -31,9 +31,6 @@ class PublisherService {
         console.log(`Found ${duePosts.length} posts due (or past due) for publishing.`);
 
         for (const post of duePosts) {
-            // Skip if it was native scheduled and we assume Telegram handled it
-            // But if we want to support "manual" publishing of missed native posts, we might need check.
-            // For now, let's assume 'scheduled' means "waiting for bot to publish".
             if (post.status === 'scheduled_native') continue;
 
             try {
@@ -64,10 +61,8 @@ class PublisherService {
                             caption: post.topic ? `**${post.topic}**` : '',
                             parse_mode: 'Markdown'
                         });
-                        // Send full text as separate message
-                        await telegramService.sendMessage(targetChannelId, text, {
-                            parse_mode: 'Markdown'
-                        });
+                        // Send full text as separate message(s)
+                        await this.sendTextSplitting(targetChannelId, text);
                     } else {
                         await telegramService.sendPhoto(targetChannelId, photoSource, {
                             caption: text,
@@ -75,9 +70,7 @@ class PublisherService {
                         });
                     }
                 } else {
-                    await telegramService.sendMessage(targetChannelId, text, {
-                        parse_mode: 'Markdown'
-                    });
+                    await this.sendTextSplitting(targetChannelId, text);
                 }
 
                 // Update status to published
@@ -94,11 +87,12 @@ class PublisherService {
 
         return duePosts.length;
     }
+
     async publishPostNow(postId: number) {
         // 1. Fetch Post with Channel info
         const post = await prisma.post.findUnique({
             where: { id: postId },
-            include: { channel: true } // Ensure channel is fetched
+            include: { channel: true }
         });
 
         if (!post) {
@@ -131,9 +125,7 @@ class PublisherService {
                 });
 
                 // Send Text
-                await telegramService.sendMessage(targetChannelId, text, {
-                    parse_mode: 'Markdown'
-                });
+                await this.sendTextSplitting(targetChannelId, text);
             } else {
                 await telegramService.sendPhoto(targetChannelId, photoSource, {
                     caption: text,
@@ -141,9 +133,7 @@ class PublisherService {
                 });
             }
         } else {
-            await telegramService.sendMessage(targetChannelId, text, {
-                parse_mode: 'Markdown'
-            });
+            await this.sendTextSplitting(targetChannelId, text);
         }
 
         // 4. Update DB Status to published
@@ -153,6 +143,35 @@ class PublisherService {
         });
 
         return true;
+    }
+
+    private async sendTextSplitting(chatId: string, text: string) {
+        const MAX_LENGTH = 4090; // Leave room for markdown safety
+        if (text.length <= MAX_LENGTH) {
+            await telegramService.sendMessage(chatId, text, {
+                parse_mode: 'Markdown'
+            });
+        } else {
+            // Split logic
+            const chunks = [];
+            let remaining = text;
+            while (remaining.length > 0) {
+                let chunk = remaining.substring(0, MAX_LENGTH);
+                // Try to cut at newline
+                const lastNewline = chunk.lastIndexOf('\n');
+                if (lastNewline > MAX_LENGTH * 0.8) {
+                    chunk = remaining.substring(0, lastNewline);
+                }
+                chunks.push(chunk);
+                remaining = remaining.substring(chunk.length);
+            }
+
+            for (const chunk of chunks) {
+                await telegramService.sendMessage(chatId, chunk, {
+                    parse_mode: 'Markdown'
+                });
+            }
+        }
     }
 }
 

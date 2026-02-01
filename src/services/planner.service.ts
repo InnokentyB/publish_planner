@@ -26,6 +26,12 @@ class PlannerService {
         return { start, end };
     }
 
+    async getWeekRangeForDate(date: Date) {
+        const start = startOfWeek(date, { weekStartsOn: 1 });
+        const end = endOfWeek(date, { weekStartsOn: 1 });
+        return { start, end };
+    }
+
     async createWeek(channelId: number, theme: string, start: Date, end: Date) {
         return prisma.week.create({
             data: {
