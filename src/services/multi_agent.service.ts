@@ -295,12 +295,25 @@ class MultiAgentService {
         }
 
         try {
-            // Attempt to clean markdown json blocks if Claude adds them
-            content = content.replace(/```json/g, '').replace(/```/g, '').trim();
-            result = JSON.parse(content) as CritiqueResult;
+            // Attempt to extract JSON object from text (handles text before/after JSON)
+            let cleaned = content.trim();
+            const firstBrace = cleaned.indexOf('{');
+            const lastBrace = cleaned.lastIndexOf('}');
+
+            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+            }
+
+            const parsed = JSON.parse(cleaned);
+
+            // Map alternative keys that LLMs sometimes use
+            result = {
+                score: typeof parsed.score === 'number' ? parsed.score : (typeof parsed.points === 'number' ? parsed.points : 50),
+                critique: parsed.critique || parsed.comment || parsed.feedback || parsed.reasons || "No specific critique provided."
+            };
         } catch (e) {
-            result = { score: 50, critique: "Failed to parse critique." };
-            console.error('JSON Parse Error:', content);
+            result = { score: 50, critique: "Failed to parse critique from response." };
+            console.error('JSON Parse Error. Full Content:', content);
         }
 
         if (runId > 0) {
@@ -357,7 +370,7 @@ class MultiAgentService {
             await this.prisma.agentIteration.create({
                 data: {
                     run_id: runId, iteration_number: iteration, agent_role: 'post_fixer',
-                    input: `Critique: ${critique.substring(0, 200)}...`,
+                    input: `Critique: ${(critique || '').substring(0, 200)}...`,
                     output: output
                 }
             }).catch(console.error);
