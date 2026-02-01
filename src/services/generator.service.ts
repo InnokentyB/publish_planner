@@ -71,29 +71,13 @@ class GeneratorService {
         });
     }
 
-    async generateTopics(theme: string): Promise<{ topic: string, category: string, tags: string[] }[]> {
+    async generateTopics(theme: string): Promise<{ topics: { topic: string, category: string, tags: string[] }[], score: number }> {
         return await multiAgentService.refineTopics(theme);
     }
 
     async generatePostText(theme: string, topic: string) {
-        const prompt = `
-        Тема недели: ${theme}
-        Тема поста: ${topic}
-        
-        Напиши максимально подробный, экспертный и глубокий пост, используя свой системный промпт.
-        Текст должен быть объемом от 3000 до 4000 символов.
-        `;
-
-        const response = await this.openai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: [
-                { role: 'system', content: POST_SYSTEM_PROMPT },
-                { role: 'user', content: prompt }
-            ],
-            temperature: 0.7
-        });
-
-        return response.choices[0].message.content || '';
+        const result = await multiAgentService.runPostGeneration(theme, topic);
+        return result.finalText;
     }
 
     async generateImagePrompt(topic: string, text: string, provider: 'dalle' | 'nano' = 'dalle'): Promise<string> {

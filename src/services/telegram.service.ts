@@ -143,12 +143,86 @@ class TelegramService {
         // --- Prompt Management ---
 
         this.bot.command('edit_prompts', async (ctx) => {
-            await ctx.reply('Выберите промпт для редактирования:',
+            await ctx.reply('Выберите категорию агентов:',
                 Markup.inlineKeyboard([
-                    [Markup.button.callback('✍️ Creator Agent', `view_prompt_${multiAgentService.KEY_CREATOR}`)],
-                    [Markup.button.callback('🤔 Critic Agent', `view_prompt_${multiAgentService.KEY_CRITIC}`)],
-                    [Markup.button.callback('🔧 Fixer Agent', `view_prompt_${multiAgentService.KEY_FIXER}`)]
+                    [Markup.button.callback('📑 Агенты Тем (Topic Agents)', 'menu_topic_agents')],
+                    [Markup.button.callback('✍️ Агенты Постов (Post Agents)', 'menu_post_agents')]
                 ])
+            );
+        });
+
+        // --- Topic Agents Menu ---
+        this.bot.action('menu_topic_agents', async (ctx) => {
+            await ctx.answerCbQuery();
+            await ctx.editMessageText('Агенты генерации тем (Topic Agents):',
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('Idea Creator', `view_prompt_${multiAgentService.KEY_TOPIC_CREATOR}`)],
+                    [Markup.button.callback('Critic', `view_prompt_${multiAgentService.KEY_TOPIC_CRITIC}`)],
+                    [Markup.button.callback('Fixer', `view_prompt_${multiAgentService.KEY_TOPIC_FIXER}`)],
+                    [Markup.button.callback('🔙 Назад', 'back_to_main_prompts')]
+                ])
+            );
+        });
+
+        // --- Post Agents Menu ---
+        this.bot.action('menu_post_agents', async (ctx) => {
+            await ctx.answerCbQuery();
+            await ctx.editMessageText('Агенты генерации постов (Post Agents):',
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('Post Creator', `config_agent_post_creator`)],
+                    [Markup.button.callback('Post Critic', `config_agent_post_critic`)],
+                    [Markup.button.callback('Post Fixer', `config_agent_post_fixer`)],
+                    [Markup.button.callback('🔙 Назад', 'back_to_main_prompts')]
+                ])
+            );
+        });
+
+        this.bot.action('back_to_main_prompts', async (ctx) => {
+            await ctx.answerCbQuery();
+            await ctx.editMessageText('Выберите категорию агентов:',
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('📑 Агенты Тем (Topic Agents)', 'menu_topic_agents')],
+                    [Markup.button.callback('✍️ Агенты Постов (Post Agents)', 'menu_post_agents')]
+                ])
+            );
+        });
+
+        // --- Config Agent Menu (Post Agents) ---
+        this.bot.action(/^config_agent_(.+)$/, async (ctx) => {
+            await ctx.answerCbQuery();
+            // @ts-ignore
+            const agentRole = ctx.match[1]; // post_creator, post_critic, post_fixer
+
+            let roleName = '';
+            let keyPrompt = '', keyApiKey = '', keyModel = '';
+
+            if (agentRole === 'post_creator') {
+                roleName = 'Post Creator';
+                keyPrompt = multiAgentService.KEY_POST_CREATOR_PROMPT;
+                keyApiKey = multiAgentService.KEY_POST_CREATOR_KEY;
+                keyModel = multiAgentService.KEY_POST_CREATOR_MODEL;
+            } else if (agentRole === 'post_critic') {
+                roleName = 'Post Critic';
+                keyPrompt = multiAgentService.KEY_POST_CRITIC_PROMPT;
+                keyApiKey = multiAgentService.KEY_POST_CRITIC_KEY;
+                keyModel = multiAgentService.KEY_POST_CRITIC_MODEL;
+            } else if (agentRole === 'post_fixer') {
+                roleName = 'Post Fixer';
+                keyPrompt = multiAgentService.KEY_POST_FIXER_PROMPT;
+                keyApiKey = multiAgentService.KEY_POST_FIXER_KEY;
+                keyModel = multiAgentService.KEY_POST_FIXER_MODEL;
+            }
+
+            await ctx.editMessageText(`Настройка агента **${roleName}**:`,
+                {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.callback('📝 Системный Промпт', `view_prompt_${keyPrompt}`)],
+                        [Markup.button.callback('🔑 API Key', `view_prompt_${keyApiKey}`)],
+                        [Markup.button.callback('🤖 Model Name', `view_prompt_${keyModel}`)],
+                        [Markup.button.callback('🔙 Назад к списку', 'menu_post_agents')]
+                    ])
+                }
             );
         });
 
@@ -179,11 +253,14 @@ class TelegramService {
 
         this.bot.action('back_to_prompts', async (ctx) => {
             await ctx.answerCbQuery();
-            await ctx.editMessageText('Выберите промпт для редактирования:',
+            // Detect which menu to go back to based on context or just go to main topic menu (legacy behavior)
+            // But we have a new structure. Let's redirect to Topic Agents menu for legacy calls
+            await ctx.editMessageText('Агенты генерации тем (Topic Agents):',
                 Markup.inlineKeyboard([
-                    [Markup.button.callback('✍️ Creator Agent', `view_prompt_${multiAgentService.KEY_CREATOR}`)],
-                    [Markup.button.callback('🤔 Critic Agent', `view_prompt_${multiAgentService.KEY_CRITIC}`)],
-                    [Markup.button.callback('🔧 Fixer Agent', `view_prompt_${multiAgentService.KEY_FIXER}`)]
+                    [Markup.button.callback('Idea Creator', `view_prompt_${multiAgentService.KEY_TOPIC_CREATOR}`)],
+                    [Markup.button.callback('Critic', `view_prompt_${multiAgentService.KEY_TOPIC_CRITIC}`)],
+                    [Markup.button.callback('Fixer', `view_prompt_${multiAgentService.KEY_TOPIC_FIXER}`)],
+                    [Markup.button.callback('🔙 Назад', 'back_to_main_prompts')]
                 ])
             );
         });
@@ -349,12 +426,12 @@ class TelegramService {
         await ctx.reply(`Принята тема: "${theme}". Генерирую темы постов...`);
 
         // 3. Generate Topics
-        const topics = await generatorService.generateTopics(theme);
+        const { topics, score } = await generatorService.generateTopics(theme);
         await plannerService.saveTopics(weekId, topics);
 
         // 4. Send Review
         const response = topics.map((t, i) => `${(i + 1).toString().padStart(2, '0')}. ${t.topic} [${t.category}]`).join('\n');
-        await ctx.reply(`Вот предложенные темы:\n\n${response}`,
+        await ctx.reply(`Вот предложенные темы (Оценка качества: ${score}/100):\n\n${response}`,
             Markup.inlineKeyboard([
                 [Markup.button.callback('✅ Ок', `approve_topics_${weekId}`)],
                 [Markup.button.callback('🔄 Перегенерировать', `decline_topics_${weekId}`)]
@@ -608,11 +685,11 @@ class TelegramService {
 
         await ctx.reply(`🔄 Генерирую новые темы (Попытка ${existingWeek.regen_attempt + 1}/3)...`);
 
-        const topics = await generatorService.generateTopics(existingWeek.theme);
+        const { topics, score } = await generatorService.generateTopics(existingWeek.theme);
         await plannerService.saveTopics(existingWeek.id, topics);
 
         const response = topics.map((t, i) => `${i + 1}. ${t.topic}`).join('\n');
-        await ctx.reply(`Вот НОВЫЕ предложенные темы:\n\n${response}`,
+        await ctx.reply(`Вот НОВЫЕ предложенные темы (Оценка качества: ${score}/100):\n\n${response}`,
             Markup.inlineKeyboard([
                 [Markup.button.callback('✅ Ок', `approve_topics_${existingWeek.id}`)],
                 [Markup.button.callback('🔄 Перегенерировать', `decline_topics_${existingWeek.id}`)]
