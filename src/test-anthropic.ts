@@ -21,7 +21,7 @@ async function testAnthropic() {
     // Fixer: Anthropic
 
     try {
-        const result = await multiAgentService.runPostGeneration('AI Trends 2026', 'Why coding agents are the future');
+        const result = await multiAgentService.runPostGeneration(1, 'AI Trends 2026', 'Why coding agents are the future');
         console.log('Generation finished successfully!');
         console.log('Final Score:', result.score);
         console.log('Iterations:', result.iterations);

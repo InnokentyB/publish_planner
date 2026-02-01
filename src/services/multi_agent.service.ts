@@ -41,14 +41,35 @@ class MultiAgentService {
     public readonly KEY_POST_FIXER_KEY = 'multi_agent_post_fixer_key';
     public readonly KEY_POST_FIXER_MODEL = 'multi_agent_post_fixer_model';
 
+    // Keys for Topic Generation Agents
+    public readonly KEY_TOPIC_CREATOR_PROMPT = 'multi_agent_topic_creator_prompt';
+    public readonly KEY_TOPIC_CREATOR_KEY = 'multi_agent_topic_creator_key';
+    public readonly KEY_TOPIC_CREATOR_MODEL = 'multi_agent_topic_creator_model';
+
+    public readonly KEY_TOPIC_CRITIC_PROMPT = 'multi_agent_topic_critic_prompt';
+    public readonly KEY_TOPIC_CRITIC_KEY = 'multi_agent_topic_critic_key';
+    public readonly KEY_TOPIC_CRITIC_MODEL = 'multi_agent_topic_critic_model';
+
+    public readonly KEY_TOPIC_FIXER_PROMPT = 'multi_agent_topic_fixer_prompt';
+    public readonly KEY_TOPIC_FIXER_KEY = 'multi_agent_topic_fixer_key';
+    public readonly KEY_TOPIC_FIXER_MODEL = 'multi_agent_topic_fixer_model';
+
     // Default Propmts for Post Generation (similar to legacy but split)
     private readonly DEFAULT_POST_CREATOR_PROMPT = `You are an expert content creator. Write an engaging, insightful, and professionally formatted Telegram post about the given topic. Use Markdown. Focus on value. Max 4000 chars.`;
     private readonly DEFAULT_POST_CRITIC_PROMPT = `You are a strict editor. Evaluate the post based on relevance, insight, clarity, engagement, and formatting. Output JSON with "score" (0-100) and "critique".`;
-    private readonly DEFAULT_POST_FIXER_PROMPT = `You are an expert editor. Rewrite the post to address the critique while keeping the original meaning. Return only the improved text.`;
+    private readonly DEFAULT_POST_FIXER_PROMPT = `You are an expert editor. Rewrite the post to address the critique while keeping the original meaning. 
+
+CRITICAL: Return ONLY the improved post text itself. Do NOT include:
+- Any meta-commentary about what you changed
+- Explanations of improvements
+- Analysis of the critique
+- Introductory phrases like "Here's the improved version" or "Замечательная работа"
+
+Start directly with the post content.`;
 
     // Default Prompts for Topic Generation (Restored)
     private readonly DEFAULT_TOPIC_CREATOR_PROMPT = `You are an expert content strategist. 
-    Generate 14 unique, engaging, and valuable topics for a tech Telegram channel based on the provided theme.
+    Generate 2 unique, engaging, and valuable topics for a tech Telegram channel based on the provided theme.
     
     For each topic, provide:
     - topic: The title/subject
@@ -58,7 +79,7 @@ class MultiAgentService {
     Return ONLY a JSON object with a "topics" property containing an array of objects.
     Example: { "topics": [{"topic": "...", "category": "...", "tags": [...]}, ...] }`;
 
-    private readonly DEFAULT_TOPIC_CRITIC_PROMPT = `You are a critical content strategist. Review the proposed list of 14 topics.
+    private readonly DEFAULT_TOPIC_CRITIC_PROMPT = `You are a critical content strategist. Review the proposed list of 2 topics.
     Critique based on:
     1. Variety (are they all the same?)
     2. Relevance to the theme
@@ -72,7 +93,7 @@ class MultiAgentService {
     }`;
 
     private readonly DEFAULT_TOPIC_FIXER_PROMPT = `You are an expert content strategist. Fix the list of topics based on the critique.
-    Ensure there are exactly 14 topics.
+    Ensure there are exactly 2 topics.
     Return ONLY a JSON object with a "topics" property containing an array of objects.`;
 
     constructor() {
@@ -86,23 +107,30 @@ class MultiAgentService {
         this.prisma = new PrismaClient({ adapter });
     }
 
-    private async getPrompt(key: string, defaultVal: string): Promise<string> {
+    private async getPrompt(projectId: number, key: string, defaultVal: string): Promise<string> {
         try {
-            const setting = await this.prisma.promptSettings.findUnique({ where: { key } });
+            const setting = await this.prisma.projectSettings.findUnique({
+                where: {
+                    project_id_key: {
+                        project_id: projectId,
+                        key: key
+                    }
+                }
+            });
             if (setting) return setting.value;
 
-            // Create default if missing
-            await this.prisma.promptSettings.create({
-                data: { key, value: defaultVal }
+            // Create default if missing for this project
+            await this.prisma.projectSettings.create({
+                data: { project_id: projectId, key, value: defaultVal }
             });
             return defaultVal;
         } catch (e) {
-            console.error(`Failed to fetch prompt for ${key}`, e);
+            console.error(`Failed to fetch prompt for ${key} in project ${projectId}`, e);
             return defaultVal;
         }
     }
 
-    private async getAgentConfig(rolePrefix: string) {
+    public async getAgentConfig(projectId: number, rolePrefix: string) {
         let apiKeyKey = '';
         let modelKey = '';
         let promptKey = '';
@@ -123,11 +151,26 @@ class MultiAgentService {
             modelKey = this.KEY_POST_FIXER_MODEL;
             promptKey = this.KEY_POST_FIXER_PROMPT;
             defaultPrompt = this.DEFAULT_POST_FIXER_PROMPT;
+        } else if (rolePrefix === 'topic_creator') {
+            apiKeyKey = this.KEY_TOPIC_CREATOR_KEY;
+            modelKey = this.KEY_TOPIC_CREATOR_MODEL;
+            promptKey = this.KEY_TOPIC_CREATOR_PROMPT;
+            defaultPrompt = this.DEFAULT_TOPIC_CREATOR_PROMPT;
+        } else if (rolePrefix === 'topic_critic') {
+            apiKeyKey = this.KEY_TOPIC_CRITIC_KEY;
+            modelKey = this.KEY_TOPIC_CRITIC_MODEL;
+            promptKey = this.KEY_TOPIC_CRITIC_PROMPT;
+            defaultPrompt = this.DEFAULT_TOPIC_CRITIC_PROMPT;
+        } else if (rolePrefix === 'topic_fixer') {
+            apiKeyKey = this.KEY_TOPIC_FIXER_KEY;
+            modelKey = this.KEY_TOPIC_FIXER_MODEL;
+            promptKey = this.KEY_TOPIC_FIXER_PROMPT;
+            defaultPrompt = this.DEFAULT_TOPIC_FIXER_PROMPT;
         }
 
-        const apiKey = await this.getPrompt(apiKeyKey, '');
-        const model = await this.getPrompt(modelKey, 'gpt-4o');
-        const prompt = await this.getPrompt(promptKey, defaultPrompt);
+        const apiKey = await this.getPrompt(projectId, apiKeyKey, '');
+        const model = await this.getPrompt(projectId, modelKey, 'gpt-4o');
+        const prompt = await this.getPrompt(projectId, promptKey, defaultPrompt);
 
         return {
             apiKey: apiKey || process.env.OPENAI_API_KEY, // Fallback to env
@@ -138,7 +181,7 @@ class MultiAgentService {
 
     // --- Post Generation Loop (New) ---
 
-    async runPostGeneration(theme: string, topic: string): Promise<MultiAgentResult> {
+    async runPostGeneration(projectId: number, theme: string, topic: string): Promise<MultiAgentResult> {
         console.log(`[MultiAgent Post] Starting generation for: "${topic}"`);
 
         let runLogId = 0;
@@ -149,7 +192,7 @@ class MultiAgentService {
             runLogId = runLog.id;
         } catch (e) { console.error('Failed to create run log', e); }
 
-        const creatorConfig = await this.getAgentConfig('post_creator');
+        const creatorConfig = await this.getAgentConfig(projectId, 'post_creator');
         let currentText = await this.postCreator(theme, topic, creatorConfig, runLogId);
 
         let currentScore = 0;
@@ -162,8 +205,8 @@ class MultiAgentService {
             iterations++;
             console.log(`[MultiAgent Post] Iteration ${iterations} starting...`);
 
-            const criticConfig = await this.getAgentConfig('post_critic');
-            const fixerConfig = await this.getAgentConfig('post_fixer');
+            const criticConfig = await this.getAgentConfig(projectId, 'post_critic');
+            const fixerConfig = await this.getAgentConfig(projectId, 'post_fixer');
 
             const critiqueResult = await this.postCritic(currentText, topic, criticConfig, runLogId, iterations);
             currentScore = critiqueResult.score;
@@ -394,7 +437,7 @@ class MultiAgentService {
 
     // --- Topic List Generation ---
 
-    async refineTopics(theme: string): Promise<{ topics: { topic: string, category: string, tags: string[] }[], score: number }> {
+    async refineTopics(projectId: number, theme: string): Promise<{ topics: { topic: string, category: string, tags: string[] }[], score: number }> {
         console.log(`[MultiAgent] Starting topic generation for theme: "${theme}"`);
 
         // 1. Create Run Log (Topics)
@@ -407,7 +450,7 @@ class MultiAgentService {
         } catch (e) { console.error('Failed to create run log', e); }
 
         // Creator
-        const creatorPrompt = await this.getPrompt(this.KEY_TOPIC_CREATOR, this.DEFAULT_TOPIC_CREATOR_PROMPT);
+        const creatorPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CREATOR, this.DEFAULT_TOPIC_CREATOR_PROMPT);
         let currentTopicsJSON = await this.topicCreator(theme, creatorPrompt, runLogId);
 
         // Ensure it's valid JSON structure from the start
@@ -428,8 +471,8 @@ class MultiAgentService {
             iterations++;
             console.log(`[MultiAgent Topics] Iteration ${iterations} starting...`);
 
-            const criticPrompt = await this.getPrompt(this.KEY_TOPIC_CRITIC, this.DEFAULT_TOPIC_CRITIC_PROMPT);
-            const fixerPrompt = await this.getPrompt(this.KEY_TOPIC_FIXER, this.DEFAULT_TOPIC_FIXER_PROMPT);
+            const criticPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CRITIC, this.DEFAULT_TOPIC_CRITIC_PROMPT);
+            const fixerPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_FIXER, this.DEFAULT_TOPIC_FIXER_PROMPT);
 
             // Critic
             const critiqueResult = await this.topicCritic(currentTopicsJSON, theme, criticPrompt, runLogId, iterations);

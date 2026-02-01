@@ -31,8 +31,9 @@ async function main() {
 
     const post = await prisma.post.create({
         data: {
+            project_id: week.project_id,
             week_id: week.id,
-            channel_id: 1, // Assuming channel 1 exists
+            channel_id: null,
             slot_date: new Date(),
             slot_index: 999,
             publish_at: new Date(), // Now

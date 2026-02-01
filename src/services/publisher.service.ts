@@ -35,16 +35,16 @@ class PublisherService {
 
             try {
                 // Get the channel for this post
-                const channel = await prisma.channel.findUnique({
-                    where: { id: post.channel_id }
+                const channel = await prisma.socialChannel.findUnique({
+                    where: { id: post.channel_id || 0 }
                 });
 
-                if (!channel || !channel.telegram_channel_id) {
-                    console.error(`Channel not found or telegram_channel_id missing for post ${post.id}`);
+                if (!channel || channel.type !== 'telegram' || !(channel.config as any).telegram_channel_id) {
+                    console.error(`Channel not found or telegram config missing for post ${post.id}`);
                     continue;
                 }
 
-                const targetChannelId = channel.telegram_channel_id.toString();
+                const targetChannelId = (channel.config as any).telegram_channel_id.toString();
                 const text = post.final_text || post.generated_text || '';
 
                 if (post.image_url) {
@@ -99,12 +99,12 @@ class PublisherService {
             throw new Error(`Post ${postId} not found`);
         }
 
-        // 2. Get Channel ID
-        const channel = await prisma.channel.findUnique({ where: { id: post.channel_id } });
-        if (!channel || !channel.telegram_channel_id) {
-            throw new Error(`Channel not found for post ${postId}`);
+        // 2. Get Channel info
+        const channel = await prisma.socialChannel.findUnique({ where: { id: post.channel_id || 0 } });
+        if (!channel || channel.type !== 'telegram' || !(channel.config as any).telegram_channel_id) {
+            throw new Error(`Telegram channel config not found for post ${postId}`);
         }
-        const targetChannelId = channel.telegram_channel_id.toString();
+        const targetChannelId = (channel.config as any).telegram_channel_id.toString();
 
         // 3. Send Immediately
         const text = post.final_text || post.generated_text || '';

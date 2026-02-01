@@ -32,10 +32,10 @@ class PlannerService {
         return { start, end };
     }
 
-    async createWeek(channelId: number, theme: string, start: Date, end: Date) {
+    async createWeek(projectId: number, theme: string, start: Date, end: Date) {
         return prisma.week.create({
             data: {
-                channel_id: channelId,
+                project_id: projectId,
                 theme,
                 week_start: start,
                 week_end: end,
@@ -44,34 +44,32 @@ class PlannerService {
         });
     }
 
-    async generateSlots(weekId: number, channelId: number, start: Date) {
+    async generateSlots(weekId: number, projectId: number, start: Date) {
         const slots = [];
-        const SLOT_TIMES = [
-            { index: 1, time: '10:00' },
-            { index: 2, time: '18:00' }
+
+        // Generate only 2 posts per week: Monday 10:00 and Thursday 18:00
+        const SCHEDULE = [
+            { day: 0, time: '10:00', index: 1 }, // Monday morning
+            { day: 3, time: '18:00', index: 2 }  // Thursday evening
         ];
 
-        // Create 14 slots (Mo-Su * 2)
-        for (let day = 0; day < 7; day++) {
-            const date = addDays(start, day);
-            for (const slotTime of SLOT_TIMES) {
-                const [hours, minutes] = slotTime.time.split(':').map(Number);
+        for (const slot of SCHEDULE) {
+            const date = addDays(start, slot.day);
+            const [hours, minutes] = slot.time.split(':').map(Number);
 
-                // Create timestamp for publish_at relative to slot_date
-                // Ideally handle timezone here (defaulting to UTC or system time for MVP)
-                const publishAt = new Date(date);
-                publishAt.setHours(hours, minutes, 0, 0);
+            const publishAt = new Date(date);
+            publishAt.setHours(hours, minutes, 0, 0);
 
-                slots.push({
-                    week_id: weekId,
-                    channel_id: channelId,
-                    slot_date: date,
-                    slot_index: slotTime.index,
-                    publish_at: publishAt,
-                    topic_index: (day * 2) + slotTime.index, // 1..14
-                    status: 'planned'
-                });
-            }
+            slots.push({
+                project_id: projectId,
+                week_id: weekId,
+                // channel_id: null, // Now assigned manually or to default
+                slot_date: date,
+                slot_index: slot.index,
+                publish_at: publishAt,
+                topic_index: slot.index, // 1 or 2
+                status: 'planned'
+            });
         }
 
         // Bulk insert
@@ -80,10 +78,10 @@ class PlannerService {
         });
     }
 
-    async findWeekByDate(channelId: number, date: Date) {
+    async findWeekByDate(projectId: number, date: Date) {
         return prisma.week.findFirst({
             where: {
-                channel_id: channelId,
+                project_id: projectId,
                 week_start: { lte: date },
                 week_end: { gte: date }
             },

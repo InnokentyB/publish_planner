@@ -40,19 +40,25 @@ class GeneratorService {
         }
     }
 
-    async getImagePromptTemplate(provider: 'dalle' | 'nano' = 'dalle'): Promise<string> {
+    async getImagePromptTemplate(projectId: number, provider: 'dalle' | 'nano' = 'dalle'): Promise<string> {
         const key = provider === 'nano' ? this.PROMPT_KEY_NANO : this.PROMPT_KEY_DALLE;
         const defaultPrompt = provider === 'nano' ? this.DEFAULT_PROMPT_NANO : this.DEFAULT_PROMPT_DALLE;
 
-        const setting = await prisma.promptSettings.findUnique({
-            where: { key: key }
+        const setting = await prisma.projectSettings.findUnique({
+            where: {
+                project_id_key: {
+                    project_id: projectId,
+                    key: key
+                }
+            }
         });
 
         if (setting) return setting.value;
 
         // If not set, initialize with default
-        await prisma.promptSettings.create({
+        await prisma.projectSettings.create({
             data: {
+                project_id: projectId,
                 key: key,
                 value: defaultPrompt
             }
@@ -61,27 +67,32 @@ class GeneratorService {
         return defaultPrompt;
     }
 
-    async updateImagePromptTemplate(value: string, provider: 'dalle' | 'nano' = 'dalle') {
+    async updateImagePromptTemplate(projectId: number, value: string, provider: 'dalle' | 'nano' = 'dalle') {
         const key = provider === 'nano' ? this.PROMPT_KEY_NANO : this.PROMPT_KEY_DALLE;
 
-        await prisma.promptSettings.upsert({
-            where: { key: key },
+        await prisma.projectSettings.upsert({
+            where: {
+                project_id_key: {
+                    project_id: projectId,
+                    key: key
+                }
+            },
             update: { value },
-            create: { key: key, value }
+            create: { project_id: projectId, key: key, value }
         });
     }
 
-    async generateTopics(theme: string): Promise<{ topics: { topic: string, category: string, tags: string[] }[], score: number }> {
-        return await multiAgentService.refineTopics(theme);
+    async generateTopics(projectId: number, theme: string): Promise<{ topics: { topic: string, category: string, tags: string[] }[], score: number }> {
+        return await multiAgentService.refineTopics(projectId, theme);
     }
 
-    async generatePostText(theme: string, topic: string) {
-        const result = await multiAgentService.runPostGeneration(theme, topic);
+    async generatePostText(projectId: number, theme: string, topic: string) {
+        const result = await multiAgentService.runPostGeneration(projectId, theme, topic);
         return result.finalText;
     }
 
-    async generateImagePrompt(topic: string, text: string, provider: 'dalle' | 'nano' = 'dalle'): Promise<string> {
-        let template = await this.getImagePromptTemplate(provider);
+    async generateImagePrompt(projectId: number, topic: string, text: string, provider: 'dalle' | 'nano' = 'dalle'): Promise<string> {
+        let template = await this.getImagePromptTemplate(projectId, provider);
 
         // Replace placeholders safely
         const filledPrompt = template

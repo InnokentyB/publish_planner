@@ -35,6 +35,23 @@ class TelegramService {
         });
     }
 
+    private async getProjectId(ctx: Context): Promise<number | null> {
+        if (!ctx.chat) return 1; // Fallback to project 1 for global bots
+
+        // Try to find a channel that matches this chat id
+        const channel = await prisma.socialChannel.findFirst({
+            where: {
+                type: 'telegram',
+                config: {
+                    path: ['telegram_channel_id'],
+                    equals: ctx.chat.id.toString()
+                }
+            }
+        });
+
+        return channel ? channel.project_id : 1;
+    }
+
     private setupListeners() {
         this.bot.command('start', async (ctx) => {
             await ctx.reply('Привет! Я планировщик контента. Что хочешь сделать?',
@@ -46,23 +63,31 @@ class TelegramService {
         });
 
         this.bot.command('image_prompt', async (ctx) => {
+            const projectId = await this.getProjectId(ctx);
+            if (!projectId) return;
             // Alias for DALL-E
-            const prompt = await generatorService.getImagePromptTemplate('dalle');
+            const prompt = await generatorService.getImagePromptTemplate(projectId, 'dalle');
             await ctx.reply(`🎨 **Текущий промпт для DALL-E:**\n\n\`${prompt}\``, { parse_mode: 'Markdown' });
             await ctx.reply('Чтобы изменить, используй: `/set_prompt_dalle ...`');
         });
 
         this.bot.command('prompt_dalle', async (ctx) => {
-            const prompt = await generatorService.getImagePromptTemplate('dalle');
+            const projectId = await this.getProjectId(ctx);
+            if (!projectId) return;
+            const prompt = await generatorService.getImagePromptTemplate(projectId, 'dalle');
             await ctx.reply(`🎨 **Текущий промпт для DALL-E:**\n\n\`${prompt}\``, { parse_mode: 'Markdown' });
         });
 
         this.bot.command('prompt_nano', async (ctx) => {
-            const prompt = await generatorService.getImagePromptTemplate('nano');
+            const projectId = await this.getProjectId(ctx);
+            if (!projectId) return;
+            const prompt = await generatorService.getImagePromptTemplate(projectId, 'nano');
             await ctx.reply(`🍌 **Текущий промпт для Nano Banana:**\n\n\`${prompt}\``, { parse_mode: 'Markdown' });
         });
 
         this.bot.command('set_image_prompt', async (ctx) => {
+            const projectId = await this.getProjectId(ctx);
+            if (!projectId) return;
             // Legacy alias
             // @ts-ignore
             const newPrompt = ctx.message.text.replace('/set_image_prompt', '').trim();
@@ -70,11 +95,13 @@ class TelegramService {
                 await ctx.reply('Укажите промпт.');
                 return;
             }
-            await generatorService.updateImagePromptTemplate(newPrompt, 'dalle');
+            await generatorService.updateImagePromptTemplate(projectId, newPrompt, 'dalle');
             await ctx.reply('✅ Промпт для DALL-E обновлен!');
         });
 
         this.bot.command('set_prompt_dalle', async (ctx) => {
+            const projectId = await this.getProjectId(ctx);
+            if (!projectId) return;
             // @ts-ignore
             const newPrompt = ctx.message.text.replace('/set_prompt_dalle', '').trim();
             if (!newPrompt) {
@@ -82,11 +109,13 @@ class TelegramService {
                 return;
             }
 
-            await generatorService.updateImagePromptTemplate(newPrompt, 'dalle');
+            await generatorService.updateImagePromptTemplate(projectId, newPrompt, 'dalle');
             await ctx.reply('✅ Промпт для DALL-E обновлен!');
         });
 
         this.bot.command('set_prompt_nano', async (ctx) => {
+            const projectId = await this.getProjectId(ctx);
+            if (!projectId) return;
             // @ts-ignore
             const newPrompt = ctx.message.text.replace('/set_prompt_nano', '').trim();
             if (!newPrompt) {
@@ -94,7 +123,7 @@ class TelegramService {
                 return;
             }
 
-            await generatorService.updateImagePromptTemplate(newPrompt, 'nano');
+            await generatorService.updateImagePromptTemplate(projectId, newPrompt, 'nano');
             await ctx.reply('✅ Промпт для Nano Banana обновлен!');
         });
 
@@ -407,26 +436,25 @@ class TelegramService {
     }
 
     private async handleTheme(ctx: Context, theme: string) {
+        const projectId = await this.getProjectId(ctx) || 1;
         // 1. Get next week range
         const { start, end } = await plannerService.getNextWeekRange();
 
-        const channelId = 1;
-
-        const existingWeek = await plannerService.findWeekByDate(channelId, start);
+        const existingWeek = await plannerService.findWeekByDate(projectId, start);
         if (existingWeek) {
             // Force reset to allow re-trying with new theme
             await prisma.post.deleteMany({ where: { week_id: existingWeek.id } });
             await prisma.week.delete({ where: { id: existingWeek.id } });
         }
 
-        const week = await plannerService.createWeek(channelId, theme, start, end);
+        const week = await plannerService.createWeek(projectId, theme, start, end);
         const weekId = week.id;
-        await plannerService.generateSlots(weekId, channelId, start);
+        await plannerService.generateSlots(weekId, projectId, start);
 
         await ctx.reply(`Принята тема: "${theme}". Генерирую темы постов...`);
 
         // 3. Generate Topics
-        const { topics, score } = await generatorService.generateTopics(theme);
+        const { topics, score } = await generatorService.generateTopics(projectId, theme);
         await plannerService.saveTopics(weekId, topics);
 
         // 4. Send Review
@@ -440,15 +468,16 @@ class TelegramService {
     }
 
     private async handleApprove(ctx: Context, weekId?: number) {
+        const projectId = await this.getProjectId(ctx) || 1;
         let existingWeek;
         if (weekId) {
             existingWeek = await prisma.week.findUnique({
-                where: { id: weekId },
+                where: { id: weekId, project_id: projectId },
                 include: { posts: true }
             });
         } else {
             const { start } = await plannerService.getNextWeekRange();
-            existingWeek = await plannerService.findWeekByDate(1, start);
+            existingWeek = await plannerService.findWeekByDate(projectId, start);
         }
 
         if (!existingWeek || (existingWeek.status !== 'topics_generated' && existingWeek.status !== 'topics_approved')) {
@@ -457,7 +486,7 @@ class TelegramService {
         }
 
         await plannerService.updateWeekStatus(existingWeek.id, 'topics_approved');
-        await ctx.reply('Темы утверждены! Начинаю генерацию длинных экспертных постов (14 штук). Это займет около 10 минут, я буду присылать их по мере готовности...');
+        await ctx.reply('Темы утверждены! Начинаю генерацию длинных экспертных постов (2 штуки). Это займет несколько минут, я буду присылать их по мере готовности...');
 
         const posts = await plannerService.getWeekPosts(existingWeek.id);
         let count = 0;
@@ -466,9 +495,9 @@ class TelegramService {
             try {
                 if (!post.topic) continue;
                 count++;
-                console.log(`Generating post ${count}/14: ${post.topic}`);
+                console.log(`Generating post ${count}/2: ${post.topic}`);
 
-                const text = await generatorService.generatePostText(existingWeek.theme, post.topic);
+                const text = await generatorService.generatePostText(projectId, existingWeek.theme, post.topic);
                 const hashtag = post.category ? `\n\n#${post.category.replace(/\s+/g, '')}` : '';
                 const fullText = text + hashtag;
 
@@ -479,7 +508,7 @@ class TelegramService {
                 });
 
                 const dateStr = format(new Date(post.publish_at), 'dd.MM HH:mm');
-                let messageText = `📝 **Пост ${count}/14 на ${dateStr}**\nТема: ${post.topic}\nКатегория: ${post.category || 'N/A'}\nТеги: ${post.tags.join(', ')}\n\n${fullText}`;
+                let messageText = `📝 **Пост ${count}/2 на ${dateStr}**\nТема: ${post.topic}\nКатегория: ${post.category || 'N/A'}\nТеги: ${post.tags.join(', ')}\n\n${fullText}`;
 
                 if (messageText.length > 4000) {
                     messageText = messageText.substring(0, 3990) + '... (текст обрезан для лимита Telegram)';
@@ -549,6 +578,7 @@ class TelegramService {
     }
 
     async handleGenerateImage(ctx: Context, postId: number, provider: 'dalle' | 'nano') {
+        const projectId = await this.getProjectId(ctx) || 1;
         try {
             await ctx.deleteMessage();
         } catch (e) { }
@@ -556,7 +586,9 @@ class TelegramService {
         const providerName = provider === 'nano' ? 'Nano Banana' : 'DALL-E';
         const loadingMsg = await ctx.reply(`🎨 (${providerName}) Придумываю промпт и рисую... (это займет около 15-30 сек)`);
 
-        const post = await plannerService.getPostById(postId);
+        const post = await prisma.post.findUnique({
+            where: { id: postId, project_id: projectId }
+        });
         if (!post || !post.generated_text || !post.topic) {
             try { await ctx.telegram.deleteMessage(ctx.chat?.id!, loadingMsg.message_id); } catch (e) { }
             return;
@@ -567,7 +599,7 @@ class TelegramService {
                 throw new Error('GOOGLE_API_KEY is not configured for Nano Banana.');
             }
 
-            const prompt = await generatorService.generateImagePrompt(post.topic, post.generated_text, provider);
+            const prompt = await generatorService.generateImagePrompt(projectId, post.topic, post.generated_text, provider);
             console.log(`Image Prompt for ${postId} (${provider}):`, prompt);
 
             // Show prompt to user
@@ -625,11 +657,15 @@ class TelegramService {
     }
 
     async handlePostRegen(ctx: Context, postId: number) {
+        const projectId = await this.getProjectId(ctx) || 1;
         await ctx.reply(`Перегенерирую пост ${postId}...`);
-        const post = await plannerService.getPostById(postId);
+        const post = await prisma.post.findUnique({
+            where: { id: postId },
+            include: { week: true }
+        });
         if (!post || !post.week) return;
 
-        const text = await generatorService.generatePostText(post.week.theme, post.topic || '');
+        const text = await generatorService.generatePostText(projectId, post.week.theme, post.topic || '');
         await plannerService.updatePost(postId, {
             generated_text: text,
             final_text: text,
@@ -657,14 +693,15 @@ class TelegramService {
     }
 
     private async handleDecline(ctx: Context, weekId?: number) {
+        const projectId = await this.getProjectId(ctx) || 1;
         let existingWeek;
         if (weekId) {
             existingWeek = await prisma.week.findUnique({
-                where: { id: weekId }
+                where: { id: weekId, project_id: projectId }
             });
         } else {
             const { start } = await plannerService.getNextWeekRange();
-            existingWeek = await plannerService.findWeekByDate(1, start);
+            existingWeek = await plannerService.findWeekByDate(projectId, start);
         }
 
         if (!existingWeek || (existingWeek.status !== 'topics_generated' && existingWeek.status !== 'planning')) {
@@ -685,7 +722,7 @@ class TelegramService {
 
         await ctx.reply(`🔄 Генерирую новые темы (Попытка ${existingWeek.regen_attempt + 1}/3)...`);
 
-        const { topics, score } = await generatorService.generateTopics(existingWeek.theme);
+        const { topics, score } = await generatorService.generateTopics(projectId, existingWeek.theme);
         await plannerService.saveTopics(existingWeek.id, topics);
 
         const response = topics.map((t, i) => `${i + 1}. ${t.topic}`).join('\n');
@@ -716,7 +753,7 @@ class TelegramService {
         for (const post of posts) {
             try {
                 const dateStr = format(new Date(post.publish_at), 'dd.MM HH:mm');
-                let text = `📝 **Пост ${post.topic_index}/14 на ${dateStr}**\nТема: ${post.topic}\n\n${post.generated_text}`;
+                let text = `📝 **Пост ${post.topic_index}/2 на ${dateStr}**\nТема: ${post.topic}\n\n${post.generated_text}`;
 
                 if (text.length > 4000) {
                     text = text.substring(0, 3990) + '... (текст обрезан для лимита Telegram)';

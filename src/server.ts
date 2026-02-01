@@ -3,6 +3,10 @@ import { config } from 'dotenv';
 import telegramService from './services/telegram.service';
 import jobRoutes from './routes/jobs';
 import telegramRoutes from './routes/webhook';
+import apiRoutes from './routes/api.routes';
+import authRoutes from './routes/auth.routes';
+import projectRoutes from './routes/project.routes';
+import path from 'path';
 
 config();
 
@@ -10,7 +14,17 @@ const server = Fastify({
     logger: true
 });
 
+server.register(require('@fastify/cors'), {
+    origin: true
+});
 server.register(require('@fastify/formbody'));
+server.register(require('@fastify/static'), {
+    root: path.join(__dirname, '../frontend/dist'),
+    prefix: '/',
+});
+server.register(authRoutes);
+server.register(projectRoutes);
+server.register(apiRoutes);
 server.register(telegramRoutes);
 server.register(jobRoutes);
 

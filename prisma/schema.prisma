@@ -6,21 +6,98 @@ datasource db {
   provider = "postgresql"
 }
 
-model Channel {
-  id                  Int      @id @default(autoincrement())
-  name                String
-  telegram_channel_id BigInt
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
-  posts               Post[]
-  weeks               Week[]
+// ============================================
+// Authentication & Users
+// ============================================
 
-  @@map("channels")
+model User {
+  id            Int      @id @default(autoincrement())
+  email         String   @unique
+  password_hash String
+  name          String
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  memberships ProjectMember[]
+
+  @@map("users")
 }
+
+// ============================================
+// Projects & Teams
+// ============================================
+
+model Project {
+  id          Int      @id @default(autoincrement())
+  name        String
+  slug        String   @unique
+  description String?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  members  ProjectMember[]
+  channels SocialChannel[]
+  weeks    Week[]
+  posts    Post[]
+  settings ProjectSettings[]
+
+  @@map("projects")
+}
+
+model ProjectMember {
+  id         Int      @id @default(autoincrement())
+  project_id Int
+  user_id    Int
+  role       String // "owner", "editor", "viewer"
+  created_at DateTime @default(now())
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([project_id, user_id])
+  @@map("project_members")
+}
+
+model ProjectSettings {
+  id         Int      @id @default(autoincrement())
+  project_id Int
+  key        String
+  value      String
+  updated_at DateTime @updatedAt
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@unique([project_id, key])
+  @@map("project_settings")
+}
+
+// ============================================
+// Social Media Channels
+// ============================================
+
+model SocialChannel {
+  id         Int      @id @default(autoincrement())
+  project_id Int
+  type       String // "telegram", "vk", "instagram", "twitter", "linkedin"
+  name       String
+  config     Json // Platform-specific configuration
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  posts   Post[]
+
+  @@map("social_channels")
+}
+
+// ============================================
+// Content Planning
+// ============================================
 
 model Week {
   id            Int      @id @default(autoincrement())
-  channel_id    Int
+  project_id    Int
   week_start    DateTime @db.Date
   week_end      DateTime @db.Date
   theme         String
@@ -28,17 +105,19 @@ model Week {
   regen_attempt Int      @default(0)
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
-  posts         Post[]
-  channel       Channel  @relation(fields: [channel_id], references: [id])
 
-  @@unique([channel_id, week_start, week_end])
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  posts   Post[]
+
+  @@unique([project_id, week_start, week_end])
   @@map("weeks")
 }
 
 model Post {
   id                  Int      @id @default(autoincrement())
+  project_id          Int
   week_id             Int
-  channel_id          Int
+  channel_id          Int? // Which social channel to publish to
   slot_date           DateTime @db.Date
   slot_index          Int
   publish_at          DateTime @db.Timestamptz(6)
@@ -53,14 +132,21 @@ model Post {
   approval_message_id BigInt?
   created_at          DateTime @default(now())
   updated_at          DateTime @updatedAt
-  channel             Channel  @relation(fields: [channel_id], references: [id])
-  week                Week     @relation(fields: [week_id], references: [id])
 
+  project Project        @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  week    Week           @relation(fields: [week_id], references: [id], onDelete: Cascade)
+  channel SocialChannel? @relation(fields: [channel_id], references: [id], onDelete: SetNull)
+
+  @@index([project_id])
   @@index([week_id])
   @@index([publish_at])
   @@index([status])
   @@map("posts")
 }
+
+// ============================================
+// System & Logging
+// ============================================
 
 model Event {
   id          Int      @id @default(autoincrement())
@@ -73,22 +159,14 @@ model Event {
   @@map("events")
 }
 
-model PromptSettings {
-  id         Int      @id @default(autoincrement())
-  key        String   @unique
-  value      String
-  updated_at DateTime @updatedAt
-
-  @@map("prompt_settings")
-}
-
 model AgentRun {
-  id               Int              @id @default(autoincrement())
+  id               Int      @id @default(autoincrement())
   topic            String
-  final_score      Int              @default(0)
-  total_iterations Int              @default(0)
-  created_at       DateTime         @default(now())
-  iterations       AgentIteration[]
+  final_score      Int      @default(0)
+  total_iterations Int      @default(0)
+  created_at       DateTime @default(now())
+
+  iterations AgentIteration[]
 
   @@map("agent_runs")
 }
@@ -103,8 +181,23 @@ model AgentIteration {
   score            Int?
   critique         String?
   created_at       DateTime @default(now())
-  run              AgentRun @relation(fields: [run_id], references: [id])
+
+  run AgentRun @relation(fields: [run_id], references: [id], onDelete: Cascade)
 
   @@index([run_id])
   @@map("agent_iterations")
+}
+
+// ============================================
+// Legacy (to be migrated)
+// ============================================
+
+// This will be removed after migration to ProjectSettings
+model PromptSettings {
+  id         Int      @id @default(autoincrement())
+  key        String   @unique
+  value      String
+  updated_at DateTime @updatedAt
+
+  @@map("prompt_settings")
 }

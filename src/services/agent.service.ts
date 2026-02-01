@@ -24,7 +24,7 @@ const openai = new OpenAI({
 class AgentService {
     private history: any[] = [];
 
-    async processMessage(text: string) {
+    async processMessage(text: string, projectId: number = 1) {
         this.history.push({ role: 'user', content: text });
 
         const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -162,15 +162,16 @@ class AgentService {
 
                         console.log(`Planning for week: ${format(start, 'yyyy-MM-dd')} - ${format(end, 'yyyy-MM-dd')}`);
 
-                        const week = await plannerService.createWeek(1, args.theme, start, end);
-                        await plannerService.generateSlots(week.id, 1, start);
-                        const { topics } = await generatorService.generateTopics(args.theme);
+                        const week = await plannerService.createWeek(projectId, args.theme, start, end);
+                        await plannerService.generateSlots(week.id, projectId, start);
+                        const { topics } = await generatorService.generateTopics(projectId, args.theme);
                         // topics is now { topic, category, tags }[]
                         await plannerService.saveTopics(week.id, topics);
                         result = { success: true, message: `План создан на ${format(start, 'dd.MM')} - ${format(end, 'dd.MM')}. Темы сгенерированы.`, weekId: week.id };
 
                     } else if (name === 'get_current_status') {
                         const weeks = await prisma.week.findMany({
+                            where: { project_id: projectId },
                             take: 3,
                             orderBy: { week_start: 'desc' },
                             include: { posts: true }
@@ -221,13 +222,13 @@ class AgentService {
 
                         // Find or create a default "Standalone" week
                         let standaloneWeek = await prisma.week.findFirst({
-                            where: { theme: 'Standalone Posts' }
+                            where: { theme: 'Standalone Posts', project_id: projectId }
                         });
 
                         if (!standaloneWeek) {
                             standaloneWeek = await prisma.week.create({
                                 data: {
-                                    channel_id: 1,
+                                    project_id: projectId,
                                     theme: 'Standalone Posts',
                                     week_start: new Date('2020-01-01'),
                                     week_end: new Date('2099-12-31'),
@@ -239,7 +240,7 @@ class AgentService {
                         // Create a standalone post
                         const post = await prisma.post.create({
                             data: {
-                                channel_id: 1,
+                                project_id: projectId,
                                 week_id: standaloneWeek.id,
                                 topic: (args as any).topic,
                                 generated_text: (args as any).text,
@@ -259,7 +260,7 @@ class AgentService {
                             result = { success: true, message: `Пост "${post.topic}" создан и запланирован на ${format(publishAt, 'dd.MM HH:mm')}.`, postId: post.id };
                         }
                     } else if (name === 'create_refined_post') {
-                        const multiResult = await multiAgentService.runPostGeneration('Custom Request', (args as any).topic);
+                        const multiResult = await multiAgentService.runPostGeneration(projectId, 'Custom Request', (args as any).topic);
                         result = {
                             success: true,
                             data: multiResult,
