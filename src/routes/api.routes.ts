@@ -125,6 +125,17 @@ export default async function apiRoutes(fastify: FastifyInstance) {
     // Week actions
     fastify.post('/api/weeks/:id/generate-topics', async (request, reply) => {
         const projectId = (request as any).projectId;
+        console.log('[API] Generate Topics Request:', {
+            projectId,
+            params: request.params,
+            headers_x_project_id: request.headers['x-project-id']
+        });
+
+        if (!projectId) {
+            console.error('[API] Missing Project ID');
+            return reply.code(400).send({ error: 'Project ID required' });
+        }
+
         const { id } = request.params as { id: string };
         const week = await prisma.week.findUnique({
             where: { id: parseInt(id), project_id: projectId }

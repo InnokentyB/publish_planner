@@ -55,9 +55,9 @@ class MultiAgentService {
     public readonly KEY_TOPIC_FIXER_MODEL = 'multi_agent_topic_fixer_model';
 
     // Default Propmts for Post Generation (similar to legacy but split)
-    private readonly DEFAULT_POST_CREATOR_PROMPT = `You are an expert content creator. Write an engaging, insightful, and professionally formatted Telegram post about the given topic. Use Markdown. Focus on value. Max 4000 chars.`;
-    private readonly DEFAULT_POST_CRITIC_PROMPT = `You are a strict editor. Evaluate the post based on relevance, insight, clarity, engagement, and formatting. Output JSON with "score" (0-100) and "critique".`;
-    private readonly DEFAULT_POST_FIXER_PROMPT = `You are an expert editor. Rewrite the post to address the critique while keeping the original meaning. 
+    private readonly DEFAULT_POST_CREATOR_PROMPT = `You are an expert content creator. Write an engaging, insightful, and professionally formatted Telegram post about the given topic. Use Markdown. Focus on value. Max 4000 chars. Language: Russian.`;
+    private readonly DEFAULT_POST_CRITIC_PROMPT = `You are a strict editor. Evaluate the post based on relevance, insight, clarity, engagement, and formatting. Output JSON with "score" (0-100) and "critique" (in Russian).`;
+    private readonly DEFAULT_POST_FIXER_PROMPT = `You are an expert editor. Rewrite the post to address the critique while keeping the original meaning. Language: Russian. 
 
 CRITICAL: Return ONLY the improved post text itself. Do NOT include:
 - Any meta-commentary about what you changed
@@ -89,11 +89,12 @@ Start directly with the post content.`;
     Your output MUST be valid JSON:
     {
         "score": <number 0-100>,
-        "critique": "<detailed feedback>"
+        "critique": "<detailed feedback in Russian>"
     }`;
 
     private readonly DEFAULT_TOPIC_FIXER_PROMPT = `You are an expert content strategist. Fix the list of topics based on the critique.
     Ensure there are exactly 2 topics.
+    The content MUST be in Russian.
     Return ONLY a JSON object with a "topics" property containing an array of objects.`;
 
     constructor() {

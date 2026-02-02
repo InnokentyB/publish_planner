@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { api } from '../api'
 
 interface AgentConfig {
     role: string
@@ -16,41 +17,31 @@ interface AgentRun {
     created_at: string
 }
 
+import { useAuth } from '../context/AuthContext'
+
 export default function Settings() {
     const queryClient = useQueryClient()
+    const { currentProject } = useAuth()
     const [selectedRole, setSelectedRole] = useState<string>('post_creator')
     const [prompt, setPrompt] = useState('')
     const [apiKey, setApiKey] = useState('')
     const [model, setModel] = useState('')
 
     const { data: agents } = useQuery<AgentConfig[]>({
-        queryKey: ['agents'],
-        queryFn: async () => {
-            const res = await fetch('/api/settings/agents')
-            if (!res.ok) throw new Error('Failed to fetch agents')
-            return res.json()
-        }
+        queryKey: ['agents', currentProject?.id],
+        queryFn: () => api.get('/api/settings/agents'),
+        enabled: !!currentProject
     })
 
     const { data: runs } = useQuery<AgentRun[]>({
-        queryKey: ['runs'],
-        queryFn: async () => {
-            const res = await fetch('/api/settings/runs')
-            if (!res.ok) throw new Error('Failed to fetch runs')
-            return res.json()
-        }
+        queryKey: ['runs', currentProject?.id],
+        queryFn: () => api.get('/api/settings/runs'),
+        enabled: !!currentProject
     })
 
     const updateAgent = useMutation({
-        mutationFn: async (data: { role: string; prompt: string; apiKey: string; model: string }) => {
-            const res = await fetch(`/api/settings/agents/${data.role}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            })
-            if (!res.ok) throw new Error('Failed to update agent')
-            return res.json()
-        },
+        mutationFn: (data: { role: string; prompt: string; apiKey: string; model: string }) =>
+            api.put(`/api/settings/agents/${data.role}`, data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['agents'] })
         }
@@ -70,6 +61,17 @@ export default function Settings() {
 
     const handleSave = () => {
         updateAgent.mutate({ role: selectedRole, prompt, apiKey, model })
+    }
+
+    if (!currentProject) {
+        return (
+            <div className="container">
+                <div className="card text-center p-3">
+                    <h2>No Project Selected</h2>
+                    <p className="text-muted">Please select a project to configure agent settings.</p>
+                </div>
+            </div>
+        )
     }
 
     return (

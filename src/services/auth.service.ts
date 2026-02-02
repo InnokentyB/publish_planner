@@ -22,23 +22,51 @@ export interface AuthUser {
 }
 
 class AuthService {
-    async register(email: string, password: string, name: string) {
+    async register(email: string, password: string, name?: string) {
         const existing = await prisma.user.findUnique({ where: { email } });
         if (existing) {
             throw new Error('User already exists');
         }
 
         const passwordHash = await bcrypt.hash(password, 10);
+        const finalName = name || email.split('@')[0];
         const user = await prisma.user.create({
             data: {
                 email,
-                name,
+                name: finalName,
                 password_hash: passwordHash
             }
         });
 
+        // Create default project
+        const project = await prisma.project.create({
+            data: {
+                name: `${finalName}'s Project`,
+                slug: `${finalName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-project-${Date.now()}`, // Ensure unique slug
+                members: {
+                    create: {
+                        user_id: user.id,
+                        role: 'owner'
+                    }
+                },
+                // Create default settings
+                settings: {
+                    createMany: {
+                        data: [
+                            { key: 'post_creator_prompt', value: 'You are a helpful assistant.' },
+                            { key: 'post_creator_model', value: 'gpt-4' }
+                        ]
+                    }
+                }
+            }
+        });
+
         const token = this.generateToken(user);
-        return { user: this.sanitizeUser(user), token };
+        // Fetch the project again to match the expected format or just construct it
+        // But getUserProjects returns what we need
+        const projects = await this.getUserProjects(user.id);
+
+        return { user: this.sanitizeUser(user), token, projects };
     }
 
     async login(email: string, password: string) {
@@ -53,7 +81,8 @@ class AuthService {
         }
 
         const token = this.generateToken(user);
-        return { user: this.sanitizeUser(user), token };
+        const projects = await this.getUserProjects(user.id);
+        return { user: this.sanitizeUser(user), token, projects };
     }
 
     private generateToken(user: any) {

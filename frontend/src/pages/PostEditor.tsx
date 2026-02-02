@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import { format } from 'date-fns'
 import Markdown from 'markdown-to-jsx'
+import { api } from '../api'
 
 interface Post {
     id: number
@@ -16,9 +17,12 @@ interface Post {
     week_id: number
 }
 
+import { useAuth } from '../context/AuthContext'
+
 export default function PostEditor() {
     const { id } = useParams()
     const queryClient = useQueryClient()
+    const { currentProject } = useAuth()
 
     const [topic, setTopic] = useState('')
     const [category, setCategory] = useState('')
@@ -28,11 +32,7 @@ export default function PostEditor() {
 
     const { data: post, isLoading } = useQuery<Post>({
         queryKey: ['post', id],
-        queryFn: async () => {
-            const res = await fetch(`/api/posts/${id}`)
-            if (!res.ok) throw new Error('Failed to fetch post')
-            return res.json()
-        }
+        queryFn: () => api.get(`/api/posts/${id}`)
     })
 
     useEffect(() => {
@@ -46,37 +46,21 @@ export default function PostEditor() {
     }, [post])
 
     const updatePost = useMutation({
-        mutationFn: async (data: Partial<Post>) => {
-            const res = await fetch(`/api/posts/${id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            })
-            if (!res.ok) throw new Error('Failed to update post')
-            return res.json()
-        },
+        mutationFn: (data: Partial<Post>) => api.put(`/api/posts/${id}`, data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['post', id] })
         }
     })
 
     const approvePost = useMutation({
-        mutationFn: async () => {
-            const res = await fetch(`/api/posts/${id}/approve`, { method: 'POST' })
-            if (!res.ok) throw new Error('Failed to approve post')
-            return res.json()
-        },
+        mutationFn: () => api.post(`/api/posts/${id}/approve`),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['post', id] })
         }
     })
 
     const regenerate = useMutation({
-        mutationFn: async () => {
-            const res = await fetch(`/api/posts/${id}/generate`, { method: 'POST' })
-            if (!res.ok) throw new Error('Failed to regenerate post')
-            return res.json()
-        },
+        mutationFn: () => api.post(`/api/posts/${id}/generate`),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['post', id] })
         }
@@ -203,7 +187,8 @@ export default function PostEditor() {
                         <button
                             className="btn-secondary"
                             onClick={() => regenerate.mutate()}
-                            disabled={regenerate.isPending}
+                            disabled={regenerate.isPending || !currentProject}
+                            title={!currentProject ? "Select a project to regenerate" : ""}
                         >
                             {regenerate.isPending ? 'Regenerating...' : '🔄 Regenerate'}
                         </button>

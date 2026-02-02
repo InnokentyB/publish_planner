@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, Link } from 'react-router-dom'
 import { format } from 'date-fns'
 import { useState } from 'react'
+import { api } from '../api'
 
 interface Post {
     id: number
@@ -23,27 +24,25 @@ interface Week {
     topics?: { topic: string; category: string; tags: string[] }[]
 }
 
+import { useAuth } from '../context/AuthContext'
+
 export default function WeekDetail() {
     const { id } = useParams()
     const queryClient = useQueryClient()
+    const { currentProject } = useAuth()
     const [isGeneratingTopics, setIsGeneratingTopics] = useState(false)
     const [isGeneratingPosts, setIsGeneratingPosts] = useState(false)
 
     const { data: week, isLoading } = useQuery<Week>({
         queryKey: ['week', id],
-        queryFn: async () => {
-            const res = await fetch(`/api/weeks/${id}`)
-            if (!res.ok) throw new Error('Failed to fetch week')
-            return res.json()
-        }
+        queryFn: () => api.get(`/api/weeks/${id}`),
+        enabled: !!currentProject
     })
 
     const generateTopics = useMutation({
         mutationFn: async () => {
             setIsGeneratingTopics(true)
-            const res = await fetch(`/api/weeks/${id}/generate-topics`, { method: 'POST' })
-            if (!res.ok) throw new Error('Failed to generate topics')
-            return res.json()
+            return api.post(`/api/weeks/${id}/generate-topics`, {})
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['week', id] })
@@ -53,11 +52,7 @@ export default function WeekDetail() {
     })
 
     const approveTopics = useMutation({
-        mutationFn: async () => {
-            const res = await fetch(`/api/weeks/${id}/approve-topics`, { method: 'POST' })
-            if (!res.ok) throw new Error('Failed to approve topics')
-            return res.json()
-        },
+        mutationFn: () => api.post(`/api/weeks/${id}/approve-topics`, {}),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['week', id] })
         }
@@ -66,9 +61,7 @@ export default function WeekDetail() {
     const generatePosts = useMutation({
         mutationFn: async () => {
             setIsGeneratingPosts(true)
-            const res = await fetch(`/api/weeks/${id}/generate-posts`, { method: 'POST' })
-            if (!res.ok) throw new Error('Failed to generate posts')
-            return res.json()
+            return api.post(`/api/weeks/${id}/generate-posts`, {})
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['week', id] })
@@ -76,6 +69,17 @@ export default function WeekDetail() {
         },
         onError: () => setIsGeneratingPosts(false)
     })
+
+    if (!currentProject) {
+        return (
+            <div className="container">
+                <div className="card text-center p-3">
+                    <h2>No Project Selected</h2>
+                    <p className="text-muted">Please select a project to view week details.</p>
+                </div>
+            </div>
+        )
+    }
 
     if (isLoading) {
         return (

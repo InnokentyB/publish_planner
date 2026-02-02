@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { useState } from 'react'
 import { format } from 'date-fns'
+import { api } from '../api'
 
 interface Week {
     id: number
@@ -12,31 +13,24 @@ interface Week {
     _count?: { posts: number }
 }
 
+import { useAuth } from '../context/AuthContext'
+
 export default function WeeksList() {
     const queryClient = useQueryClient()
+    const { currentProject } = useAuth()
     const [showCreate, setShowCreate] = useState(false)
     const [theme, setTheme] = useState('')
     const [startDate, setStartDate] = useState('')
 
-    const { data: weeks, isLoading } = useQuery<Week[]>({
-        queryKey: ['weeks'],
-        queryFn: async () => {
-            const res = await fetch('/api/weeks')
-            if (!res.ok) throw new Error('Failed to fetch weeks')
-            return res.json()
-        }
+    const { data: weeks, isLoading, error } = useQuery<Week[]>({
+        queryKey: ['weeks', currentProject?.id],
+        queryFn: () => api.get('/api/weeks'),
+        enabled: !!currentProject
     })
 
     const createWeek = useMutation({
-        mutationFn: async (data: { theme: string; startDate?: string }) => {
-            const res = await fetch('/api/weeks', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            })
-            if (!res.ok) throw new Error('Failed to create week')
-            return res.json()
-        },
+        mutationFn: (data: { theme: string; startDate?: string }) =>
+            api.post('/api/weeks', data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['weeks'] })
             setShowCreate(false)
@@ -45,12 +39,33 @@ export default function WeeksList() {
         }
     })
 
-    if (isLoading) {
+    if (!currentProject) {
         return (
             <div className="container">
-                <div className="flex-center" style={{ justifyContent: 'center', padding: '4rem' }}>
-                    <div className="loading"></div>
-                    <span>Loading weeks...</span>
+                <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>
+                    <h2>No Project Selected</h2>
+                    <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+                        Please select a project from the top menu to view content weeks.
+                    </p>
+                </div>
+            </div>
+        )
+    }
+
+    if (isLoading) {
+        return (
+            <div className="container" style={{ display: 'flex', justifyContent: 'center', paddingTop: '4rem' }}>
+                <div style={{ color: 'var(--text-secondary)' }}>Loading weeks...</div>
+            </div>
+        )
+    }
+
+    if (error) {
+        return (
+            <div className="container">
+                <div className="card" style={{ borderColor: 'var(--error)', color: 'var(--error)' }}>
+                    <h3>Error loading weeks</h3>
+                    <p>{(error as Error).message}</p>
                 </div>
             </div>
         )

@@ -53,15 +53,41 @@ class AuthService {
             throw new Error('User already exists');
         }
         const passwordHash = await bcrypt.hash(password, 10);
+        const finalName = name || email.split('@')[0];
         const user = await prisma.user.create({
             data: {
                 email,
-                name,
+                name: finalName,
                 password_hash: passwordHash
             }
         });
+        // Create default project
+        const project = await prisma.project.create({
+            data: {
+                name: `${finalName}'s Project`,
+                slug: `${finalName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-project-${Date.now()}`, // Ensure unique slug
+                members: {
+                    create: {
+                        user_id: user.id,
+                        role: 'owner'
+                    }
+                },
+                // Create default settings
+                settings: {
+                    createMany: {
+                        data: [
+                            { key: 'post_creator_prompt', value: 'You are a helpful assistant.' },
+                            { key: 'post_creator_model', value: 'gpt-4' }
+                        ]
+                    }
+                }
+            }
+        });
         const token = this.generateToken(user);
-        return { user: this.sanitizeUser(user), token };
+        // Fetch the project again to match the expected format or just construct it
+        // But getUserProjects returns what we need
+        const projects = await this.getUserProjects(user.id);
+        return { user: this.sanitizeUser(user), token, projects };
     }
     async login(email, password) {
         const user = await prisma.user.findUnique({ where: { email } });
@@ -73,7 +99,8 @@ class AuthService {
             throw new Error('Invalid email or password');
         }
         const token = this.generateToken(user);
-        return { user: this.sanitizeUser(user), token };
+        const projects = await this.getUserProjects(user.id);
+        return { user: this.sanitizeUser(user), token, projects };
     }
     generateToken(user) {
         return jwt.sign({ id: user.id, email: user.email, name: user.name }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
