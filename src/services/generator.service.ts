@@ -82,13 +82,17 @@ class GeneratorService {
         });
     }
 
-    async generateTopics(projectId: number, theme: string): Promise<{ topics: { topic: string, category: string, tags: string[] }[], score: number }> {
-        return await multiAgentService.refineTopics(projectId, theme);
+    async generateTopics(projectId: number, theme: string, weekId: number, promptOverride?: string): Promise<{ topics: { topic: string, category: string, tags: string[] }[], score: number }> {
+        return await multiAgentService.refineTopics(projectId, theme, weekId, promptOverride);
     }
 
-    async generatePostText(projectId: number, theme: string, topic: string) {
-        const result = await multiAgentService.runPostGeneration(projectId, theme, topic);
-        return result.finalText;
+    async generatePostText(projectId: number, theme: string, topic: string, postId: number, promptOverride?: string) {
+        const result = await multiAgentService.runPostGeneration(projectId, theme, topic, postId, promptOverride);
+        return {
+            text: result.finalText,
+            category: result.category,
+            tags: result.tags
+        };
     }
 
     async generateImagePrompt(projectId: number, topic: string, text: string, provider: 'dalle' | 'nano' = 'dalle'): Promise<string> {

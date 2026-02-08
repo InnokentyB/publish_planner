@@ -25,7 +25,7 @@ async function testConfig() {
 
     console.log('Running generation...');
     try {
-        const result = await multiAgentService.runPostGeneration(1, 'Test Theme', 'Test Topic for Config Check');
+        const result = await multiAgentService.runPostGeneration(1, 'Test Theme', 'Test Topic for Config Check', -1);
         console.log('Generation finished (Unexpected success given bad key)');
         console.log('Score:', result.score);
     } catch (e: any) {

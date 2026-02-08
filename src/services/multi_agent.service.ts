@@ -5,6 +5,7 @@ import { config } from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
+import commentService from './comment.service';
 
 config();
 
@@ -40,6 +41,9 @@ class MultiAgentService {
     public readonly KEY_POST_FIXER_PROMPT = 'multi_agent_post_fixer_prompt';
     public readonly KEY_POST_FIXER_KEY = 'multi_agent_post_fixer_key';
     public readonly KEY_POST_FIXER_MODEL = 'multi_agent_post_fixer_model';
+
+    public readonly KEY_POST_CLASSIFIER = 'post_classifier';
+    public readonly DEFAULT_POST_CLASSIFIER_PROMPT = "You are an AI classifier. Analyze the provided social media post and determine the best category for it (e.g., 'Soft Skills', 'Tech News', 'Tutorial', 'Opinion', 'Case Study'). Also, generate exactly 3 relevant hashtags. Return ONLY a JSON object with keys 'category' (string) and 'tags' (array of strings).";
 
     // Keys for Topic Generation Agents
     public readonly KEY_TOPIC_CREATOR_PROMPT = 'multi_agent_topic_creator_prompt';
@@ -169,12 +173,28 @@ Start directly with the post content.`;
             defaultPrompt = this.DEFAULT_TOPIC_FIXER_PROMPT;
         }
 
-        const apiKey = await this.getPrompt(projectId, apiKeyKey, '');
+        let apiKey = await this.getPrompt(projectId, apiKeyKey, '');
         const model = await this.getPrompt(projectId, modelKey, 'gpt-4o');
         const prompt = await this.getPrompt(projectId, promptKey, defaultPrompt);
 
+        // Resolve Provider Key if it starts with pk_
+        if (apiKey && apiKey.startsWith('pk_')) {
+            const keyId = parseInt(apiKey.substring(3));
+            if (!isNaN(keyId)) {
+                const providerKey = await this.prisma.providerKey.findUnique({
+                    where: { id: keyId }
+                });
+                if (providerKey) {
+                    apiKey = providerKey.key;
+                } else {
+                    console.warn(`Provider Key ${keyId} not found for project ${projectId}`);
+                    apiKey = ''; // Or keep as is? Better to fail if key is missing.
+                }
+            }
+        }
+
         return {
-            apiKey: apiKey || process.env.OPENAI_API_KEY, // Fallback to env
+            apiKey: apiKey || process.env.OPENAI_API_KEY || '', // Fallback to env
             model,
             prompt
         };
@@ -182,8 +202,14 @@ Start directly with the post content.`;
 
     // --- Post Generation Loop (New) ---
 
-    async runPostGeneration(projectId: number, theme: string, topic: string): Promise<MultiAgentResult> {
+    async runPostGeneration(projectId: number, theme: string, topic: string, postId: number, promptOverride?: string): Promise<MultiAgentResult & { category?: string, tags?: string[] }> {
         console.log(`[MultiAgent Post] Starting generation for: "${topic}"`);
+
+        // Fetch comments for context
+        const commentsContext = await commentService.getCommentsForContext(projectId, 'post', postId);
+        if (commentsContext) {
+            console.log(`[MultiAgent Post] Found comments: ${commentsContext.length} chars`);
+        }
 
         let runLogId = 0;
         try {
@@ -194,7 +220,12 @@ Start directly with the post content.`;
         } catch (e) { console.error('Failed to create run log', e); }
 
         const creatorConfig = await this.getAgentConfig(projectId, 'post_creator');
-        let currentText = await this.postCreator(theme, topic, creatorConfig, runLogId);
+        if (promptOverride) {
+            creatorConfig.prompt = promptOverride;
+            console.log('[MultiAgent Post] Using prompt override');
+        }
+
+        let currentText = await this.postCreator(theme, topic, creatorConfig, runLogId, commentsContext);
 
         let currentScore = 0;
         let iterations = 0;
@@ -240,16 +271,66 @@ Start directly with the post content.`;
             }
         }
 
+        // Run Classifier
+        let category: string | undefined;
+        let tags: string[] | undefined;
+        try {
+            console.log('[MultiAgent Post] Running Classifier...');
+            const classifierConfig = await this.getAgentConfig(projectId, this.KEY_POST_CLASSIFIER);
+            // Use default prompt if not configured in DB (which it likely isn't yet)
+            if (!classifierConfig.prompt || classifierConfig.prompt === this.DEFAULT_POST_CREATOR_PROMPT) {
+                classifierConfig.prompt = this.DEFAULT_POST_CLASSIFIER_PROMPT;
+            }
+
+            const classification = await this.postClassifier(currentText, classifierConfig);
+            category = classification.category;
+            tags = classification.tags;
+            console.log('[MultiAgent Post] Classification result:', classification);
+        } catch (e) {
+            console.error('[MultiAgent Post] Classification failed:', e);
+        }
+
         return {
             finalText: currentText,
             score: currentScore,
             iterations,
-            history
+            history,
+            category,
+            tags
         };
     }
 
-    private async postCreator(theme: string, topic: string, config: any, runId: number): Promise<string> {
+    private async postClassifier(text: string, config: any): Promise<{ category: string, tags: string[] }> {
+        let output = '{}';
+
+        const response = await this.openai.chat.completions.create({
+            model: 'gpt-4o', // Force JSON capable model
+            messages: [
+                { role: 'system', content: config.prompt || this.DEFAULT_POST_CLASSIFIER_PROMPT },
+                { role: 'user', content: `Post Content:\n${text}` }
+            ],
+            temperature: 0.3,
+            response_format: { type: "json_object" }
+        });
+
+        output = response.choices[0].message.content || '{}';
+
+        try {
+            return JSON.parse(output);
+        } catch (e) {
+            console.error('Failed to parse classifier output', output);
+            return { category: 'General', tags: [] };
+        }
+    }
+
+    private async postCreator(theme: string, topic: string, config: any, runId: number, additionalContext: string = ''): Promise<string> {
         let output = '';
+
+        let userContent = `Theme: ${theme}\nPost Topic: ${topic}`;
+        if (additionalContext) {
+            userContent += `\n\nUSER COMMENTS / REQUIREMENTS:\n${additionalContext}`;
+        }
+
         if (config.apiKey && config.apiKey.startsWith('sk-ant')) {
             // Use Anthropic
             const anthropic = new Anthropic({ apiKey: config.apiKey });
@@ -258,7 +339,7 @@ Start directly with the post content.`;
                 max_tokens: 4000,
                 system: config.prompt,
                 messages: [
-                    { role: 'user', content: `Theme: ${theme}\nPost Topic: ${topic}` }
+                    { role: 'user', content: userContent }
                 ]
             });
             // @ts-ignore
@@ -270,7 +351,7 @@ Start directly with the post content.`;
                 model: config.model,
                 systemInstruction: config.prompt
             });
-            const result = await model.generateContent(`Theme: ${theme}\nPost Topic: ${topic}`);
+            const result = await model.generateContent(userContent);
             output = result.response.text();
         } else {
             // Use OpenAI (Default)
@@ -279,7 +360,7 @@ Start directly with the post content.`;
                 model: config.model,
                 messages: [
                     { role: 'system', content: config.prompt },
-                    { role: 'user', content: `Theme: ${theme}\nPost Topic: ${topic}` }
+                    { role: 'user', content: userContent }
                 ],
                 temperature: 0.7
             });
@@ -438,8 +519,11 @@ Start directly with the post content.`;
 
     // --- Topic List Generation ---
 
-    async refineTopics(projectId: number, theme: string): Promise<{ topics: { topic: string, category: string, tags: string[] }[], score: number }> {
+    async refineTopics(projectId: number, theme: string, weekId: number, promptOverride?: string): Promise<{ topics: { topic: string, category: string, tags: string[] }[], score: number }> {
         console.log(`[MultiAgent] Starting topic generation for theme: "${theme}"`);
+
+        // Fetch comments
+        const commentsContext = await commentService.getCommentsForContext(projectId, 'week', weekId);
 
         // 1. Create Run Log (Topics)
         let runLogId = 0;
@@ -451,8 +535,10 @@ Start directly with the post content.`;
         } catch (e) { console.error('Failed to create run log', e); }
 
         // Creator
-        const creatorPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CREATOR, this.DEFAULT_TOPIC_CREATOR_PROMPT);
-        let currentTopicsJSON = await this.topicCreator(theme, creatorPrompt, runLogId);
+        let creatorPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CREATOR, this.DEFAULT_TOPIC_CREATOR_PROMPT);
+        if (promptOverride) creatorPrompt = promptOverride;
+
+        let currentTopicsJSON = await this.topicCreator(theme, creatorPrompt, runLogId, commentsContext);
 
         // Ensure it's valid JSON structure from the start
         try {
@@ -516,12 +602,17 @@ Start directly with the post content.`;
         return { topics, score: currentScore };
     }
 
-    private async topicCreator(theme: string, systemPrompt: string, runId: number): Promise<string> {
+    private async topicCreator(theme: string, systemPrompt: string, runId: number, additionalContext: string = ''): Promise<string> {
+        let userContent = `Theme: ${theme}`;
+        if (additionalContext) {
+            userContent += `\n\nUSER COMMENTS / REQUIREMENTS:\n${additionalContext}`;
+        }
+
         const response = await this.openai.chat.completions.create({
             model: 'gpt-4o',
             messages: [
                 { role: 'system', content: systemPrompt },
-                { role: 'user', content: `Theme: ${theme}` }
+                { role: 'user', content: userContent }
             ],
             temperature: 0.7,
             response_format: { type: "json_object" }

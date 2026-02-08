@@ -42,10 +42,6 @@ model Project {
   settings ProjectSettings[]
 
   @@map("projects")
-  
-  prompt_presets PromptPreset[]
-  comments       Comment[]
-  provider_keys  ProviderKey[]
 }
 
 model ProjectMember {
@@ -205,50 +201,3 @@ model PromptSettings {
 
   @@map("prompt_settings")
 }
-
-// ============================================
-// Feedback & Customization
-// ============================================
-
-model PromptPreset {
-  id          Int      @id @default(autoincrement())
-  project_id  Int
-  role        String   // "post_creator", "topic_creator", etc.
-  name        String
-  prompt_text String
-  created_at  DateTime @default(now())
-  updated_at  DateTime @updatedAt
-
-  project     Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
-
-  @@map("prompt_presets")
-}
-
-model Comment {
-  id          Int      @id @default(autoincrement())
-  project_id  Int
-  entity_type String   // "week", "post"
-  entity_id   Int
-  text        String
-  author_role String   // "user", "assistant" (or specific agent role)
-  created_at  DateTime @default(now())
-
-  project     Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
-
-  @@index([project_id, entity_type, entity_id])
-  @@map("comments")
-}
-
-model ProviderKey {
-  id         Int      @id @default(autoincrement())
-  project_id Int
-  name       String
-  key        String
-  provider   String   // "OpenAI", "Anthropic", "Gemini", "Other"
-  created_at DateTime @default(now())
-
-  project    Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
-
-  @@map("provider_keys")
-}
-

@@ -68,3 +68,36 @@ export const api = {
         return this.request(endpoint, { ...options, method: 'DELETE' });
     },
 };
+
+export const commentsApi = {
+    get: (entityType: string, entityId: number) =>
+        api.get(`/api/comments?entityType=${entityType}&entityId=${entityId}`),
+    create: (entityType: string, entityId: number, text: string) =>
+        api.post('/api/comments', { entityType, entityId, text })
+};
+
+export const presetsApi = {
+    getAll: () => api.get('/api/settings/presets'),
+    create: (data: { name: string; role: string; prompt_text: string }) => api.post('/api/settings/presets', data),
+    update: (id: number, data: Partial<{ name: string; role: string; prompt_text: string }>) => api.put(`/api/settings/presets/${id}`, data),
+    delete: (id: number) => api.delete(`/api/settings/presets/${id}`)
+};
+
+export const keysApi = {
+    getAll: () => api.get('/api/settings/keys'),
+    create: (data: { name: string; key: string }) => api.post('/api/settings/keys', data),
+    delete: (id: number) => api.delete(`/api/settings/keys/${id}`)
+};
+
+export const modelsApi = {
+    fetch: (params: { provider?: string; keyId?: string; key?: string }) => {
+        const query = new URLSearchParams(params as any).toString();
+        return api.get(`/api/settings/models?${query}`);
+    }
+};
+
+export const projectsApi = {
+    update: (id: number, data: { name: string; description: string }) => api.put(`/api/projects/${id}`, data),
+    addMember: (id: number, email: string, role: string) => api.post(`/api/projects/${id}/members`, { email, role }),
+    removeMember: (id: number, userId: number) => api.delete(`/api/projects/${id}/members/${userId}`)
+};

@@ -2,7 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, Link } from 'react-router-dom'
 import { format } from 'date-fns'
 import { useState } from 'react'
-import { api } from '../api'
+import { api, presetsApi } from '../api'
+import CommentSection from '../components/CommentSection'
 
 interface Post {
     id: number
@@ -24,6 +25,12 @@ interface Week {
     topics?: { topic: string; category: string; tags: string[] }[]
 }
 
+interface PromptPreset {
+    id: number
+    name: string
+    role: string
+}
+
 import { useAuth } from '../context/AuthContext'
 
 export default function WeekDetail() {
@@ -32,6 +39,13 @@ export default function WeekDetail() {
     const { currentProject } = useAuth()
     const [isGeneratingTopics, setIsGeneratingTopics] = useState(false)
     const [isGeneratingPosts, setIsGeneratingPosts] = useState(false)
+    const [selectedPresetId, setSelectedPresetId] = useState<number | ''>('')
+
+    const { data: presets } = useQuery<PromptPreset[]>({
+        queryKey: ['presets', currentProject?.id],
+        queryFn: () => presetsApi.getAll(),
+        enabled: !!currentProject
+    })
 
     const { data: week, isLoading } = useQuery<Week>({
         queryKey: ['week', id],
@@ -42,7 +56,9 @@ export default function WeekDetail() {
     const generateTopics = useMutation({
         mutationFn: async () => {
             setIsGeneratingTopics(true)
-            return api.post(`/api/weeks/${id}/generate-topics`, {})
+            const body: any = {}
+            if (selectedPresetId) body.promptPresetId = selectedPresetId
+            return api.post(`/api/weeks/${id}/generate-topics`, body)
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['week', id] })
@@ -118,12 +134,30 @@ export default function WeekDetail() {
                 </span>
             </div>
 
+            <div className="mb-3">
+                <CommentSection entityType="week" entityId={week.id} />
+            </div>
+
             {week.status === 'planning' && (
                 <div className="card mb-3">
                     <h3>Generate Topics</h3>
                     <p className="text-muted mb-2">
                         Use AI to generate 2 topic ideas for this week's theme.
                     </p>
+
+                    <div className="mb-2" style={{ maxWidth: '300px' }}>
+                        <label className="text-muted" style={{ fontSize: '0.9rem' }}>Style Preset (Creator)</label>
+                        <select
+                            value={selectedPresetId}
+                            onChange={(e) => setSelectedPresetId(e.target.value ? Number(e.target.value) : '')}
+                        >
+                            <option value="">Default Style</option>
+                            {presets?.filter(p => p.role === 'topic_creator').map(p => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
                     <button
                         className="btn-primary"
                         onClick={() => generateTopics.mutate()}

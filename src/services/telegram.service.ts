@@ -454,7 +454,7 @@ class TelegramService {
         await ctx.reply(`Принята тема: "${theme}". Генерирую темы постов...`);
 
         // 3. Generate Topics
-        const { topics, score } = await generatorService.generateTopics(projectId, theme);
+        const { topics, score } = await generatorService.generateTopics(projectId, theme, weekId);
         await plannerService.saveTopics(weekId, topics);
 
         // 4. Send Review
@@ -497,15 +497,27 @@ class TelegramService {
                 count++;
                 console.log(`Generating post ${count}/2: ${post.topic}`);
 
-                const text = await generatorService.generatePostText(projectId, existingWeek.theme, post.topic);
-                const hashtag = post.category ? `\n\n#${post.category.replace(/\s+/g, '')}` : '';
-                const fullText = text + hashtag;
+                const result = await generatorService.generatePostText(projectId, existingWeek.theme, post.topic, post.id);
+
+                // Construct full text with hashtags
+                let fullText = result.text;
+                if (result.tags && result.tags.length > 0) {
+                    fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '')}`).join(' ');
+                } else if (result.category) {
+                    fullText += `\n\n#${result.category.replace(/\s+/g, '')}`;
+                }
 
                 await plannerService.updatePost(post.id, {
                     generated_text: fullText,
                     final_text: fullText,
-                    status: 'generated'
+                    status: 'generated',
+                    category: result.category || undefined,
+                    tags: result.tags || undefined
                 });
+
+                // Update local post object for message display
+                post.category = result.category || null;
+                post.tags = result.tags || [];
 
                 const dateStr = format(new Date(post.publish_at), 'dd.MM HH:mm');
                 let messageText = `📝 **Пост ${count}/2 на ${dateStr}**\nТема: ${post.topic}\nКатегория: ${post.category || 'N/A'}\nТеги: ${post.tags.join(', ')}\n\n${fullText}`;
@@ -665,13 +677,29 @@ class TelegramService {
         });
         if (!post || !post.week) return;
 
-        const text = await generatorService.generatePostText(projectId, post.week.theme, post.topic || '');
+        const result = await generatorService.generatePostText(projectId, post.week.theme, post.topic || '', post.id);
+
+        // Construct full text with hashtags
+        let fullText = result.text;
+        if (result.tags && result.tags.length > 0) {
+            fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '')}`).join(' ');
+        } else if (result.category) {
+            fullText += `\n\n#${result.category.replace(/\s+/g, '')}`;
+        }
+
         await plannerService.updatePost(postId, {
-            generated_text: text,
-            final_text: text,
+            generated_text: fullText,
+            final_text: fullText,
             status: 'generated',
+            category: result.category || undefined,
+            tags: result.tags || undefined,
             image_url: null // Reset image on text regen
         });
+
+        // Update local variables for message display
+        post.category = result.category || null;
+        post.tags = result.tags || [];
+        const text = fullText;
 
         const dateStr = format(new Date(post.publish_at), 'dd.MM HH:mm');
         let messageText = `📝 **Пост на ${dateStr}**\nТема: ${post.topic}\n\n${text}`;
@@ -722,7 +750,7 @@ class TelegramService {
 
         await ctx.reply(`🔄 Генерирую новые темы (Попытка ${existingWeek.regen_attempt + 1}/3)...`);
 
-        const { topics, score } = await generatorService.generateTopics(projectId, existingWeek.theme);
+        const { topics, score } = await generatorService.generateTopics(projectId, existingWeek.theme, existingWeek.id);
         await plannerService.saveTopics(existingWeek.id, topics);
 
         const response = topics.map((t, i) => `${i + 1}. ${t.topic}`).join('\n');

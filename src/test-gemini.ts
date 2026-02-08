@@ -21,7 +21,7 @@ async function testGemini() {
     // We assume the keys are already set in DB by previous scripts
 
     try {
-        const result = await multiAgentService.runPostGeneration(1, 'Web Development', 'Why TypeScript is Essential in 2026');
+        const result = await multiAgentService.runPostGeneration(1, 'Web Development', 'Why TypeScript is Essential in 2026', -1);
         console.log('Generation finished successfully!');
         console.log('Final Score:', result.score);
         console.log('Iterations:', result.iterations);

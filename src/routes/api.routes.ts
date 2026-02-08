@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import plannerService from '../services/planner.service';
 import generatorService from '../services/generator.service';
 import multiAgentService from '../services/multi_agent.service';
+import modelService from '../services/model.service';
 import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -12,6 +13,7 @@ const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 import authService from '../services/auth.service';
+import commentService from '../services/comment.service';
 
 export default async function apiRoutes(fastify: FastifyInstance) {
     // Auth and Project context middleware
@@ -137,6 +139,8 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         }
 
         const { id } = request.params as { id: string };
+        const { promptPresetId } = request.body as { promptPresetId?: number };
+
         const week = await prisma.week.findUnique({
             where: { id: parseInt(id), project_id: projectId }
         });
@@ -146,7 +150,13 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             return;
         }
 
-        const result = await generatorService.generateTopics(projectId, week.theme);
+        let promptOverride: string | undefined;
+        if (promptPresetId) {
+            const preset = await prisma.promptPreset.findUnique({ where: { id: promptPresetId } });
+            if (preset) promptOverride = preset.prompt_text;
+        }
+
+        const result = await generatorService.generateTopics(projectId, week.theme, week.id, promptOverride);
         await plannerService.saveTopics(week.id, result.topics);
 
         return { success: true, topics: result.topics };
@@ -179,7 +189,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
                 if (!post.topic) continue;
 
                 try {
-                    const text = await generatorService.generatePostText(projectId, week.theme, post.topic);
+                    const text = await generatorService.generatePostText(projectId, week.theme, post.topic, post.id);
                     const hashtag = post.category ? `\n\n#${post.category.replace(/\s+/g, '')}` : '';
                     const fullText = text + hashtag;
 
@@ -257,16 +267,30 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             return;
         }
 
-        const text = await generatorService.generatePostText(projectId, post.week.theme, post.topic);
-        const hashtag = post.category ? `\n\n#${post.category.replace(/\s+/g, '')}` : '';
-        const fullText = text + hashtag;
+        const { promptPresetId } = request.body as { promptPresetId?: number };
+        let promptOverride: string | undefined;
+        if (promptPresetId) {
+            const preset = await prisma.promptPreset.findUnique({ where: { id: promptPresetId } });
+            if (preset) promptOverride = preset.prompt_text;
+        }
+
+        const result = await generatorService.generatePostText(projectId, post.week.theme, post.topic, post.id, promptOverride);
+
+        let fullText = result.text;
+        if (result.tags && result.tags.length > 0) {
+            fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '')}`).join(' ');
+        } else if (post.category) { // Fallback to existing category if new tags fail
+            fullText += `\n\n#${post.category.replace(/\s+/g, '')}`;
+        }
 
         const updated = await prisma.post.update({
             where: { id: post.id },
             data: {
                 generated_text: fullText,
                 final_text: fullText,
-                status: 'generated'
+                status: 'generated',
+                category: result.category || undefined,
+                tags: result.tags || undefined
             }
         });
 
@@ -283,11 +307,21 @@ export default async function apiRoutes(fastify: FastifyInstance) {
 
         for (const role of roles) {
             const config = await multiAgentService.getAgentConfig(projectId, role as any);
+
+            let provider = 'Not Configured';
+            if (config.apiKey) {
+                if (config.apiKey.startsWith('sk-ant')) provider = 'Anthropic';
+                else if (config.apiKey.startsWith('AIza')) provider = 'Gemini';
+                else if (config.apiKey.startsWith('sk-')) provider = 'OpenAI';
+                else provider = 'Unknown';
+            }
+
             agents.push({
                 role,
                 prompt: config.prompt,
                 apiKey: config.apiKey,
-                model: config.model
+                model: config.model,
+                provider // Add detected provider
             });
         }
 
@@ -344,5 +378,159 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         });
 
         return runs;
+        return runs;
+    });
+
+    // Agents Presets
+    fastify.get('/api/settings/presets', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        return await prisma.promptPreset.findMany({
+            where: { project_id: projectId },
+            orderBy: { created_at: 'desc' }
+        });
+    });
+
+    fastify.post('/api/settings/presets', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { name, role, prompt_text } = request.body as any;
+
+        return await prisma.promptPreset.create({
+            data: { project_id: projectId, name, role, prompt_text }
+        });
+    });
+
+    fastify.put('/api/settings/presets/:id', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        const { id } = request.params as { id: string };
+        const data = request.body as any;
+
+        // Ensure belongs to project
+        const count = await prisma.promptPreset.count({ where: { id: parseInt(id), project_id: projectId } });
+        if (count === 0) return reply.code(404).send({ error: 'Not found' });
+
+        return await prisma.promptPreset.update({
+            where: { id: parseInt(id) },
+            data
+        });
+    });
+
+    fastify.delete('/api/settings/presets/:id', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        const { id } = request.params as { id: string };
+
+        // Ensure belongs to project
+        const count = await prisma.promptPreset.count({ where: { id: parseInt(id), project_id: projectId } });
+        if (count === 0) return reply.code(404).send({ error: 'Not found' });
+
+        await prisma.promptPreset.delete({ where: { id: parseInt(id) } });
+        return { success: true };
+    });
+
+    // Comments
+    fastify.get('/api/comments', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { entityType, entityId } = request.query as { entityType: string, entityId: string };
+        if (!entityType || !entityId) return reply.code(400).send({ error: 'Missing params' });
+
+        return await commentService.getComments(projectId, entityType, parseInt(entityId));
+    });
+
+    fastify.post('/api/comments', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { entityType, entityId, text } = request.body as any;
+
+        return await commentService.createComment(projectId, entityType, parseInt(entityId), text, 'user');
+    });
+
+    // Keys Management
+    fastify.get('/api/settings/keys', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const keys = await prisma.providerKey.findMany({
+            where: { project_id: projectId },
+            orderBy: { created_at: 'desc' }
+        });
+
+        // Mask keys
+        return keys.map(k => ({
+            ...k,
+            key: k.key.substring(0, 3) + '...' + k.key.substring(k.key.length - 4)
+        }));
+    });
+
+    fastify.post('/api/settings/keys', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { name, key } = request.body as { name: string; key: string };
+
+        let provider = 'Other';
+        if (key.startsWith('sk-ant')) provider = 'Anthropic';
+        else if (key.startsWith('AIza')) provider = 'Gemini';
+        else if (key.startsWith('sk-')) provider = 'OpenAI';
+
+        const newKey = await prisma.providerKey.create({
+            data: {
+                project_id: projectId,
+                name,
+                key,
+                provider
+            }
+        });
+
+        return { success: true, id: newKey.id, provider: newKey.provider };
+    });
+
+    fastify.delete('/api/settings/keys/:id', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        const { id } = request.params as { id: string };
+
+        // Ensure belongs to project
+        const count = await prisma.providerKey.count({ where: { id: parseInt(id), project_id: projectId } });
+        if (count === 0) return reply.code(404).send({ error: 'Not found' });
+
+        await prisma.providerKey.delete({ where: { id: parseInt(id) } });
+        return { success: true };
+    });
+
+    // Model Fetching
+    fastify.get('/api/settings/models', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        const { provider, keyId, key } = request.query as { provider?: string, keyId?: string, key?: string };
+
+        let apiKey = key;
+        let detectedProvider = provider || 'Unknown';
+
+        // If keyId is provided, fetch from DB
+        if (keyId) {
+            const storedKey = await prisma.providerKey.findFirst({
+                where: { id: parseInt(keyId), project_id: projectId }
+            });
+            if (storedKey) {
+                apiKey = storedKey.key;
+                detectedProvider = storedKey.provider;
+            }
+        }
+
+        if (!apiKey) return reply.code(400).send({ error: 'API Key required' });
+
+        // Auto-detect provider if missing
+        if (!detectedProvider || detectedProvider === 'Unknown') {
+            if (apiKey.startsWith('sk-ant')) detectedProvider = 'Anthropic';
+            else if (apiKey.startsWith('AIza')) detectedProvider = 'Gemini';
+            else if (apiKey.startsWith('sk-')) detectedProvider = 'OpenAI';
+        }
+
+        const models = await modelService.fetchModels(detectedProvider, apiKey);
+        return { models };
     });
 }

@@ -164,7 +164,7 @@ class AgentService {
 
                         const week = await plannerService.createWeek(projectId, args.theme, start, end);
                         await plannerService.generateSlots(week.id, projectId, start);
-                        const { topics } = await generatorService.generateTopics(projectId, args.theme);
+                        const { topics } = await generatorService.generateTopics(projectId, args.theme, week.id);
                         // topics is now { topic, category, tags }[]
                         await plannerService.saveTopics(week.id, topics);
                         result = { success: true, message: `План создан на ${format(start, 'dd.MM')} - ${format(end, 'dd.MM')}. Темы сгенерированы.`, weekId: week.id };
@@ -260,7 +260,8 @@ class AgentService {
                             result = { success: true, message: `Пост "${post.topic}" создан и запланирован на ${format(publishAt, 'dd.MM HH:mm')}.`, postId: post.id };
                         }
                     } else if (name === 'create_refined_post') {
-                        const multiResult = await multiAgentService.runPostGeneration(projectId, 'Custom Request', (args as any).topic);
+                        // Pass -1 as dummy postId since we don't have a DB record yet
+                        const multiResult = await multiAgentService.runPostGeneration(projectId, 'Custom Request', (args as any).topic, -1);
                         result = {
                             success: true,
                             data: multiResult,

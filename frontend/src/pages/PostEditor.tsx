@@ -3,7 +3,8 @@ import { useParams, Link } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import { format } from 'date-fns'
 import Markdown from 'markdown-to-jsx'
-import { api } from '../api'
+import { api, presetsApi } from '../api'
+import CommentSection from '../components/CommentSection'
 
 interface Post {
     id: number
@@ -15,6 +16,12 @@ interface Post {
     generated_text: string | null
     final_text: string | null
     week_id: number
+}
+
+interface PromptPreset {
+    id: number
+    name: string
+    role: string
 }
 
 import { useAuth } from '../context/AuthContext'
@@ -29,6 +36,14 @@ export default function PostEditor() {
     const [tags, setTags] = useState('')
     const [text, setText] = useState('')
     const [publishAt, setPublishAt] = useState('')
+    const [selectedPresetId, setSelectedPresetId] = useState<number | ''>('')
+    const [showPresetSelect, setShowPresetSelect] = useState(false)
+
+    const { data: presets } = useQuery<PromptPreset[]>({
+        queryKey: ['presets', currentProject?.id],
+        queryFn: () => presetsApi.getAll(),
+        enabled: !!currentProject
+    })
 
     const { data: post, isLoading } = useQuery<Post>({
         queryKey: ['post', id],
@@ -53,14 +68,18 @@ export default function PostEditor() {
     })
 
     const approvePost = useMutation({
-        mutationFn: () => api.post(`/api/posts/${id}/approve`),
+        mutationFn: () => api.post(`/api/posts/${id}/approve`, {}),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['post', id] })
         }
     })
 
     const regenerate = useMutation({
-        mutationFn: () => api.post(`/api/posts/${id}/generate`),
+        mutationFn: () => {
+            const body: any = {}
+            if (selectedPresetId) body.promptPresetId = selectedPresetId
+            return api.post(`/api/posts/${id}/generate`, body)
+        },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['post', id] })
         }
@@ -95,6 +114,20 @@ export default function PostEditor() {
         })
     }
 
+    const handleApprove = async () => {
+        // Save first
+        await updatePost.mutateAsync({
+            topic,
+            category: category || null,
+            tags: tags.split(',').map(t => t.trim()).filter(Boolean),
+            final_text: text,
+            publish_at: new Date(publishAt).toISOString()
+        });
+
+        // Then approve
+        approvePost.mutate();
+    }
+
     return (
         <div className="container">
             <div className="mb-3">
@@ -106,6 +139,10 @@ export default function PostEditor() {
                 <span className={`badge badge-${post.status}`}>
                     {post.status}
                 </span>
+            </div>
+
+            <div className="mb-3">
+                <CommentSection entityType="post" entityId={post.id} />
             </div>
 
             <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '2rem', alignItems: 'start' }}>
@@ -179,19 +216,58 @@ export default function PostEditor() {
                         </button>
                         <button
                             className="btn-success"
-                            onClick={() => approvePost.mutate()}
-                            disabled={approvePost.isPending || post.status === 'scheduled'}
+                            onClick={handleApprove}
+                            disabled={updatePost.isPending || approvePost.isPending || post.status === 'scheduled'}
                         >
-                            {approvePost.isPending ? 'Approving...' : 'Approve & Schedule'}
+                            {updatePost.isPending || approvePost.isPending ? 'Saving & Approving...' : 'Approve & Schedule'}
                         </button>
-                        <button
-                            className="btn-secondary"
-                            onClick={() => regenerate.mutate()}
-                            disabled={regenerate.isPending || !currentProject}
-                            title={!currentProject ? "Select a project to regenerate" : ""}
-                        >
-                            {regenerate.isPending ? 'Regenerating...' : '🔄 Regenerate'}
-                        </button>
+
+
+                        <div style={{ position: 'relative' }}>
+                            <button
+                                className="btn-secondary"
+                                onClick={() => setShowPresetSelect(!showPresetSelect)}
+                                disabled={regenerate.isPending || !currentProject}
+                            >
+                                {regenerate.isPending ? 'Regenerating...' : '🔄 Regenerate'}
+                            </button>
+                            {showPresetSelect && (
+                                <div style={{
+                                    position: 'absolute',
+                                    bottom: '100%',
+                                    left: 0,
+                                    background: 'var(--bg-secondary)',
+                                    border: '1px solid var(--border)',
+                                    padding: '1rem',
+                                    borderRadius: '8px',
+                                    zIndex: 10,
+                                    width: '250px',
+                                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
+                                }}>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem' }}>Select Style Preset</label>
+                                    <select
+                                        style={{ marginBottom: '0.5rem', width: '100%' }}
+                                        value={selectedPresetId}
+                                        onChange={(e) => setSelectedPresetId(e.target.value ? Number(e.target.value) : '')}
+                                    >
+                                        <option value="">Default Style</option>
+                                        {presets?.filter(p => p.role === 'post_creator').map(p => (
+                                            <option key={p.id} value={p.id}>{p.name}</option>
+                                        ))}
+                                    </select>
+                                    <button
+                                        className="btn-primary"
+                                        style={{ width: '100%', padding: '0.5rem' }}
+                                        onClick={() => {
+                                            regenerate.mutate()
+                                            setShowPresetSelect(false)
+                                        }}
+                                    >
+                                        Regenerate Now
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
 
@@ -213,6 +289,6 @@ export default function PostEditor() {
                     </div>
                 </div>
             </div>
-        </div>
+        </div >
     )
 }

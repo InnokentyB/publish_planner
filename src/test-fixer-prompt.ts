@@ -4,9 +4,10 @@ async function testFixerPrompt() {
     console.log('--- Testing Improved Fixer Prompt ---\n');
 
     try {
-        const result = await multiAgentService.runPostGeneration(1, 
+        const result = await multiAgentService.runPostGeneration(1,
             'Soft Skills for Developers',
-            'How to give and receive constructive feedback'
+            'How to give and receive constructive feedback',
+            -1
         );
 
         console.log('\n✅ Generation completed!');
