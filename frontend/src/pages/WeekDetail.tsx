@@ -188,13 +188,26 @@ export default function WeekDetail() {
                             </div>
                         ))}
                     </div>
-                    <button
-                        className="btn-success"
-                        onClick={() => approveTopics.mutate()}
-                        disabled={approveTopics.isPending}
-                    >
-                        {approveTopics.isPending ? 'Approving...' : 'Approve Topics'}
-                    </button>
+                    <div className="flex-center" style={{ gap: '1rem' }}>
+                        <button
+                            className="btn-secondary"
+                            onClick={() => {
+                                if (window.confirm('Are you sure? This will overwrite existing topics.')) {
+                                    generateTopics.mutate()
+                                }
+                            }}
+                            disabled={isGeneratingTopics || approveTopics.isPending}
+                        >
+                            {isGeneratingTopics ? 'Regenerating...' : 'Regenerate Topics'}
+                        </button>
+                        <button
+                            className="btn-success"
+                            onClick={() => approveTopics.mutate()}
+                            disabled={approveTopics.isPending || isGeneratingTopics}
+                        >
+                            {approveTopics.isPending ? 'Approving...' : 'Approve Topics'}
+                        </button>
+                    </div>
                 </div>
             )}
 

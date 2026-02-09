@@ -1,0 +1,15 @@
+[dotenv@17.2.3] injecting env (6) from .env -- tip: 🔑 add access controls to secrets: https://dotenvx.com/ops
+[dotenv@17.2.3] injecting env (0) from .env -- tip: 🗂️ backup and recover secrets: https://dotenvx.com/ops
+Testing Topic Generation...
+--- Agent Config ---
+Prompt Key: Ты — TopicAgent, генератор тем для Telegram-канала...
+--------------------
+[MultiAgent] Starting topic generation for theme: "Тестирование и отладка"
+[MultiAgent Topics] Iteration 1 starting...
+[MultiAgent Topics] Iteration 1 score: 78
+[MultiAgent Topics] Fixing based on critique...
+Execution failed: TypeError: Cannot read properties of undefined (reading 'substring')
+    at MultiAgentService.topicFixer (/Users/innokentyb/Ba_post_planner/src/services/multi_agent.service.ts:720:50)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async MultiAgentService.refineTopics (/Users/innokentyb/Ba_post_planner/src/services/multi_agent.service.ts:616:37)
+    at async main (/Users/innokentyb/Ba_post_planner/scripts/debug_topics.ts:29:24)
