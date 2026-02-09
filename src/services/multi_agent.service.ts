@@ -80,7 +80,7 @@ Start directly with the post content.`;
 Мы не пишем учебники и не «объясняем основы», а вскрываем реальные проблемы, конфликты и антипаттерны.
 
 Твоя задача:
-На основе темы недели сгенерировать ровно 2 темы для постов.
+На основе темы недели сгенерировать запрошенное количество тем для постов.
 
 Требования к темам:
 - Каждая тема должна содержать ЯВНЫЙ конфликт.
@@ -515,9 +515,41 @@ Start directly with the post content.`;
                     { role: 'system', content: config.prompt },
                     { role: 'user', content: `Original Text:\n${text}\n\nCritique to address:\n${critique}` }
                 ],
-                temperature: 0.7
+                temperature: 0.7,
+                response_format: { type: "json_object" }
             });
             output = response.choices[0].message.content || text;
+        }
+
+        let finalPostText = output;
+        let metadata = {};
+
+        try {
+            // Attempt to parse JSON output from Fixer
+            let cleaned = output.trim();
+
+            // Remove markdown code blocks if present
+            cleaned = cleaned.replace(/^```json\s*/, '').replace(/^```\s*/, '').replace(/\s*```$/, '');
+
+            const firstBrace = cleaned.indexOf('{');
+            const lastBrace = cleaned.lastIndexOf('}');
+
+            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+                // Attempt to fix common JSON issues (newlines in strings?) - Risky, rely on valid JSON first
+                const parsed = JSON.parse(cleaned);
+
+                if (parsed.updated_text) {
+                    finalPostText = parsed.updated_text;
+                    metadata = {
+                        what_changed: parsed.what_changed,
+                        practical_gain: parsed.practical_gain,
+                        estimated_practicality_index: parsed.estimated_practicality_index
+                    };
+                }
+            }
+        } catch (e) {
+            console.warn('[PostFixer] Failed to parse JSON, returning raw output.', e);
         }
 
         if (runId > 0) {
@@ -525,11 +557,12 @@ Start directly with the post content.`;
                 data: {
                     run_id: runId, iteration_number: iteration, agent_role: 'post_fixer',
                     input: `Critique: ${(critique || '').substring(0, 200)}...`,
-                    output: output
+                    output: output, // Save full JSON for debugging
+                    // We could add a metadata column later if needed
                 }
             }).catch(console.error);
         }
-        return output;
+        return finalPostText;
     }
 
     // --- Legacy / Topic Generation ---
@@ -548,11 +581,18 @@ Start directly with the post content.`;
 
     // --- Topic List Generation ---
 
-    async refineTopics(projectId: number, theme: string, weekId: number, promptOverride?: string): Promise<{ topics: { topic: string, category: string, tags: string[] }[], score: number }> {
-        console.log(`[MultiAgent] Starting topic generation for theme: "${theme}"`);
+    async refineTopics(projectId: number, theme: string, weekId: number, promptOverride?: string, count: number = 2, existingTopics: string[] = []): Promise<{ topics: { topic: string, category: string, tags: string[] }[], score: number }> {
+        console.log(`[MultiAgent] Starting topic generation for theme: "${theme}", count: ${count}`);
 
         // Fetch comments
         const commentsContext = await commentService.getCommentsForContext(projectId, 'week', weekId);
+
+        // Context construction
+        let fullContext = commentsContext;
+        if (existingTopics.length > 0) {
+            fullContext += `\n\nALREADY GENERATED TOPICS (DO NOT DUPLICATE):\n${existingTopics.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
+        }
+        fullContext += `\n\nREQUIRED OUTPUT QUANTITY: ${count} topics.`;
 
         // 1. Create Run Log (Topics)
         let runLogId = 0;
@@ -567,7 +607,7 @@ Start directly with the post content.`;
         let creatorPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CREATOR, this.DEFAULT_TOPIC_CREATOR_PROMPT);
         if (promptOverride) creatorPrompt = promptOverride;
 
-        let currentTopicsJSON = await this.topicCreator(theme, creatorPrompt, runLogId, commentsContext);
+        let currentTopicsJSON = await this.topicCreator(theme, creatorPrompt, runLogId, fullContext);
 
         // Ensure it's valid JSON structure from the start
         try {
@@ -679,6 +719,7 @@ Start directly with the post content.`;
         try {
             const content = response.choices[0].message.content || '{}';
             result = JSON.parse(content) as CritiqueResult;
+            if (!result.critique) result.critique = "No critique provided.";
         } catch (e) {
             result = { score: 50, critique: "Failed to parse critique." };
         }
@@ -717,7 +758,7 @@ Start directly with the post content.`;
                     run_id: runId,
                     iteration_number: iteration,
                     agent_role: 'topic_fixer',
-                    input: `Critique: ${critique.substring(0, 200)}...`,
+                    input: `Critique: ${(critique || '').substring(0, 200)}...`,
                     output: output
                 }
             }).catch(console.error);

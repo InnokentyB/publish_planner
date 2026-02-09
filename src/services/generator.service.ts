@@ -82,8 +82,8 @@ class GeneratorService {
         });
     }
 
-    async generateTopics(projectId: number, theme: string, weekId: number, promptOverride?: string): Promise<{ topics: { topic: string, category: string, tags: string[] }[], score: number }> {
-        return await multiAgentService.refineTopics(projectId, theme, weekId, promptOverride);
+    async generateTopics(projectId: number, theme: string, weekId: number, promptOverride?: string, count: number = 5, existingTopics: string[] = []): Promise<{ topics: { topic: string, category: string, tags: string[] }[], score: number }> {
+        return await multiAgentService.refineTopics(projectId, theme, weekId, promptOverride, count, existingTopics);
     }
 
     async generatePostText(projectId: number, theme: string, topic: string, postId: number, promptOverride?: string) {

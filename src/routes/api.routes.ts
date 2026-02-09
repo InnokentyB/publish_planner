@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import plannerService from '../services/planner.service';
 import generatorService from '../services/generator.service';
 import multiAgentService from '../services/multi_agent.service';
+import publisherService from '../services/publisher.service';
 import modelService from '../services/model.service';
 import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
@@ -76,7 +77,8 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         }
 
         const week = await plannerService.createWeek(projectId, theme, start, end);
-        await plannerService.generateSlots(week.id, projectId, start);
+        // Initial 5 slots
+        await plannerService.generateSlots(week.id, projectId, start, 5, 0);
 
         return week;
     });
@@ -126,40 +128,78 @@ export default async function apiRoutes(fastify: FastifyInstance) {
 
     // Week actions
     fastify.post('/api/weeks/:id/generate-topics', async (request, reply) => {
-        const projectId = (request as any).projectId;
-        console.log('[API] Generate Topics Request:', {
-            projectId,
-            params: request.params,
-            headers_x_project_id: request.headers['x-project-id']
-        });
+        try {
+            const projectId = (request as any).projectId;
+            console.log('[API] Generate Topics Request:', {
+                projectId,
+                params: request.params,
+                headers_x_project_id: request.headers['x-project-id']
+            });
 
-        if (!projectId) {
-            console.error('[API] Missing Project ID');
-            return reply.code(400).send({ error: 'Project ID required' });
+            if (!projectId) {
+                console.error('[API] Missing Project ID');
+                return reply.code(400).send({ error: 'Project ID required' });
+            }
+
+            const { id } = request.params as { id: string };
+            const { promptPresetId } = request.body as { promptPresetId?: number };
+
+            const week = await prisma.week.findUnique({
+                where: { id: parseInt(id) } // Removed project_id check temporarily to depend on middleware
+            });
+
+            // Double check project ownership if needed, or rely on middleware
+            if (!week || week.project_id !== projectId) {
+                return reply.code(404).send({ error: 'Week not found' });
+            }
+
+            let promptOverride: string | undefined;
+            if (promptPresetId) {
+                const preset = await prisma.promptPreset.findUnique({ where: { id: promptPresetId } });
+                if (preset) promptOverride = preset.prompt_text;
+            }
+
+            // Determine how many topics to generate based on existing posts (topics)
+            const existingPosts = await prisma.post.findMany({
+                where: { week_id: week.id, status: { not: 'planned' } }, // Count generated/approved topics
+                select: { topic: true }
+            });
+            const existingCount = existingPosts.length;
+            const existingTopics = existingPosts.map(p => p.topic || '').filter(t => t);
+
+            let countToGenerate = 0;
+            if (existingCount === 0) countToGenerate = 5;
+            else if (existingCount === 5) countToGenerate = 5;
+            else if (existingCount === 10) countToGenerate = 4;
+            else if (existingCount >= 14) {
+                return reply.code(400).send({ error: 'Maximum topics (14) already reached' });
+            } else {
+                // Fallback or intermediate state recovery
+                // If we have random number, try to fill up to next stage?
+                // For now, strict stages:
+                return reply.code(400).send({ error: `Unexpected topic count: ${existingCount}. Expected 0, 5, or 10.` });
+            }
+
+            // Generate slots for new topics
+            // We need to know where to start indexing. 
+            // Assuming slots are 1-based index. 
+            // Actually, we should check if slots already exist for these indices.
+            // But simplify: just generate slots starting from current count.
+            await plannerService.generateSlots(week.id, projectId, week.week_start, countToGenerate, existingCount);
+
+            const result = await generatorService.generateTopics(projectId, week.theme, week.id, promptOverride, countToGenerate, existingTopics);
+
+            // Save topics starting at the correct offset
+            await plannerService.saveTopics(week.id, result.topics, existingCount);
+
+            return { success: true, topics: result.topics };
+        } catch (error: any) {
+            console.error('[API Error] Generate Topics Failed:', error);
+            const fs = require('fs');
+            const logEntry = `[${new Date().toISOString()}] Error in /generate-topics: ${error.message}\nStack: ${error.stack}\n\n`;
+            fs.appendFileSync('server_error.log', logEntry);
+            return reply.code(500).send({ error: 'Internal Server Error', details: error.message });
         }
-
-        const { id } = request.params as { id: string };
-        const { promptPresetId } = request.body as { promptPresetId?: number };
-
-        const week = await prisma.week.findUnique({
-            where: { id: parseInt(id), project_id: projectId }
-        });
-
-        if (!week) {
-            reply.code(404).send({ error: 'Week not found' });
-            return;
-        }
-
-        let promptOverride: string | undefined;
-        if (promptPresetId) {
-            const preset = await prisma.promptPreset.findUnique({ where: { id: promptPresetId } });
-            if (preset) promptOverride = preset.prompt_text;
-        }
-
-        const result = await generatorService.generateTopics(projectId, week.theme, week.id, promptOverride);
-        await plannerService.saveTopics(week.id, result.topics);
-
-        return { success: true, topics: result.topics };
     });
 
     fastify.post('/api/weeks/:id/approve-topics', async (request, reply) => {
@@ -244,6 +284,18 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         });
 
         return post;
+    });
+
+
+    fastify.post('/api/posts/:id/publish-now', async (request, reply) => {
+        const { id } = request.params as { id: string };
+        try {
+            await publisherService.publishPostNow(parseInt(id));
+            return { success: true };
+        } catch (e: any) {
+            console.error('Publish now failed', e);
+            reply.code(500).send({ error: e.message });
+        }
     });
 
     fastify.post('/api/posts/:id/generate', async (request, reply) => {

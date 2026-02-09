@@ -86,6 +86,15 @@ export default function WeekDetail() {
         onError: () => setIsGeneratingPosts(false)
     })
 
+    const publishNow = useMutation({
+        mutationFn: (postId: number) => api.post(`/api/posts/${postId}/publish-now`, {}),
+        onSuccess: () => {
+            alert('Post published to Telegram!');
+            queryClient.invalidateQueries({ queryKey: ['week', id] })
+        },
+        onError: (err: any) => alert('Failed to publish: ' + (err.response?.data?.error || err.message))
+    })
+
     if (!currentProject) {
         return (
             <div className="container">
@@ -141,8 +150,9 @@ export default function WeekDetail() {
             {week.status === 'planning' && (
                 <div className="card mb-3">
                     <h3>Generate Topics</h3>
+                    <h3>Generate Topics</h3>
                     <p className="text-muted mb-2">
-                        Use AI to generate 2 topic ideas for this week's theme.
+                        Use AI to generate the first <b>5 topic ideas</b> for this week's theme.
                     </p>
 
                     <div className="mb-2" style={{ maxWidth: '300px' }}>
@@ -165,7 +175,7 @@ export default function WeekDetail() {
                     >
                         {isGeneratingTopics ? (
                             <span className="flex-center"><div className="loading"></div> Generating...</span>
-                        ) : 'Generate Topics'}
+                        ) : 'Generate 5 Topics'}
                     </button>
                 </div>
             )}
@@ -240,6 +250,20 @@ export default function WeekDetail() {
                                                 ))}
                                             </div>
                                         )}
+                                        <button
+                                            className="btn-secondary mt-2"
+                                            style={{ width: '100%', fontSize: '0.9rem', padding: '5px' }}
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                if (window.confirm('Publish this post to Telegram immediately?')) {
+                                                    publishNow.mutate(post.id);
+                                                }
+                                            }}
+                                            disabled={publishNow.isPending}
+                                        >
+                                            🚀 Publish Now
+                                        </button>
                                     </div>
                                 </Link>
                             ))}
@@ -257,8 +281,41 @@ export default function WeekDetail() {
                             ) : 'Generate All Posts'}
                         </button>
                     )}
+
+                    {/* Generate More Topics Button (Staged Generation) */}
+                    {(week.status === 'topics_approved' || week.status === 'generated' || week.status === 'completed') && week.posts.length < 14 && (
+                        <div className="mt-3 p-3 card" style={{ border: '1px dashed var(--border-color)', background: 'transparent' }}>
+                            <h4>Need more topics?</h4>
+                            <p className="text-muted">
+                                You currently have {week.posts.length} topics.
+                                {week.posts.length < 10 ? ' Generate 5 more.' : ' Generate final 4.'}
+                            </p>
+                            <div className="mb-2" style={{ maxWidth: '300px' }}>
+                                <label className="text-muted" style={{ fontSize: '0.9rem' }}>Style Preset</label>
+                                <select
+                                    value={selectedPresetId}
+                                    onChange={(e) => setSelectedPresetId(e.target.value ? Number(e.target.value) : '')}
+                                >
+                                    <option value="">Default Style</option>
+                                    {presets?.filter(p => p.role === 'topic_creator').map(p => (
+                                        <option key={p.id} value={p.id}>{p.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <button
+                                className="btn-secondary"
+                                onClick={() => generateTopics.mutate()}
+                                disabled={isGeneratingTopics}
+                            >
+                                {isGeneratingTopics ? (
+                                    <span className="flex-center"><div className="loading"></div> Generating...</span>
+                                ) : (week.posts.length < 10 ? '+ Generate 5 More Topics' : '+ Generate 4 More Topics')}
+                            </button>
+                        </div>
+                    )}
                 </div>
-            )}
-        </div>
+            )
+            }
+        </div >
     )
 }

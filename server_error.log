@@ -1,0 +1,8 @@
+[2026-02-09T12:19:30.986Z] Error in /generate-topics: Cannot read properties of undefined (reading 'substring')
+Stack: TypeError: Cannot read properties of undefined (reading 'substring')
+    at MultiAgentService.topicFixer (/Users/innokentyb/Ba_post_planner/src/services/multi_agent.service.ts:720:50)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async MultiAgentService.refineTopics (/Users/innokentyb/Ba_post_planner/src/services/multi_agent.service.ts:616:37)
+    at async GeneratorService.generateTopics (/Users/innokentyb/Ba_post_planner/src/services/generator.service.ts:86:16)
+    at async Object.<anonymous> (/Users/innokentyb/Ba_post_planner/src/routes/api.routes.ts:160:28)
+
