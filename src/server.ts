@@ -10,6 +10,11 @@ import path from 'path';
 
 config();
 
+// Global BigInt serialization fix for Prisma/Fastify
+(BigInt.prototype as any).toJSON = function () {
+    return this.toString();
+};
+
 const server = Fastify({
     logger: true
 });

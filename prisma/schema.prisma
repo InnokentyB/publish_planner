@@ -134,6 +134,8 @@ model Post {
   final_text          String?
   status              String
   approval_message_id BigInt?
+  telegram_message_id Int?
+  published_link      String?
   created_at          DateTime @default(now())
   updated_at          DateTime @updatedAt
 

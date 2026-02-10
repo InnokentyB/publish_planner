@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { useState } from 'react'
 import { api, presetsApi } from '../api'
@@ -13,6 +13,9 @@ interface Post {
     status: string
     publish_at: string
     generated_text: string | null
+    image_url?: string | null
+    telegram_message_id?: number | null
+    published_link?: string | null
 }
 
 interface Week {
@@ -35,6 +38,7 @@ import { useAuth } from '../context/AuthContext'
 
 export default function WeekDetail() {
     const { id } = useParams()
+    const navigate = useNavigate()
     const queryClient = useQueryClient()
     const { currentProject } = useAuth()
     const [isGeneratingTopics, setIsGeneratingTopics] = useState(false)
@@ -94,6 +98,14 @@ export default function WeekDetail() {
         },
         onError: (err: any) => alert('Failed to publish: ' + (err.response?.data?.error || err.message))
     })
+
+    const generateImage = useMutation({
+        mutationFn: (postId: number) => api.post(`/api/posts/${postId}/generate-image`, { provider: 'dalle' }), // Default to dalle for now
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['week', id] });
+        },
+        onError: (err: any) => alert('Failed to generate image: ' + (err.response?.data?.error || err.message))
+    });
 
     if (!currentProject) {
         return (
@@ -180,11 +192,11 @@ export default function WeekDetail() {
                 </div>
             )}
 
-            {week.status === 'topics_generated' && week.topics && (
+            {week.status === 'topics_generated' && (week.topics || week.posts.some(p => p.status === 'topics_generated')) && (
                 <div className="card mb-3">
                     <h3>Review Topics</h3>
                     <div className="grid" style={{ gap: '1rem', marginBottom: '1rem' }}>
-                        {week.topics.map((topic, idx) => (
+                        {(week.topics || week.posts.filter(p => p.status === 'topics_generated')).map((topic, idx) => (
                             <div key={idx} className="card" style={{ background: 'var(--bg-tertiary)' }}>
                                 <h4>{topic.topic}</h4>
                                 <div className="flex-center" style={{ gap: '0.5rem', marginTop: '0.5rem' }}>
@@ -221,38 +233,74 @@ export default function WeekDetail() {
                 </div>
             )}
 
-            {(week.status === 'topics_approved' || week.status === 'generating' || week.status === 'generated' || week.status === 'completed') && (
+            {(week.posts.length > 0) && (
                 <div className="card mb-3">
                     <h3>Posts</h3>
-                    {week.posts.length === 0 ? (
+                    {week.posts.filter(p => p.status !== 'topics_generated').length === 0 ? (
                         <p className="text-muted">No posts yet.</p>
                     ) : (
                         <div className="grid" style={{ gap: '1rem' }}>
-                            {week.posts.map((post) => (
-                                <Link key={post.id} to={`/posts/${post.id}`} style={{ textDecoration: 'none' }}>
-                                    <div className="card" style={{ background: 'var(--bg-tertiary)', cursor: 'pointer' }}>
-                                        <div className="flex-between mb-2">
-                                            <h4 style={{ margin: 0 }}>{post.topic}</h4>
-                                            <span className={`badge badge-${post.status}`}>
-                                                {post.status}
-                                            </span>
+                            {week.posts.filter(p => p.status !== 'topics_generated').map((post) => (
+                                <div
+                                    key={post.id}
+                                    className="card"
+                                    style={{ background: 'var(--bg-tertiary)', cursor: 'pointer' }}
+                                    onClick={() => navigate(`/posts/${post.id}`)}
+                                >
+                                    <div className="flex-between mb-2">
+                                        <h4 style={{ margin: 0 }}>{post.topic}</h4>
+                                        <span className={`badge badge-${post.status}`}>
+                                            {post.status}
+                                        </span>
+                                    </div>
+                                    <div className="text-muted">
+                                        📅 {format(new Date(post.publish_at), 'MMM d, HH:mm')}
+                                    </div>
+                                    {post.image_url && (
+                                        <div className="mt-2 text-center">
+                                            <img src={post.image_url} alt="Post visual" style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '4px' }} />
                                         </div>
-                                        <div className="text-muted">
-                                            📅 {format(new Date(post.publish_at), 'MMM d, HH:mm')}
-                                        </div>
+                                    )}
+                                    <div className="flex-center mt-2" style={{ gap: '0.5rem' }}>
                                         {post.category && (
-                                            <div className="flex-center mt-1" style={{ gap: '0.5rem' }}>
-                                                <span className="badge" style={{ background: 'var(--accent)' }}>{post.category}</span>
-                                                {post.tags.map((tag, i) => (
-                                                    <span key={i} className="badge" style={{ background: 'var(--bg-primary)' }}>
-                                                        #{tag}
-                                                    </span>
-                                                ))}
-                                            </div>
+                                            <span className="badge" style={{ background: 'var(--accent)' }}>{post.category}</span>
+                                        )}
+                                        {post.tags.map((tag, i) => (
+                                            <span key={i} className="badge" style={{ background: 'var(--bg-primary)' }}>
+                                                #{tag}
+                                            </span>
+                                        ))}
+                                    </div>
+                                    <div className="flex-center mt-2" style={{ gap: '0.5rem' }}>
+                                        <button
+                                            className="btn-secondary"
+                                            style={{ flex: 1, fontSize: '0.9rem', padding: '5px' }}
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                if (window.confirm('Generate image for this post?')) {
+                                                    generateImage.mutate(post.id);
+                                                }
+                                            }}
+                                            disabled={generateImage.isPending}
+                                        >
+                                            {generateImage.isPending ? 'Generating...' : (post.image_url ? 'Regenerate Image' : 'Generate Image')}
+                                        </button>
+                                        {post.status === 'published' && post.published_link && (
+                                            <a
+                                                href={post.published_link}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="btn-primary"
+                                                style={{ flex: 1, fontSize: '0.9rem', padding: '5px', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                View on Telegram
+                                            </a>
                                         )}
                                         <button
-                                            className="btn-secondary mt-2"
-                                            style={{ width: '100%', fontSize: '0.9rem', padding: '5px' }}
+                                            className="btn-success"
+                                            style={{ flex: 1, fontSize: '0.9rem', padding: '5px' }}
                                             onClick={(e) => {
                                                 e.preventDefault();
                                                 e.stopPropagation();
@@ -260,12 +308,12 @@ export default function WeekDetail() {
                                                     publishNow.mutate(post.id);
                                                 }
                                             }}
-                                            disabled={publishNow.isPending}
+                                            disabled={publishNow.isPending || post.status === 'published'}
                                         >
-                                            🚀 Publish Now
+                                            {publishNow.isPending ? 'Publishing...' : 'Publish Now'}
                                         </button>
                                     </div>
-                                </Link>
+                                </div>
                             ))}
                         </div>
                     )}

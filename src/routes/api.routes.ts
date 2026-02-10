@@ -84,28 +84,48 @@ export default async function apiRoutes(fastify: FastifyInstance) {
     });
 
     fastify.get('/api/weeks/:id', async (request, reply) => {
-        const { id } = request.params as { id: string };
-        const week = await prisma.week.findUnique({
-            where: { id: parseInt(id) },
-            include: { posts: true }
-        });
-
-        if (!week) {
-            reply.code(404).send({ error: 'Week not found' });
-            return;
-        }
-
-        // Get topics if in topics_generated status
-        let topics = null;
-        if (week.status === 'topics_generated') {
-            const topicPosts = await prisma.post.findMany({
-                where: { week_id: week.id },
-                select: { topic: true, category: true, tags: true }
+        try {
+            const { id } = request.params as { id: string };
+            const week = await prisma.week.findUnique({
+                where: { id: parseInt(id) },
+                include: { posts: true }
             });
-            topics = topicPosts.map(p => ({ topic: p.topic, category: p.category, tags: p.tags }));
-        }
 
-        return { ...week, topics };
+            if (!week) {
+                reply.code(404).send({ error: 'Week not found' });
+                return;
+            }
+
+            // Get topics if in topics_generated status
+            let topics = null;
+            if (week.status === 'topics_generated') {
+                console.log('Week status is topics_generated, looking for run...');
+                const run = await prisma.agentRun.findFirst({
+                    where: { topic: `TOPICS: ${week.theme}` },
+                    orderBy: { created_at: 'desc' },
+                    include: { iterations: true }
+                });
+                if (run) {
+                    console.log('Run found:', run.id);
+                    // Noop
+                }
+            }
+
+            console.log('Returning week:', week.id); // Debug Log
+
+            // Sanitize BigInt for Fastify
+            const serializedPosts = week.posts.map(p => ({
+                ...p,
+                approval_message_id: p.approval_message_id ? p.approval_message_id.toString() : null
+            }));
+
+            return { ...week, posts: serializedPosts, topics };
+        } catch (e: any) {
+            console.error('Error in GET /api/weeks/:id:', e);
+            const fs = require('fs');
+            fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Error in GET /weeks/${(request.params as any).id}: ${e.message}\n${e.stack}\n\n`);
+            return reply.code(500).send({ error: 'Internal Server Error' });
+        }
     });
 
     fastify.put('/api/weeks/:id', async (request, reply) => {
@@ -168,16 +188,11 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             const existingTopics = existingPosts.map(p => p.topic || '').filter(t => t);
 
             let countToGenerate = 0;
-            if (existingCount === 0) countToGenerate = 5;
-            else if (existingCount === 5) countToGenerate = 5;
-            else if (existingCount === 10) countToGenerate = 4;
-            else if (existingCount >= 14) {
+            if (existingCount < 5) countToGenerate = 5 - existingCount;
+            else if (existingCount < 10) countToGenerate = 10 - existingCount;
+            else if (existingCount < 14) countToGenerate = 14 - existingCount;
+            else {
                 return reply.code(400).send({ error: 'Maximum topics (14) already reached' });
-            } else {
-                // Fallback or intermediate state recovery
-                // If we have random number, try to fill up to next stage?
-                // For now, strict stages:
-                return reply.code(400).send({ error: `Unexpected topic count: ${existingCount}. Expected 0, 5, or 10.` });
             }
 
             // Generate slots for new topics
@@ -247,6 +262,45 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         })();
 
         return { success: true, message: 'Generation started' };
+    });
+
+    fastify.post('/api/posts/:id/generate-image', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        const { id } = request.params as { id: string };
+        const { provider } = request.body as { provider?: 'dalle' | 'nano' };
+
+        const post = await prisma.post.findUnique({
+            where: { id: parseInt(id) }
+        });
+
+        if (!post) {
+            return reply.code(404).send({ error: 'Post not found' });
+        }
+
+        try {
+            const textToUse = post.final_text || post.generated_text || post.topic || '';
+
+            // 1. Generate Prompt
+            const imagePrompt = await generatorService.generateImagePrompt(projectId, post.topic || 'Tech Post', textToUse, provider || 'dalle');
+
+            // 2. Generate Image
+            let imageUrl = '';
+            if (provider === 'nano') {
+                imageUrl = await generatorService.generateImageNanoBanana(imagePrompt);
+            } else {
+                imageUrl = await generatorService.generateImage(imagePrompt);
+            }
+
+            // 3. Save to DB
+            await plannerService.updatePost(post.id, {
+                image_url: imageUrl
+            });
+
+            return { success: true, imageUrl, imagePrompt };
+        } catch (error: any) {
+            console.error('Image Generation Failed:', error);
+            return reply.code(500).send({ error: 'Image Generation Failed', details: error.message });
+        }
     });
 
     // Posts
@@ -435,13 +489,20 @@ export default async function apiRoutes(fastify: FastifyInstance) {
 
     // Agents Presets
     fastify.get('/api/settings/presets', async (request, reply) => {
-        const projectId = (request as any).projectId;
-        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+        try {
+            const projectId = (request as any).projectId;
+            if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
 
-        return await prisma.promptPreset.findMany({
-            where: { project_id: projectId },
-            orderBy: { created_at: 'desc' }
-        });
+            return await prisma.promptPreset.findMany({
+                where: { project_id: projectId },
+                orderBy: { created_at: 'desc' }
+            });
+        } catch (e: any) {
+            console.error('Error in GET /api/settings/presets:', e);
+            const fs = require('fs');
+            fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Error in GET /presets: ${e.message}\n${e.stack}\n\n`);
+            return reply.code(500).send({ error: 'Internal Server Error' });
+        }
     });
 
     fastify.post('/api/settings/presets', async (request, reply) => {

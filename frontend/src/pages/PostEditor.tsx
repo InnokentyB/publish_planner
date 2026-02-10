@@ -16,6 +16,7 @@ interface Post {
     generated_text: string | null
     final_text: string | null
     week_id: number
+    image_url?: string | null
 }
 
 interface PromptPreset {
@@ -83,6 +84,14 @@ export default function PostEditor() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['post', id] })
         }
+    })
+
+    const generateImage = useMutation({
+        mutationFn: () => api.post(`/api/posts/${id}/generate-image`, { provider: 'dalle' }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['post', id] })
+        },
+        onError: (err: any) => alert('Failed to generate image: ' + (err.response?.data?.error || err.message))
     })
 
     if (isLoading) {
@@ -217,7 +226,7 @@ export default function PostEditor() {
                         <button
                             className="btn-success"
                             onClick={handleApprove}
-                            disabled={updatePost.isPending || approvePost.isPending || post.status === 'scheduled'}
+                            disabled={updatePost.isPending || approvePost.isPending || post.status === 'scheduled' || post.status === 'published'}
                         >
                             {updatePost.isPending || approvePost.isPending ? 'Saving & Approving...' : 'Approve & Schedule'}
                         </button>
@@ -269,6 +278,29 @@ export default function PostEditor() {
                             )}
                         </div>
                     </div>
+                </div>
+
+                <div className="card mb-2">
+                    <h3>Image</h3>
+                    {post.image_url ? (
+                        <div className="mb-2 text-center">
+                            <img src={post.image_url} alt="Post visual" style={{ maxWidth: '100%', borderRadius: '4px' }} />
+                        </div>
+                    ) : (
+                        <p className="text-muted">No image generated.</p>
+                    )}
+                    <button
+                        className="btn-secondary"
+                        style={{ width: '100%' }}
+                        onClick={() => {
+                            if (window.confirm('Generate image for this post?')) {
+                                generateImage.mutate();
+                            }
+                        }}
+                        disabled={generateImage.isPending}
+                    >
+                        {generateImage.isPending ? 'Generating...' : (post.image_url ? 'Regenerate Image' : 'Generate Image')}
+                    </button>
                 </div>
 
                 <div className="card" style={{ position: 'sticky', top: '2rem' }}>

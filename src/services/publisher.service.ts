@@ -47,6 +47,8 @@ class PublisherService {
                 const targetChannelId = (channel.config as any).telegram_channel_id.toString();
                 const text = post.final_text || post.generated_text || '';
 
+                let sentMessage: any;
+
                 if (post.image_url) {
                     let photoSource: any = post.image_url;
                     if (post.image_url.startsWith('data:')) {
@@ -62,21 +64,40 @@ class PublisherService {
                             parse_mode: 'Markdown'
                         });
                         // Send full text as separate message(s)
-                        await this.sendTextSplitting(targetChannelId, text);
+                        // Note: Only saving the last text message ID if splitting
+                        sentMessage = await this.sendTextSplitting(targetChannelId, text);
                     } else {
-                        await telegramService.sendPhoto(targetChannelId, photoSource, {
+                        sentMessage = await telegramService.sendPhoto(targetChannelId, photoSource, {
                             caption: text,
                             parse_mode: 'Markdown'
                         });
                     }
                 } else {
-                    await this.sendTextSplitting(targetChannelId, text);
+                    sentMessage = await this.sendTextSplitting(targetChannelId, text);
+                }
+
+                // Construct link
+                // Assuming public channel. If private, link structure is different but t.me/c/ID/MSG_ID works for members
+                let publishedLink = null;
+                const channelUsername = (channel.config as any).channel_username; // We might need to store this in config
+
+                // Fallback logic for link
+                if (channelUsername) {
+                    publishedLink = `https://t.me/${channelUsername}/${sentMessage?.message_id}`;
+                } else if (targetChannelId.startsWith('-100')) {
+                    // Private channel format: https://t.me/c/CHANNEL_ID_WITHOUT_-100/MSG_ID
+                    const cleanId = targetChannelId.substring(4);
+                    publishedLink = `https://t.me/c/${cleanId}/${sentMessage?.message_id}`;
                 }
 
                 // Update status to published
                 await prisma.post.update({
                     where: { id: post.id },
-                    data: { status: 'published' }
+                    data: {
+                        status: 'published',
+                        telegram_message_id: sentMessage?.message_id,
+                        published_link: publishedLink
+                    }
                 });
 
                 console.log(`Successfully published post ${post.id} to channel ${targetChannelId}`);
@@ -108,6 +129,7 @@ class PublisherService {
 
         // 3. Send Immediately
         const text = post.final_text || post.generated_text || '';
+        let sentMessage: any;
 
         if (post.image_url) {
             let photoSource: any = post.image_url;
@@ -125,21 +147,35 @@ class PublisherService {
                 });
 
                 // Send Text
-                await this.sendTextSplitting(targetChannelId, text);
+                sentMessage = await this.sendTextSplitting(targetChannelId, text);
             } else {
-                await telegramService.sendPhoto(targetChannelId, photoSource, {
+                sentMessage = await telegramService.sendPhoto(targetChannelId, photoSource, {
                     caption: text,
                     parse_mode: 'Markdown'
                 });
             }
         } else {
-            await this.sendTextSplitting(targetChannelId, text);
+            sentMessage = await this.sendTextSplitting(targetChannelId, text);
+        }
+
+        // Construct link
+        let publishedLink = null;
+        const channelUsername = (channel.config as any).channel_username;
+        if (channelUsername) {
+            publishedLink = `https://t.me/${channelUsername}/${sentMessage?.message_id}`;
+        } else if (targetChannelId.startsWith('-100')) {
+            const cleanId = targetChannelId.substring(4);
+            publishedLink = `https://t.me/c/${cleanId}/${sentMessage?.message_id}`;
         }
 
         // 4. Update DB Status to published
         await prisma.post.update({
             where: { id: postId },
-            data: { status: 'published' }
+            data: {
+                status: 'published',
+                telegram_message_id: sentMessage?.message_id,
+                published_link: publishedLink
+            }
         });
 
         return true;
@@ -148,7 +184,7 @@ class PublisherService {
     private async sendTextSplitting(chatId: string, text: string) {
         const MAX_LENGTH = 4090; // Leave room for markdown safety
         if (text.length <= MAX_LENGTH) {
-            await telegramService.sendMessage(chatId, text, {
+            return await telegramService.sendMessage(chatId, text, {
                 parse_mode: 'Markdown'
             });
         } else {
@@ -166,11 +202,13 @@ class PublisherService {
                 remaining = remaining.substring(chunk.length);
             }
 
+            let lastMessage;
             for (const chunk of chunks) {
-                await telegramService.sendMessage(chatId, chunk, {
+                lastMessage = await telegramService.sendMessage(chatId, chunk, {
                     parse_mode: 'Markdown'
                 });
             }
+            return lastMessage;
         }
     }
 }
