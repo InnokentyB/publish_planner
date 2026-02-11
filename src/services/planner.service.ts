@@ -44,7 +44,7 @@ class PlannerService {
         });
     }
 
-    async generateSlots(weekId: number, projectId: number, start: Date, count: number = 2, startIndex: number = 0) {
+    async generateSlots(weekId: number, projectId: number, start: Date, count: number = 14, startIndex: number = 0) {
         const slots = [];
 
         // Fetch default channel (Telegram)
@@ -54,14 +54,17 @@ class PlannerService {
         const channelId = channel ? channel.id : null;
 
         for (let i = 0; i < count; i++) {
-            // Distribute slots across Mon-Fri effectively
-            // For now, simple round robin or just sequential days
-            // Logic: 0->Mon, 1->Tue, 2->Wed, 3->Thu, 4->Fri
-            const dayOffset = (startIndex + i) % 5;
+            // Distribute 2 slots per day for 7 days (Total 14)
+            // i=0,1 -> Mon (offset 0)
+            // i=2,3 -> Tue (offset 1)
+            // ...
+            const dayOffset = Math.floor(i / 2);
             const date = addDays(start, dayOffset);
 
             const publishAt = new Date(date);
-            publishAt.setHours(10, 0, 0, 0); // Default 10:00
+            // Even index = Morning (10:00), Odd index = Evening (18:00)
+            const hour = i % 2 === 0 ? 10 : 18;
+            publishAt.setHours(hour, 0, 0, 0);
 
             slots.push({
                 project_id: projectId,

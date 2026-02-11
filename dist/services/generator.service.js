@@ -71,12 +71,16 @@ class GeneratorService {
             create: { project_id: projectId, key: key, value }
         });
     }
-    async generateTopics(projectId, theme) {
-        return await multi_agent_service_1.default.refineTopics(projectId, theme);
+    async generateTopics(projectId, theme, weekId, promptOverride, count = 5, existingTopics = []) {
+        return await multi_agent_service_1.default.refineTopics(projectId, theme, weekId, promptOverride, count, existingTopics);
     }
-    async generatePostText(projectId, theme, topic) {
-        const result = await multi_agent_service_1.default.runPostGeneration(projectId, theme, topic);
-        return result.finalText;
+    async generatePostText(projectId, theme, topic, postId, promptOverride) {
+        const result = await multi_agent_service_1.default.runPostGeneration(projectId, theme, topic, postId, promptOverride);
+        return {
+            text: result.finalText,
+            category: result.category,
+            tags: result.tags
+        };
     }
     async generateImagePrompt(projectId, topic, text, provider = 'dalle') {
         let template = await this.getImagePromptTemplate(projectId, provider);
@@ -104,12 +108,40 @@ class GeneratorService {
             if (!response.data || !response.data[0]) {
                 throw new Error('No image data returned from DALL-E');
             }
-            return response.data[0].url || '';
+            const imageUrl = response.data[0].url || '';
+            if (!imageUrl)
+                throw new Error('Empty image URL from DALL-E');
+            // Download and save locally
+            const filename = `img-${Date.now()}-${Math.random().toString(36).substring(7)}.png`;
+            return await this.downloadAndSaveImage(imageUrl, filename);
         }
         catch (e) {
             console.error('Failed to generate image (DALL-E)', e);
             throw e;
         }
+    }
+    async downloadAndSaveImage(url, filename) {
+        const fs = require('fs');
+        const path = require('path');
+        const https = require('https');
+        const uploadsDir = path.join(__dirname, '../../uploads');
+        if (!fs.existsSync(uploadsDir)) {
+            fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+        const filepath = path.join(uploadsDir, filename);
+        const file = fs.createWriteStream(filepath);
+        return new Promise((resolve, reject) => {
+            https.get(url, (response) => {
+                response.pipe(file);
+                file.on('finish', () => {
+                    file.close();
+                    resolve(`/uploads/${filename}`);
+                });
+            }).on('error', (err) => {
+                fs.unlink(filepath, () => { }); // Delete the file async
+                reject(err);
+            });
+        });
     }
     async generateImageNanoBanana(prompt) {
         if (!process.env.GOOGLE_API_KEY) {

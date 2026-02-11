@@ -17,6 +17,7 @@ interface Post {
     final_text: string | null
     week_id: number
     image_url?: string | null
+    image_prompt?: string | null
 }
 
 interface PromptPreset {
@@ -39,6 +40,7 @@ export default function PostEditor() {
     const [publishAt, setPublishAt] = useState('')
     const [selectedPresetId, setSelectedPresetId] = useState<number | ''>('')
     const [showPresetSelect, setShowPresetSelect] = useState(false)
+    const [imageTimestamp, setImageTimestamp] = useState(Date.now())
 
     const { data: presets } = useQuery<PromptPreset[]>({
         queryKey: ['presets', currentProject?.id],
@@ -90,6 +92,7 @@ export default function PostEditor() {
         mutationFn: () => api.post(`/api/posts/${id}/generate-image`, { provider: 'dalle' }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['post', id] })
+            setImageTimestamp(Date.now())
         },
         onError: (err: any) => alert('Failed to generate image: ' + (err.response?.data?.error || err.message))
     })
@@ -284,11 +287,19 @@ export default function PostEditor() {
                     <h3>Image</h3>
                     {post.image_url ? (
                         <div className="mb-2 text-center">
-                            <img src={post.image_url} alt="Post visual" style={{ maxWidth: '100%', borderRadius: '4px' }} />
+                            <img src={`${post.image_url}?t=${imageTimestamp}`} alt="Post visual" style={{ maxWidth: '100%', borderRadius: '4px' }} />
                         </div>
                     ) : (
                         <p className="text-muted">No image generated.</p>
                     )}
+
+                    {post.image_prompt && (
+                        <div className="mb-2 p-2" style={{ background: 'var(--bg-tertiary)', borderRadius: '4px', fontSize: '0.8rem' }}>
+                            <strong>Generation Prompt:</strong>
+                            <p style={{ margin: '0.5rem 0 0', color: 'var(--text-secondary)' }}>{post.image_prompt}</p>
+                        </div>
+                    )}
+
                     <button
                         className="btn-secondary"
                         style={{ width: '100%' }}

@@ -162,7 +162,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             }
 
             const { id } = request.params as { id: string };
-            const { promptPresetId } = request.body as { promptPresetId?: number };
+            const { promptPresetId, overwrite } = request.body as { promptPresetId?: number, overwrite?: boolean };
 
             const week = await prisma.week.findUnique({
                 where: { id: parseInt(id) } // Removed project_id check temporarily to depend on middleware
@@ -171,6 +171,18 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             // Double check project ownership if needed, or rely on middleware
             if (!week || week.project_id !== projectId) {
                 return reply.code(404).send({ error: 'Week not found' });
+            }
+
+            // Handle Overwrite
+            if (overwrite) {
+                console.log(`[API] Overwriting topics for week ${id}`);
+                await prisma.post.deleteMany({
+                    where: {
+                        week_id: week.id,
+                        status: { in: ['planned', 'topics_generated'] } // Only delete planned/generated, keep published/scheduled? 
+                        // Actually, if we regenerate topics, we probably want to wipe the slate for this week unless they are already locked in.
+                    }
+                });
             }
 
             let promptOverride: string | undefined;
@@ -188,11 +200,15 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             const existingTopics = existingPosts.map(p => p.topic || '').filter(t => t);
 
             let countToGenerate = 0;
-            if (existingCount < 5) countToGenerate = 5 - existingCount;
-            else if (existingCount < 10) countToGenerate = 10 - existingCount;
-            else if (existingCount < 14) countToGenerate = 14 - existingCount;
-            else {
+            // Target 14 topics (full week)
+            if (existingCount < 14) {
+                countToGenerate = 14 - existingCount;
+            } else {
                 return reply.code(400).send({ error: 'Maximum topics (14) already reached' });
+            }
+
+            if (countToGenerate <= 0) {
+                return reply.code(400).send({ error: 'No topics needed or max reached' });
             }
 
             // Generate slots for new topics
@@ -219,7 +235,20 @@ export default async function apiRoutes(fastify: FastifyInstance) {
 
     fastify.post('/api/weeks/:id/approve-topics', async (request, reply) => {
         const { id } = request.params as { id: string };
-        await plannerService.updateWeekStatus(parseInt(id), 'topics_approved');
+        const weekId = parseInt(id);
+
+        // Update all posts status
+        await prisma.post.updateMany({
+            where: {
+                week_id: weekId,
+                status: 'topics_generated'
+            },
+            data: {
+                status: 'topics_approved'
+            }
+        });
+
+        await plannerService.updateWeekStatus(weekId, 'topics_approved');
         return { success: true };
     });
 
@@ -281,7 +310,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             const textToUse = post.final_text || post.generated_text || post.topic || '';
 
             // 1. Generate Prompt
-            const imagePrompt = await generatorService.generateImagePrompt(projectId, post.topic || 'Tech Post', textToUse, provider || 'dalle');
+            const imagePrompt = await generatorService.generateImagePrompt(post.project_id, post.topic || 'Tech Post', textToUse, provider || 'dalle');
 
             // 2. Generate Image
             let imageUrl = '';
@@ -293,13 +322,15 @@ export default async function apiRoutes(fastify: FastifyInstance) {
 
             // 3. Save to DB
             await plannerService.updatePost(post.id, {
-                image_url: imageUrl
+                image_url: imageUrl,
+                image_prompt: imagePrompt
             });
 
             return { success: true, imageUrl, imagePrompt };
         } catch (error: any) {
-            console.error('Image Generation Failed:', error);
-            return reply.code(500).send({ error: 'Image Generation Failed', details: error.message });
+            request.log.error(error);
+            console.error('Error generating image:', error);
+            return reply.status(500).send({ error: `Image Generation failed: ${error.message || error}` });
         }
     });
 
@@ -340,6 +371,15 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         return post;
     });
 
+    fastify.post('/api/posts/:id/approve-topic', async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const post = await prisma.post.update({
+            where: { id: parseInt(id) },
+            data: { status: 'topics_approved' }
+        });
+        return post;
+    });
+
 
     fastify.post('/api/posts/:id/publish-now', async (request, reply) => {
         const { id } = request.params as { id: string };
@@ -373,14 +413,14 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             return;
         }
 
-        const { promptPresetId } = request.body as { promptPresetId?: number };
+        const { promptPresetId, withImage } = request.body as { promptPresetId?: number, withImage?: boolean };
         let promptOverride: string | undefined;
         if (promptPresetId) {
             const preset = await prisma.promptPreset.findUnique({ where: { id: promptPresetId } });
             if (preset) promptOverride = preset.prompt_text;
         }
 
-        const result = await generatorService.generatePostText(projectId, post.week.theme, post.topic, post.id, promptOverride);
+        const result = await generatorService.generatePostText(projectId, post.week.theme, post.topic, post.id, promptOverride, withImage);
 
         let fullText = result.text;
         if (result.tags && result.tags.length > 0) {
@@ -411,6 +451,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         const roles = ['post_creator', 'post_critic', 'post_fixer', 'topic_creator', 'topic_critic', 'topic_fixer'];
         const agents = [];
 
+        // Text Agents
         for (const role of roles) {
             const config = await multiAgentService.getAgentConfig(projectId, role as any);
 
@@ -427,9 +468,29 @@ export default async function apiRoutes(fastify: FastifyInstance) {
                 prompt: config.prompt,
                 apiKey: config.apiKey,
                 model: config.model,
-                provider // Add detected provider
+                provider
             });
         }
+
+        // Image Agents (DALL-E)
+        const dallePrompt = await generatorService.getImagePromptTemplate(projectId, 'dalle');
+        agents.push({
+            role: 'dalle_image_gen',
+            prompt: dallePrompt,
+            apiKey: '', // Managed via env mostly for now
+            model: 'dall-e-3',
+            provider: 'OpenAI (Env)'
+        });
+
+        // Image Agents (Nano)
+        const nanoPrompt = await generatorService.getImagePromptTemplate(projectId, 'nano');
+        agents.push({
+            role: 'nano_image_gen',
+            prompt: nanoPrompt,
+            apiKey: '',
+            model: 'imagen-3.0',
+            provider: 'Google (Env)'
+        });
 
         return agents;
     });
@@ -441,6 +502,17 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         const { role } = request.params as { role: string };
         const { prompt, apiKey, model } = request.body as { prompt: string; apiKey: string; model: string };
 
+        // Handle Image Agents
+        if (role === 'dalle_image_gen') {
+            await generatorService.updateImagePromptTemplate(projectId, prompt, 'dalle');
+            return { success: true };
+        }
+        if (role === 'nano_image_gen') {
+            await generatorService.updateImagePromptTemplate(projectId, prompt, 'nano');
+            return { success: true };
+        }
+
+        // Handle Text Agents
         const roleMap: any = {
             'post_creator': { prompt: 'multi_agent_post_creator_prompt', key: 'multi_agent_post_creator_key', model: 'multi_agent_post_creator_model' },
             'post_critic': { prompt: 'multi_agent_post_critic_prompt', key: 'multi_agent_post_critic_key', model: 'multi_agent_post_critic_model' },

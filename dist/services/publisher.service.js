@@ -43,36 +43,90 @@ class PublisherService {
                 }
                 const targetChannelId = channel.config.telegram_channel_id.toString();
                 const text = post.final_text || post.generated_text || '';
+                let sentMessage;
                 if (post.image_url) {
                     let photoSource = post.image_url;
                     if (post.image_url.startsWith('data:')) {
                         const base64Data = post.image_url.split(',')[1];
                         photoSource = { source: Buffer.from(base64Data, 'base64') };
                     }
-                    // Check length for caption (limit 1024)
-                    if (text.length > 1024) {
-                        // Send photo with title/topic only
-                        await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
-                            caption: post.topic ? `**${post.topic}**` : '',
-                            parse_mode: 'Markdown'
-                        });
-                        // Send full text as separate message(s)
-                        await this.sendTextSplitting(targetChannelId, text);
+                    else if (post.image_url.startsWith('/uploads/')) {
+                        const fs = require('fs');
+                        const path = require('path');
+                        const filename = post.image_url.split('/').pop();
+                        const localPath = path.join(__dirname, '../../uploads', filename);
+                        if (fs.existsSync(localPath)) {
+                            photoSource = { source: fs.createReadStream(localPath) };
+                        }
+                        else {
+                            console.error(`Local image file not found: ${localPath}`);
+                            photoSource = null;
+                        }
+                    }
+                    if (photoSource) {
+                        const CAPTION_LIMIT = 1024;
+                        if (text.length > CAPTION_LIMIT) {
+                            // Split: Fill caption, then rest as text
+                            // Simple split logic: find last newline before limit
+                            let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
+                            if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
+                                // If no newline or it's too early, split by space
+                                splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                            }
+                            if (splitIndex === -1) {
+                                // Force split
+                                splitIndex = CAPTION_LIMIT;
+                            }
+                            const caption = text.substring(0, splitIndex);
+                            const remainder = text.substring(splitIndex).trim();
+                            await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
+                                caption: caption,
+                                parse_mode: 'Markdown'
+                            });
+                            if (remainder.length > 0) {
+                                sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                            }
+                            else {
+                                // Should unlikely happen given checks, but just in case
+                                sentMessage = { message_id: 0 }; // Placeholder
+                            }
+                        }
+                        else {
+                            sentMessage = await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
+                                caption: text,
+                                parse_mode: 'Markdown'
+                            });
+                        }
                     }
                     else {
-                        await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
-                            caption: text,
-                            parse_mode: 'Markdown'
-                        });
+                        // Image missing or invalid, send text only
+                        sentMessage = await this.sendTextSplitting(targetChannelId, text);
                     }
                 }
                 else {
-                    await this.sendTextSplitting(targetChannelId, text);
+                    sentMessage = await this.sendTextSplitting(targetChannelId, text);
+                }
+                // Construct link
+                // Assuming public channel. If private, link structure is different but t.me/c/ID/MSG_ID works for members
+                let publishedLink = null;
+                const channelUsername = channel.config.channel_username; // We might need to store this in config
+                // Fallback logic for link
+                if (channelUsername) {
+                    publishedLink = `https://t.me/${channelUsername}/${sentMessage?.message_id}`;
+                }
+                else if (targetChannelId.startsWith('-100')) {
+                    // Private channel format: https://t.me/c/CHANNEL_ID_WITHOUT_-100/MSG_ID
+                    const cleanId = targetChannelId.substring(4);
+                    publishedLink = `https://t.me/c/${cleanId}/${sentMessage?.message_id}`;
                 }
                 // Update status to published
                 await prisma.post.update({
                     where: { id: post.id },
-                    data: { status: 'published' }
+                    data: {
+                        status: 'published',
+                        telegram_message_id: sentMessage?.message_id,
+                        published_link: publishedLink
+                    }
                 });
                 console.log(`Successfully published post ${post.id} to channel ${targetChannelId}`);
             }
@@ -99,43 +153,93 @@ class PublisherService {
         const targetChannelId = channel.config.telegram_channel_id.toString();
         // 3. Send Immediately
         const text = post.final_text || post.generated_text || '';
+        let sentMessage;
         if (post.image_url) {
             let photoSource = post.image_url;
             if (post.image_url.startsWith('data:')) {
                 const base64Data = post.image_url.split(',')[1];
                 photoSource = { source: Buffer.from(base64Data, 'base64') };
             }
-            if (text.length > 1024) {
-                // Split: Photo then Text
-                // Send Photo
-                await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
-                    caption: post.topic ? `**${post.topic}**` : '',
-                    parse_mode: 'Markdown'
-                });
-                // Send Text
-                await this.sendTextSplitting(targetChannelId, text);
+            else if (post.image_url.startsWith('/uploads/')) {
+                const fs = require('fs');
+                const path = require('path');
+                const filename = post.image_url.split('/').pop();
+                const localPath = path.join(__dirname, '../../uploads', filename);
+                if (fs.existsSync(localPath)) {
+                    photoSource = { source: fs.createReadStream(localPath) };
+                }
+                else {
+                    console.error(`Local image file not found: ${localPath}`);
+                    photoSource = null;
+                }
+            }
+            if (photoSource) {
+                const CAPTION_LIMIT = 1024;
+                if (text.length > CAPTION_LIMIT) {
+                    // Split: Fill caption, then rest as text
+                    // Simple split logic: find last newline before limit
+                    let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
+                    if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
+                        // If no newline or it's too early, split by space
+                        splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                    }
+                    if (splitIndex === -1) {
+                        // Force split
+                        splitIndex = CAPTION_LIMIT;
+                    }
+                    const caption = text.substring(0, splitIndex);
+                    const remainder = text.substring(splitIndex).trim();
+                    await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
+                        caption: caption,
+                        parse_mode: 'Markdown'
+                    });
+                    if (remainder.length > 0) {
+                        sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                    }
+                    else {
+                        // Should unlikely happen given checks, but just in case
+                        sentMessage = { message_id: 0 }; // Placeholder
+                    }
+                }
+                else {
+                    sentMessage = await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
+                        caption: text,
+                        parse_mode: 'Markdown'
+                    });
+                }
             }
             else {
-                await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
-                    caption: text,
-                    parse_mode: 'Markdown'
-                });
+                sentMessage = await this.sendTextSplitting(targetChannelId, text);
             }
         }
         else {
-            await this.sendTextSplitting(targetChannelId, text);
+            sentMessage = await this.sendTextSplitting(targetChannelId, text);
+        }
+        // Construct link
+        let publishedLink = null;
+        const channelUsername = channel.config.channel_username;
+        if (channelUsername) {
+            publishedLink = `https://t.me/${channelUsername}/${sentMessage?.message_id}`;
+        }
+        else if (targetChannelId.startsWith('-100')) {
+            const cleanId = targetChannelId.substring(4);
+            publishedLink = `https://t.me/c/${cleanId}/${sentMessage?.message_id}`;
         }
         // 4. Update DB Status to published
         await prisma.post.update({
             where: { id: postId },
-            data: { status: 'published' }
+            data: {
+                status: 'published',
+                telegram_message_id: sentMessage?.message_id,
+                published_link: publishedLink
+            }
         });
         return true;
     }
     async sendTextSplitting(chatId, text) {
         const MAX_LENGTH = 4090; // Leave room for markdown safety
         if (text.length <= MAX_LENGTH) {
-            await telegram_service_1.default.sendMessage(chatId, text, {
+            return await telegram_service_1.default.sendMessage(chatId, text, {
                 parse_mode: 'Markdown'
             });
         }
@@ -153,11 +257,13 @@ class PublisherService {
                 chunks.push(chunk);
                 remaining = remaining.substring(chunk.length);
             }
+            let lastMessage;
             for (const chunk of chunks) {
-                await telegram_service_1.default.sendMessage(chatId, chunk, {
+                lastMessage = await telegram_service_1.default.sendMessage(chatId, chunk, {
                     parse_mode: 'Markdown'
                 });
             }
+            return lastMessage;
         }
     }
 }

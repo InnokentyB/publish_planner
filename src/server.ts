@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+// Force restart for Prisma Client update
 import { config } from 'dotenv';
 import telegramService from './services/telegram.service';
 import jobRoutes from './routes/jobs';
@@ -27,11 +28,26 @@ server.register(require('@fastify/static'), {
     root: path.join(__dirname, '../frontend/dist'),
     prefix: '/',
 });
+
+server.register(require('@fastify/static'), {
+    root: path.join(__dirname, '../uploads'),
+    prefix: '/uploads/',
+    decorateReply: false // Avoid conflict with previous registration
+});
 server.register(authRoutes);
 server.register(projectRoutes);
 server.register(apiRoutes);
 server.register(telegramRoutes);
 server.register(jobRoutes);
+
+// SPA fallback for non-API routes
+server.setNotFoundHandler((request, reply) => {
+    if (request.raw.url && request.raw.url.startsWith('/api')) {
+        reply.code(404).send({ error: 'Not Found' });
+        return;
+    }
+    (reply as any).sendFile('index.html');
+});
 
 import publisherService from './services/publisher.service';
 

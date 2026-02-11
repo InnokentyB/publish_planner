@@ -86,8 +86,8 @@ class GeneratorService {
         return await multiAgentService.refineTopics(projectId, theme, weekId, promptOverride, count, existingTopics);
     }
 
-    async generatePostText(projectId: number, theme: string, topic: string, postId: number, promptOverride?: string) {
-        const result = await multiAgentService.runPostGeneration(projectId, theme, topic, postId, promptOverride);
+    async generatePostText(projectId: number, theme: string, topic: string, postId: number, promptOverride?: string, withImage: boolean = false) {
+        const result = await multiAgentService.runPostGeneration(projectId, theme, topic, postId, promptOverride, withImage);
         return {
             text: result.finalText,
             category: result.category,
@@ -128,11 +128,43 @@ class GeneratorService {
                 throw new Error('No image data returned from DALL-E');
             }
 
-            return response.data[0].url || '';
+            const imageUrl = response.data[0].url || '';
+            if (!imageUrl) throw new Error('Empty image URL from DALL-E');
+
+            // Download and save locally
+            const filename = `img-${Date.now()}-${Math.random().toString(36).substring(7)}.png`;
+            return await this.downloadAndSaveImage(imageUrl, filename);
         } catch (e) {
             console.error('Failed to generate image (DALL-E)', e);
             throw e;
         }
+    }
+
+    private async downloadAndSaveImage(url: string, filename: string): Promise<string> {
+        const fs = require('fs');
+        const path = require('path');
+        const https = require('https');
+
+        const uploadsDir = path.join(__dirname, '../../uploads');
+        if (!fs.existsSync(uploadsDir)) {
+            fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+
+        const filepath = path.join(uploadsDir, filename);
+        const file = fs.createWriteStream(filepath);
+
+        return new Promise((resolve, reject) => {
+            https.get(url, (response: any) => {
+                response.pipe(file);
+                file.on('finish', () => {
+                    file.close();
+                    resolve(`/uploads/${filename}`);
+                });
+            }).on('error', (err: any) => {
+                fs.unlink(filepath, () => { }); // Delete the file async
+                reject(err);
+            });
+        });
     }
 
     async generateImageNanoBanana(prompt: string): Promise<string> {

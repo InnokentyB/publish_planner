@@ -9,7 +9,7 @@ async function main() {
     // Test with a simple theme
     const theme = 'AI Agents in 2025';
     try {
-        const { topics, score } = await multi_agent_service_1.default.refineTopics(1, theme);
+        const { topics, score } = await multi_agent_service_1.default.refineTopics(1, theme, -1);
         console.log('\n--- Final Topics ---');
         console.log(`Score: ${score}/100`);
         console.log(JSON.stringify(topics, null, 2));

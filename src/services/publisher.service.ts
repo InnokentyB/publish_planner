@@ -54,23 +54,58 @@ class PublisherService {
                     if (post.image_url.startsWith('data:')) {
                         const base64Data = post.image_url.split(',')[1];
                         photoSource = { source: Buffer.from(base64Data, 'base64') };
+                    } else if (post.image_url.startsWith('/uploads/')) {
+                        const fs = require('fs');
+                        const path = require('path');
+                        const filename = post.image_url.split('/').pop();
+                        const localPath = path.join(__dirname, '../../uploads', filename);
+
+                        if (fs.existsSync(localPath)) {
+                            photoSource = { source: fs.createReadStream(localPath) };
+                        } else {
+                            console.error(`Local image file not found: ${localPath}`);
+                            photoSource = null;
+                        }
                     }
 
-                    // Check length for caption (limit 1024)
-                    if (text.length > 1024) {
-                        // Send photo with title/topic only
-                        await telegramService.sendPhoto(targetChannelId, photoSource, {
-                            caption: post.topic ? `**${post.topic}**` : '',
-                            parse_mode: 'Markdown'
-                        });
-                        // Send full text as separate message(s)
-                        // Note: Only saving the last text message ID if splitting
-                        sentMessage = await this.sendTextSplitting(targetChannelId, text);
+                    if (photoSource) {
+                        const CAPTION_LIMIT = 1024;
+                        if (text.length > CAPTION_LIMIT) {
+                            // Split: Fill caption, then rest as text
+                            // Simple split logic: find last newline before limit
+                            let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
+                            if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
+                                // If no newline or it's too early, split by space
+                                splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                            }
+                            if (splitIndex === -1) {
+                                // Force split
+                                splitIndex = CAPTION_LIMIT;
+                            }
+
+                            const caption = text.substring(0, splitIndex);
+                            const remainder = text.substring(splitIndex).trim();
+
+                            await telegramService.sendPhoto(targetChannelId, photoSource, {
+                                caption: caption,
+                                parse_mode: 'Markdown'
+                            });
+
+                            if (remainder.length > 0) {
+                                sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                            } else {
+                                // Should unlikely happen given checks, but just in case
+                                sentMessage = { message_id: 0 }; // Placeholder
+                            }
+                        } else {
+                            sentMessage = await telegramService.sendPhoto(targetChannelId, photoSource, {
+                                caption: text,
+                                parse_mode: 'Markdown'
+                            });
+                        }
                     } else {
-                        sentMessage = await telegramService.sendPhoto(targetChannelId, photoSource, {
-                            caption: text,
-                            parse_mode: 'Markdown'
-                        });
+                        // Image missing or invalid, send text only
+                        sentMessage = await this.sendTextSplitting(targetChannelId, text);
                     }
                 } else {
                     sentMessage = await this.sendTextSplitting(targetChannelId, text);
@@ -136,23 +171,57 @@ class PublisherService {
             if (post.image_url.startsWith('data:')) {
                 const base64Data = post.image_url.split(',')[1];
                 photoSource = { source: Buffer.from(base64Data, 'base64') };
+            } else if (post.image_url.startsWith('/uploads/')) {
+                const fs = require('fs');
+                const path = require('path');
+                const filename = post.image_url.split('/').pop();
+                const localPath = path.join(__dirname, '../../uploads', filename);
+
+                if (fs.existsSync(localPath)) {
+                    photoSource = { source: fs.createReadStream(localPath) };
+                } else {
+                    console.error(`Local image file not found: ${localPath}`);
+                    photoSource = null;
+                }
             }
 
-            if (text.length > 1024) {
-                // Split: Photo then Text
-                // Send Photo
-                await telegramService.sendPhoto(targetChannelId, photoSource, {
-                    caption: post.topic ? `**${post.topic}**` : '',
-                    parse_mode: 'Markdown'
-                });
+            if (photoSource) {
+                const CAPTION_LIMIT = 1024;
+                if (text.length > CAPTION_LIMIT) {
+                    // Split: Fill caption, then rest as text
+                    // Simple split logic: find last newline before limit
+                    let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
+                    if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
+                        // If no newline or it's too early, split by space
+                        splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                    }
+                    if (splitIndex === -1) {
+                        // Force split
+                        splitIndex = CAPTION_LIMIT;
+                    }
 
-                // Send Text
-                sentMessage = await this.sendTextSplitting(targetChannelId, text);
+                    const caption = text.substring(0, splitIndex);
+                    const remainder = text.substring(splitIndex).trim();
+
+                    await telegramService.sendPhoto(targetChannelId, photoSource, {
+                        caption: caption,
+                        parse_mode: 'Markdown'
+                    });
+
+                    if (remainder.length > 0) {
+                        sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                    } else {
+                        // Should unlikely happen given checks, but just in case
+                        sentMessage = { message_id: 0 }; // Placeholder
+                    }
+                } else {
+                    sentMessage = await telegramService.sendPhoto(targetChannelId, photoSource, {
+                        caption: text,
+                        parse_mode: 'Markdown'
+                    });
+                }
             } else {
-                sentMessage = await telegramService.sendPhoto(targetChannelId, photoSource, {
-                    caption: text,
-                    parse_mode: 'Markdown'
-                });
+                sentMessage = await this.sendTextSplitting(targetChannelId, text);
             }
         } else {
             sentMessage = await this.sendTextSplitting(targetChannelId, text);

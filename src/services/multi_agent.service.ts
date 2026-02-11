@@ -231,13 +231,22 @@ Start directly with the post content.`;
 
     // --- Post Generation Loop (New) ---
 
-    async runPostGeneration(projectId: number, theme: string, topic: string, postId: number, promptOverride?: string): Promise<MultiAgentResult & { category?: string, tags?: string[] }> {
-        console.log(`[MultiAgent Post] Starting generation for: "${topic}"`);
+    async runPostGeneration(projectId: number, theme: string, topic: string, postId: number, promptOverride?: string, withImage: boolean = false): Promise<MultiAgentResult & { category?: string, tags?: string[] }> {
+        console.log(`[MultiAgent Post] Starting generation for: "${topic}" (Image: ${withImage})`);
 
         // Fetch comments for context
-        const commentsContext = await commentService.getCommentsForContext(projectId, 'post', postId);
+        let commentsContext = await commentService.getCommentsForContext(projectId, 'post', postId);
         if (commentsContext) {
             console.log(`[MultiAgent Post] Found comments: ${commentsContext.length} chars`);
+        } else {
+            commentsContext = '';
+        }
+
+        // Add Length Constraint
+        if (withImage) {
+            commentsContext += "\n\n[IMPORTANT CONSTRAINT]: This post will be published with an image. The text MUST be strictly under 1024 characters to fit in the Telegram caption limit. Be concise.";
+        } else {
+            commentsContext += "\n\n[CONSTRAINT]: Standard Telegram text post (max 4000 chars).";
         }
 
         let runLogId = 0;

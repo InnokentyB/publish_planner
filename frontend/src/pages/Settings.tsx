@@ -408,6 +408,9 @@ export default function Settings() {
                                 <option value="topic_creator">Topic Creator</option>
                                 <option value="topic_critic">Topic Critic</option>
                                 <option value="topic_fixer">Topic Fixer</option>
+                                <option disabled>--- Image Generation ---</option>
+                                <option value="dalle_image_gen">DALL-E Prompt</option>
+                                <option value="nano_image_gen">Nano Banana Prompt</option>
                             </select>
                         </div>
 

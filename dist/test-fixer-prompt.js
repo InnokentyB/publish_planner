@@ -7,7 +7,7 @@ const multi_agent_service_1 = __importDefault(require("./services/multi_agent.se
 async function testFixerPrompt() {
     console.log('--- Testing Improved Fixer Prompt ---\n');
     try {
-        const result = await multi_agent_service_1.default.runPostGeneration(1, 'Soft Skills for Developers', 'How to give and receive constructive feedback');
+        const result = await multi_agent_service_1.default.runPostGeneration(1, 'Soft Skills for Developers', 'How to give and receive constructive feedback', -1);
         console.log('\n✅ Generation completed!');
         console.log(`Final Score: ${result.score}`);
         console.log(`Iterations: ${result.iterations}`);

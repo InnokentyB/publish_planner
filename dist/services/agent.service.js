@@ -160,7 +160,7 @@ class AgentService {
                         console.log(`Planning for week: ${(0, date_fns_1.format)(start, 'yyyy-MM-dd')} - ${(0, date_fns_1.format)(end, 'yyyy-MM-dd')}`);
                         const week = await planner_service_1.default.createWeek(projectId, args.theme, start, end);
                         await planner_service_1.default.generateSlots(week.id, projectId, start);
-                        const { topics } = await generator_service_1.default.generateTopics(projectId, args.theme);
+                        const { topics } = await generator_service_1.default.generateTopics(projectId, args.theme, week.id);
                         // topics is now { topic, category, tags }[]
                         await planner_service_1.default.saveTopics(week.id, topics);
                         result = { success: true, message: `План создан на ${(0, date_fns_1.format)(start, 'dd.MM')} - ${(0, date_fns_1.format)(end, 'dd.MM')}. Темы сгенерированы.`, weekId: week.id };
@@ -259,7 +259,8 @@ class AgentService {
                         }
                     }
                     else if (name === 'create_refined_post') {
-                        const multiResult = await multi_agent_service_1.default.runPostGeneration(projectId, 'Custom Request', args.topic);
+                        // Pass -1 as dummy postId since we don't have a DB record yet
+                        const multiResult = await multi_agent_service_1.default.runPostGeneration(projectId, 'Custom Request', args.topic, -1);
                         result = {
                             success: true,
                             data: multiResult,

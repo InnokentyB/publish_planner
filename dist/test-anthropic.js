@@ -20,7 +20,7 @@ async function testAnthropic() {
     // Critic: OpenAI (Default gpt-4o)
     // Fixer: Anthropic
     try {
-        const result = await multi_agent_service_1.default.runPostGeneration(1, 'AI Trends 2026', 'Why coding agents are the future');
+        const result = await multi_agent_service_1.default.runPostGeneration(1, 'AI Trends 2026', 'Why coding agents are the future', -1);
         console.log('Generation finished successfully!');
         console.log('Final Score:', result.score);
         console.log('Iterations:', result.iterations);

@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const fastify_1 = __importDefault(require("fastify"));
+// Force restart for Prisma Client update
 const dotenv_1 = require("dotenv");
 const telegram_service_1 = __importDefault(require("./services/telegram.service"));
 const jobs_1 = __importDefault(require("./routes/jobs"));
@@ -13,6 +14,10 @@ const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
 const project_routes_1 = __importDefault(require("./routes/project.routes"));
 const path_1 = __importDefault(require("path"));
 (0, dotenv_1.config)();
+// Global BigInt serialization fix for Prisma/Fastify
+BigInt.prototype.toJSON = function () {
+    return this.toString();
+};
 const server = (0, fastify_1.default)({
     logger: true
 });
@@ -24,11 +29,24 @@ server.register(require('@fastify/static'), {
     root: path_1.default.join(__dirname, '../frontend/dist'),
     prefix: '/',
 });
+server.register(require('@fastify/static'), {
+    root: path_1.default.join(__dirname, '../uploads'),
+    prefix: '/uploads/',
+    decorateReply: false // Avoid conflict with previous registration
+});
 server.register(auth_routes_1.default);
 server.register(project_routes_1.default);
 server.register(api_routes_1.default);
 server.register(webhook_1.default);
 server.register(jobs_1.default);
+// SPA fallback for non-API routes
+server.setNotFoundHandler((request, reply) => {
+    if (request.raw.url && request.raw.url.startsWith('/api')) {
+        reply.code(404).send({ error: 'Not Found' });
+        return;
+    }
+    reply.sendFile('index.html');
+});
 const publisher_service_1 = __importDefault(require("./services/publisher.service"));
 const start = async () => {
     try {

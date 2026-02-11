@@ -39,33 +39,38 @@ class PlannerService {
             },
         });
     }
-    async generateSlots(weekId, projectId, start) {
+    async generateSlots(weekId, projectId, start, count = 2, startIndex = 0) {
         const slots = [];
-        // Generate only 2 posts per week: Monday 10:00 and Thursday 18:00
-        const SCHEDULE = [
-            { day: 0, time: '10:00', index: 1 }, // Monday morning
-            { day: 3, time: '18:00', index: 2 } // Thursday evening
-        ];
-        for (const slot of SCHEDULE) {
-            const date = (0, date_fns_1.addDays)(start, slot.day);
-            const [hours, minutes] = slot.time.split(':').map(Number);
+        // Fetch default channel (Telegram)
+        const channel = await prisma.socialChannel.findFirst({
+            where: { project_id: projectId, type: 'telegram' }
+        });
+        const channelId = channel ? channel.id : null;
+        for (let i = 0; i < count; i++) {
+            // Distribute slots across Mon-Fri effectively
+            // For now, simple round robin or just sequential days
+            // Logic: 0->Mon, 1->Tue, 2->Wed, 3->Thu, 4->Fri
+            const dayOffset = (startIndex + i) % 5;
+            const date = (0, date_fns_1.addDays)(start, dayOffset);
             const publishAt = new Date(date);
-            publishAt.setHours(hours, minutes, 0, 0);
+            publishAt.setHours(10, 0, 0, 0); // Default 10:00
             slots.push({
                 project_id: projectId,
                 week_id: weekId,
-                // channel_id: null, // Now assigned manually or to default
+                channel_id: channelId,
                 slot_date: date,
-                slot_index: slot.index,
+                slot_index: startIndex + i + 1,
                 publish_at: publishAt,
-                topic_index: slot.index, // 1 or 2
+                topic_index: startIndex + i + 1,
                 status: 'planned'
             });
         }
         // Bulk insert
-        await prisma.post.createMany({
-            data: slots
-        });
+        if (slots.length > 0) {
+            await prisma.post.createMany({
+                data: slots
+            });
+        }
     }
     async findWeekByDate(projectId, date) {
         return prisma.week.findFirst({
@@ -83,12 +88,16 @@ class PlannerService {
             data: { status }
         });
     }
-    async saveTopics(weekId, topics) {
+    async saveTopics(weekId, topics, startIndex = 0) {
         const posts = await prisma.post.findMany({
             where: { week_id: weekId },
             orderBy: { topic_index: 'asc' }
         });
-        const updates = posts.map((post, i) => {
+        // Filter posts to only those we want to update (from startIndex)
+        // Note: topic_index is 1-based usually
+        const targetPosts = posts.filter(p => p.topic_index > startIndex && p.topic_index <= startIndex + topics.length);
+        const updates = targetPosts.map((post, i) => {
+            // i here is index in targetPosts, which matches index in topics
             if (topics[i]) {
                 return prisma.post.update({
                     where: { id: post.id },
