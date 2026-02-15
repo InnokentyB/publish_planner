@@ -242,12 +242,16 @@ Start directly with the post content.`;
             commentsContext = '';
         }
 
-        // Add Length Constraint
+        // Define Strict Constraints
+        let lengthConstraint = "";
         if (withImage) {
-            commentsContext += "\n\n[IMPORTANT CONSTRAINT]: This post will be published with an image. The text MUST be strictly under 1024 characters to fit in the Telegram caption limit. Be concise.";
+            lengthConstraint = "STRICT_LIMIT: The text MUST be under 950 characters (including spaces). This is for a Telegram post with an image (caption limit). If you exceed this, the post fails. Prioritize brevity over detail.";
         } else {
-            commentsContext += "\n\n[CONSTRAINT]: Standard Telegram text post (max 4000 chars).";
+            lengthConstraint = "LIMIT: Target length is 2000-2500 characters. Max 4000. Ensure deep coverage of the topic, do not be too brief.";
         }
+
+        // Add to creator context
+        commentsContext += `\n\n[CONSTRAINT]: ${lengthConstraint}`;
 
         let runLogId = 0;
         try {
@@ -261,6 +265,11 @@ Start directly with the post content.`;
         if (promptOverride) {
             creatorConfig.prompt = promptOverride;
             console.log('[MultiAgent Post] Using prompt override');
+        }
+
+        // Remove conflicting default max length from prompt if present
+        if (creatorConfig.prompt.includes("Max 4000 chars") && withImage) {
+            creatorConfig.prompt = creatorConfig.prompt.replace("Max 4000 chars", "Max 1000 chars");
         }
 
         let currentText = await this.postCreator(theme, topic, creatorConfig, runLogId, commentsContext);
@@ -278,7 +287,8 @@ Start directly with the post content.`;
             const criticConfig = await this.getAgentConfig(projectId, 'post_critic');
             const fixerConfig = await this.getAgentConfig(projectId, 'post_fixer');
 
-            const critiqueResult = await this.postCritic(currentText, topic, criticConfig, runLogId, iterations);
+            // Pass constraint to Critic
+            const critiqueResult = await this.postCritic(currentText, topic, criticConfig, runLogId, iterations, lengthConstraint);
             currentScore = critiqueResult.score;
 
             history.push({
@@ -305,7 +315,8 @@ Start directly with the post content.`;
 
             if (iterations < MAX_ITERATIONS) {
                 console.log(`[MultiAgent Post] Fixing text based on critique...`);
-                currentText = await this.postFixer(currentText, critiqueResult.critique, fixerConfig, runLogId, iterations);
+                // Pass constraint to Fixer
+                currentText = await this.postFixer(currentText, critiqueResult.critique, fixerConfig, runLogId, iterations, lengthConstraint);
             }
         }
 
@@ -416,9 +427,11 @@ Start directly with the post content.`;
         return output;
     }
 
-    private async postCritic(text: string, topic: string, config: any, runId: number, iteration: number): Promise<CritiqueResult> {
+    private async postCritic(text: string, topic: string, config: any, runId: number, iteration: number, lengthConstraint: string = ''): Promise<CritiqueResult> {
         let result: CritiqueResult = { score: 50, critique: '' };
         let content = '{}';
+
+        const context = `Topic: ${topic}\n\nPost to evaluate:\n${text}\n\n${lengthConstraint ? `CRITICAL CONSTRAINT TO VERIFY: ${lengthConstraint}. If text exceeds limit, SCORE MUST BE < 50 and critique must demand shortening.` : ''}`;
 
         if (config.apiKey && config.apiKey.startsWith('sk-ant')) {
             const anthropic = new Anthropic({ apiKey: config.apiKey });
@@ -428,7 +441,7 @@ Start directly with the post content.`;
                 max_tokens: 1000,
                 system: config.prompt + "\nIMPORTANT: You MUST return valid JSON only.",
                 messages: [
-                    { role: 'user', content: `Topic: ${topic}\n\nPost to evaluate:\n${text}` }
+                    { role: 'user', content: context }
                 ]
             });
             // @ts-ignore
@@ -441,7 +454,7 @@ Start directly with the post content.`;
                 systemInstruction: config.prompt + "\nIMPORTANT: You MUST return valid JSON only.",
                 generationConfig: { responseMimeType: "application/json" }
             });
-            const result = await model.generateContent(`Topic: ${topic}\n\nPost to evaluate:\n${text}`);
+            const result = await model.generateContent(context);
             content = result.response.text();
         } else {
             const client = new OpenAI({ apiKey: config.apiKey });
@@ -449,7 +462,7 @@ Start directly with the post content.`;
                 model: config.model,
                 messages: [
                     { role: 'system', content: config.prompt },
-                    { role: 'user', content: `Topic: ${topic}\n\nPost to evaluate:\n${text}` }
+                    { role: 'user', content: context }
                 ],
                 response_format: { type: "json_object" },
                 temperature: 0.3
@@ -492,8 +505,10 @@ Start directly with the post content.`;
         return result;
     }
 
-    private async postFixer(text: string, critique: string, config: any, runId: number, iteration: number): Promise<string> {
+    private async postFixer(text: string, critique: string, config: any, runId: number, iteration: number, lengthConstraint: string = ''): Promise<string> {
         let output = '';
+
+        const context = `Original Text:\n${text}\n\nCritique to address:\n${critique}\n\n${lengthConstraint ? `MANDATORY CONSTRAINT: ${lengthConstraint}` : ''}`;
 
         if (config.apiKey && config.apiKey.startsWith('sk-ant')) {
             const anthropic = new Anthropic({ apiKey: config.apiKey });
@@ -502,7 +517,7 @@ Start directly with the post content.`;
                 max_tokens: 4000,
                 system: config.prompt,
                 messages: [
-                    { role: 'user', content: `Original Text:\n${text}\n\nCritique to address:\n${critique}` }
+                    { role: 'user', content: context }
                 ]
             });
             // @ts-ignore
@@ -514,7 +529,7 @@ Start directly with the post content.`;
                 model: config.model,
                 systemInstruction: config.prompt
             });
-            const result = await model.generateContent(`Original Text:\n${text}\n\nCritique to address:\n${critique}`);
+            const result = await model.generateContent(context);
             output = result.response.text();
         } else {
             const client = new OpenAI({ apiKey: config.apiKey });
@@ -522,7 +537,7 @@ Start directly with the post content.`;
                 model: config.model,
                 messages: [
                     { role: 'system', content: config.prompt },
-                    { role: 'user', content: `Original Text:\n${text}\n\nCritique to address:\n${critique}` }
+                    { role: 'user', content: context }
                 ],
                 temperature: 0.7,
                 response_format: { type: "json_object" }

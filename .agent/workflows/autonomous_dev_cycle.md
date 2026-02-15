@@ -2,27 +2,33 @@
 description: enforce rigorous testing and verification before reporting success
 ---
 
-# Autonomous Development Cycle
+# Autonomous Universal Dev Cycle
 
 When the user asks for a feature or bug fix, you MUST follow this strict cycle. Do not skip steps.
 
-## 1. Reproduction / Specification
-- **Bug:** Create a reproduction script (e.g., `src/repro-issue.ts`) that fails. Run it to confirm failure.
-- **Feature:** Create a verification script (e.g., `src/verify-feature.ts`) that asserts the expected behavior. Run it to confirm it fails (or doesn't pass yet).
+## 1. Discovery & Environment Setup
+- **Analyze:** Identify the stack (Python, JS, Go, etc.) by checking config files.
+- **Environment:** If dependencies are missing, install them autonomously (npm install, pip install, etc.).
+- **Infrastructure:** Start required services (Databases, Redis) using docker-compose if present.
 
-## 2. Implementation
+## 2. Reproduction / Specification
+- **Bug:** Create a reproduction script (e.g., `repro.ts` or `test_fix.py`) that fails. Run it to confirm failure.
+- **Feature:** Create a verification script/test that asserts the expected behavior. 
+
+## 3. Implementation
 - Write the code to fix the bug or implement the feature.
-- Follow architectural patterns (check KIs if applicable).
+- Follow existing architectural patterns in the project.
 
-## 3. Verification
-- Run the reproduction/verification script again.
-- **CRITICAL:** It MUST pass. If it fails, return to Step 2. Do not ask the user for help unless blocked by missing info.
-- If the fix requires a DB migration, run it and verify.
+## 4. Verification & Self-Correction (CRITICAL)
+- **Execution:** Run the verification scripts.
+- **UI/Integration:** If it's a web app, run a headless check (e.g., Playwright) to ensure the UI function works.
+- **Loop:** If tests fail, analyze the terminal output, apply fixes, and REPEAT Step 4. 
+- **Wait Policy:** Do not ask the user for help unless you are stuck for more than 3 correction attempts.
 
-## 4. Build Check
-- Run `npm run build` (or relevant build command) to ensure no compilation errors were introduced.
-- If build fails, fix errors and repeat Step 3.
+## 5. Build & Docs
+- Run `build` commands to ensure no regression.
+- Update `README.md` or API docs if logic has changed.
 
-## 5. Report
-- Only AFTER steps 1-4 are successful, report to the user.
-- Provide proof: "I ran `verify-feature.ts` and it passed. I ran `npm run build` and it succeeded."
+## 6. Report
+- Only AFTER steps 1-5 are successful, report to the user.
+- Provide proof: "I ran tests, they passed, and the build is stable."
