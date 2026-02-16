@@ -1,6 +1,8 @@
+import { config } from 'dotenv';
+config();
+
 import Fastify from 'fastify';
 // Force restart for Prisma Client update
-import { config } from 'dotenv';
 import telegramService from './services/telegram.service';
 import jobRoutes from './routes/jobs';
 import telegramRoutes from './routes/webhook';
@@ -9,7 +11,20 @@ import authRoutes from './routes/auth.routes';
 import projectRoutes from './routes/project.routes';
 import path from 'path';
 
-config();
+
+// Crash Logging
+process.on('uncaughtException', (err) => {
+    const fs = require('fs');
+    fs.appendFileSync('crash.log', `[${new Date().toISOString()}] Uncaught Exception: ${err.message}\n${err.stack}\n\n`);
+    console.error('Uncaught Exception:', err);
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason: any, promise) => {
+    const fs = require('fs');
+    fs.appendFileSync('crash.log', `[${new Date().toISOString()}] Unhandled Rejection: ${reason}\n\n`);
+    console.error('Unhandled Rejection:', reason);
+});
 
 // Global BigInt serialization fix for Prisma/Fastify
 (BigInt.prototype as any).toJSON = function () {
@@ -20,10 +35,16 @@ const server = Fastify({
     logger: true
 });
 
+server.addHook('onRequest', (request, reply, done) => {
+    console.log(`[Server] Incoming request: ${request.method} ${request.url}`);
+    done();
+});
+
 server.register(require('@fastify/cors'), {
     origin: true
 });
 server.register(require('@fastify/formbody'));
+server.register(require('@fastify/multipart'));
 server.register(require('@fastify/static'), {
     root: path.join(__dirname, '../frontend/dist'),
     prefix: '/',
@@ -39,6 +60,7 @@ server.register(projectRoutes);
 server.register(apiRoutes);
 server.register(telegramRoutes);
 server.register(jobRoutes);
+
 
 // SPA fallback for non-API routes
 server.setNotFoundHandler((request, reply) => {
@@ -56,8 +78,9 @@ const start = async () => {
         // Initialize Telegram Bot
         await telegramService.launch();
 
-        await server.listen({ port: 3000, host: '0.0.0.0' });
-        console.log('Server is running on port 3000');
+        const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3003;
+        await server.listen({ port: PORT, host: '0.0.0.0' });
+        console.log(`Server is running on port ${PORT}`);
 
         // Internal Scheduler: Check for due posts every 60 seconds
         console.log('Starting internal scheduler (every 60s)...');

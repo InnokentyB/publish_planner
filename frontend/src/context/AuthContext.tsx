@@ -20,6 +20,7 @@ interface AuthContextType {
     setCurrentProject: (project: Project) => void;
     isAuthenticated: boolean;
     isLoading: boolean;
+    createProject: (project: Project) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -91,6 +92,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         window.location.reload(); // Simplest way to re-fetch all data with new project header
     };
 
+    const createProject = (project: Project) => {
+        const updatedProjects = [...projects, project];
+        setProjects(updatedProjects);
+        localStorage.setItem('projects', JSON.stringify(updatedProjects));
+        setCurrentProject(project);
+    };
+
     return (
         <AuthContext.Provider value={{
             user,
@@ -100,6 +108,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             login,
             logout,
             setCurrentProject,
+            createProject,
             isAuthenticated: !!token,
             isLoading
         }}>

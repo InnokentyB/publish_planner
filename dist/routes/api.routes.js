@@ -18,6 +18,7 @@ const adapter = new adapter_pg_1.PrismaPg(pool);
 const prisma = new client_1.PrismaClient({ adapter });
 const auth_service_1 = __importDefault(require("../services/auth.service"));
 const comment_service_1 = __importDefault(require("../services/comment.service"));
+const storage_service_1 = __importDefault(require("../services/storage.service"));
 async function apiRoutes(fastify) {
     // Auth and Project context middleware
     fastify.addHook('preHandler', async (request, reply) => {
@@ -74,10 +75,29 @@ async function apiRoutes(fastify) {
             start = range.start;
             end = range.end;
         }
-        const week = await planner_service_1.default.createWeek(projectId, theme, start, end);
-        // Initial 5 slots
-        await planner_service_1.default.generateSlots(week.id, projectId, start, 5, 0);
-        return week;
+        try {
+            const week = await planner_service_1.default.createWeek(projectId, theme, start, end);
+            // Default: All 7 days (14 slots)
+            await planner_service_1.default.generateSlots(week.id, projectId, start, 14, 0);
+            return week;
+        }
+        catch (e) {
+            // P2002 is Prisma Unique Constraint Violation
+            if (e.code === 'P2002') {
+                console.log(`[API] Week already exists for project ${projectId} and start ${start}. Returning existing.`);
+                const existing = await prisma.week.findFirst({
+                    where: {
+                        project_id: projectId,
+                        week_start: start,
+                        week_end: end
+                    },
+                    include: { _count: { select: { posts: true } } }
+                });
+                return existing;
+            }
+            console.error('[API] Error creating week:', e);
+            reply.code(500).send({ error: 'Failed to create week', details: e.message });
+        }
     });
     fastify.get('/api/weeks/:id', async (request, reply) => {
         try {
@@ -180,13 +200,10 @@ async function apiRoutes(fastify) {
             const existingCount = existingPosts.length;
             const existingTopics = existingPosts.map(p => p.topic || '').filter(t => t);
             let countToGenerate = 0;
-            // If we overwrote, existingCount should be 0 (mostly), so we generate 5.
-            if (existingCount < 5)
-                countToGenerate = 5 - existingCount;
-            else if (existingCount < 10)
-                countToGenerate = 10 - existingCount;
-            else if (existingCount < 14)
+            // Target 14 topics (full week)
+            if (existingCount < 14) {
                 countToGenerate = 14 - existingCount;
+            }
             else {
                 return reply.code(400).send({ error: 'Maximum topics (14) already reached' });
             }
@@ -246,12 +263,34 @@ async function apiRoutes(fastify) {
                 if (!post.topic)
                     continue;
                 try {
-                    const text = await generator_service_1.default.generatePostText(projectId, week.theme, post.topic, post.id);
-                    const hashtag = post.category ? `\n\n#${post.category.replace(/\s+/g, '')}` : '';
-                    const fullText = text + hashtag;
+                    const genResult = await generator_service_1.default.generatePostText(projectId, week.theme, post.topic, post.id);
+                    let fullText = genResult.text;
+                    const tagsToAdd = [];
+                    // Add Category if present and not in text
+                    if (genResult.category || post.category) {
+                        const cat = (genResult.category || post.category || '').replace(/^#/, '').trim();
+                        if (cat && !fullText.includes(`#${cat}`)) {
+                            tagsToAdd.push(cat);
+                        }
+                    }
+                    // Add Tags if present
+                    if (genResult.tags && Array.isArray(genResult.tags)) {
+                        genResult.tags.forEach(t => {
+                            const cleanTag = t.replace(/^#/, '').trim();
+                            if (cleanTag && !tagsToAdd.includes(cleanTag) && !fullText.includes(`#${cleanTag}`)) {
+                                tagsToAdd.push(cleanTag);
+                            }
+                        });
+                    }
+                    if (tagsToAdd.length > 0) {
+                        const tagsString = tagsToAdd.map(t => `#${t}`).join(' ');
+                        fullText += `\n\n${tagsString}`;
+                    }
                     await planner_service_1.default.updatePost(post.id, {
                         generated_text: fullText,
                         final_text: fullText,
+                        category: genResult.category || post.category,
+                        tags: genResult.tags || [],
                         status: 'generated'
                     });
                 }
@@ -274,17 +313,24 @@ async function apiRoutes(fastify) {
             return reply.code(404).send({ error: 'Post not found' });
         }
         try {
+            console.log(`[Generate Image] Request for Post ${id}, Provider: ${provider || 'dalle'}`);
             const textToUse = post.final_text || post.generated_text || post.topic || '';
+            const fs = require('fs');
             // 1. Generate Prompt
+            console.log('[Generate Image] Generating prompt...');
             const imagePrompt = await generator_service_1.default.generateImagePrompt(post.project_id, post.topic || 'Tech Post', textToUse, provider || 'dalle');
+            console.log(`[Generate Image] Generated prompt: ${imagePrompt.substring(0, 100)}...`);
             // 2. Generate Image
             let imageUrl = '';
             if (provider === 'nano') {
+                fs.appendFileSync('debug.log', `[${new Date().toISOString()}] Calling Nano...\n`);
                 imageUrl = await generator_service_1.default.generateImageNanoBanana(imagePrompt);
             }
             else {
+                fs.appendFileSync('debug.log', `[${new Date().toISOString()}] Calling DALL-E...\n`);
                 imageUrl = await generator_service_1.default.generateImage(imagePrompt);
             }
+            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] Image Gen Success. URL: ${imageUrl}\n`);
             // 3. Save to DB
             await planner_service_1.default.updatePost(post.id, {
                 image_url: imageUrl,
@@ -293,9 +339,38 @@ async function apiRoutes(fastify) {
             return { success: true, imageUrl, imagePrompt };
         }
         catch (error) {
+            const fs = require('fs');
+            fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Image Gen Error (Post ${id}): ${error.message}\n${error.stack}\n\n`);
             request.log.error(error);
-            console.error('Error generating image:', error);
-            return reply.status(500).send({ error: `Image Generation failed: ${error.message || error}` });
+            return reply.code(500).send({ error: 'Upload failed' });
+        }
+    });
+    fastify.post('/api/posts/:id/upload-image', async (request, reply) => {
+        const { id } = request.params;
+        const data = await request.file();
+        if (!data) {
+            return reply.code(400).send({ error: 'No file uploaded' });
+        }
+        try {
+            const buffer = await data.toBuffer();
+            const ext = data.filename.split('.').pop() || 'jpg';
+            const filename = `post-${id}-${Date.now()}.${ext}`;
+            const destinationPath = `uploads/${filename}`;
+            console.log(`[Upload] Uploading ${filename} to Supabase Storage...`);
+            const imageUrl = await storage_service_1.default.uploadFileFromBuffer(buffer, data.mimetype, destinationPath);
+            console.log(`[Upload] Upload success: ${imageUrl}`);
+            await prisma.post.update({
+                where: { id: parseInt(id) },
+                data: {
+                    image_url: imageUrl,
+                    image_prompt: 'Uploaded by user'
+                }
+            });
+            return { success: true, imageUrl };
+        }
+        catch (error) {
+            request.log.error(error);
+            return reply.code(500).send({ error: 'Upload failed' });
         }
     });
     // Posts
@@ -324,6 +399,14 @@ async function apiRoutes(fastify) {
         const post = await prisma.post.update({
             where: { id: parseInt(id) },
             data: { status: 'scheduled' }
+        });
+        return post;
+    });
+    fastify.post('/api/posts/:id/approve-topic', async (request, reply) => {
+        const { id } = request.params;
+        const post = await prisma.post.update({
+            where: { id: parseInt(id) },
+            data: { status: 'topics_approved' }
         });
         return post;
     });
@@ -356,14 +439,14 @@ async function apiRoutes(fastify) {
             reply.code(400).send({ error: 'Post has no topic' });
             return;
         }
-        const { promptPresetId } = request.body;
+        const { promptPresetId, withImage } = request.body;
         let promptOverride;
         if (promptPresetId) {
             const preset = await prisma.promptPreset.findUnique({ where: { id: promptPresetId } });
             if (preset)
                 promptOverride = preset.prompt_text;
         }
-        const result = await generator_service_1.default.generatePostText(projectId, post.week.theme, post.topic, post.id, promptOverride);
+        const result = await generator_service_1.default.generatePostText(projectId, post.week.theme, post.topic, post.id, promptOverride, withImage);
         let fullText = result.text;
         if (result.tags && result.tags.length > 0) {
             fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '')}`).join(' ');

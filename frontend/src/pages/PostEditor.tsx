@@ -18,6 +18,7 @@ interface Post {
     week_id: number
     image_url?: string | null
     image_prompt?: string | null
+    channel_id?: number | null
 }
 
 interface PromptPreset {
@@ -26,12 +27,19 @@ interface PromptPreset {
     role: string
 }
 
+interface SocialChannel {
+    id: number;
+    type: string;
+    name: string;
+}
+
 import { useAuth } from '../context/AuthContext'
 
 export default function PostEditor() {
     const { id } = useParams()
     const queryClient = useQueryClient()
-    const { currentProject } = useAuth()
+    const [currentProject] = [useAuth().currentProject] // Destructure safely
+    console.log('[PostEditor] Rendering', { id, currentProject: currentProject?.id });
 
     const [topic, setTopic] = useState('')
     const [category, setCategory] = useState('')
@@ -41,10 +49,17 @@ export default function PostEditor() {
     const [selectedPresetId, setSelectedPresetId] = useState<number | ''>('')
     const [showPresetSelect, setShowPresetSelect] = useState(false)
     const [imageTimestamp, setImageTimestamp] = useState(Date.now())
+    const [channelId, setChannelId] = useState<number | ''>('')
 
     const { data: presets } = useQuery<PromptPreset[]>({
         queryKey: ['presets', currentProject?.id],
         queryFn: () => presetsApi.getAll(),
+        enabled: !!currentProject
+    })
+
+    const { data: projectData } = useQuery({
+        queryKey: ['project', currentProject?.id],
+        queryFn: () => api.get(`/api/projects/${currentProject?.id}`),
         enabled: !!currentProject
     })
 
@@ -60,6 +75,7 @@ export default function PostEditor() {
             setTags(post.tags.join(', '))
             setText(post.final_text || post.generated_text || '')
             setPublishAt(format(new Date(post.publish_at), "yyyy-MM-dd'T'HH:mm"))
+            setChannelId(post.channel_id || '')
         }
     }, [post])
 
@@ -97,6 +113,36 @@ export default function PostEditor() {
         onError: (err: any) => alert('Failed to generate image: ' + (err.response?.data?.error || err.message))
     })
 
+    const uploadImage = useMutation({
+        mutationFn: (file: File) => api.upload(`/api/posts/${id}/upload-image`, file),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['post', id] })
+            setImageTimestamp(Date.now())
+        },
+        onError: (err: any) => alert('Failed to upload image: ' + err.message)
+    })
+
+    // Global paste handler
+    useEffect(() => {
+        const handlePaste = (e: ClipboardEvent) => {
+            const items = e.clipboardData?.items;
+            if (!items) return;
+
+            for (const item of items) {
+                if (item.type.indexOf('image') !== -1) {
+                    const file = item.getAsFile();
+                    if (file) {
+                        uploadImage.mutate(file);
+                    }
+                    break;
+                }
+            }
+        };
+
+        window.addEventListener('paste', handlePaste);
+        return () => window.removeEventListener('paste', handlePaste);
+    }, [uploadImage]);
+
     if (isLoading) {
         return (
             <div className="container">
@@ -122,7 +168,8 @@ export default function PostEditor() {
             category: category || null,
             tags: tags.split(',').map(t => t.trim()).filter(Boolean),
             final_text: text,
-            publish_at: new Date(publishAt).toISOString()
+            publish_at: new Date(publishAt).toISOString(),
+            channel_id: channelId ? Number(channelId) : null
         })
     }
 
@@ -133,7 +180,8 @@ export default function PostEditor() {
             category: category || null,
             tags: tags.split(',').map(t => t.trim()).filter(Boolean),
             final_text: text,
-            publish_at: new Date(publishAt).toISOString()
+            publish_at: new Date(publishAt).toISOString(),
+            channel_id: channelId ? Number(channelId) : null
         });
 
         // Then approve
@@ -162,6 +210,21 @@ export default function PostEditor() {
                     <div className="card mb-2">
                         <h3>Post Details</h3>
                         <div className="grid" style={{ gap: '1rem' }}>
+                            <div>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
+                                    Target Channel
+                                </label>
+                                <select
+                                    value={channelId}
+                                    onChange={(e) => setChannelId(e.target.value ? Number(e.target.value) : '')}
+                                    style={{ width: '100%' }}
+                                >
+                                    <option value="">(Default) Automatic Selection</option>
+                                    {(projectData as any)?.channels?.map((c: SocialChannel) => (
+                                        <option key={c.id} value={c.id}>{c.name} ({c.type})</option>
+                                    ))}
+                                </select>
+                            </div>
                             <div>
                                 <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
                                     Topic
@@ -283,14 +346,31 @@ export default function PostEditor() {
                     </div>
                 </div>
 
-                <div className="card mb-2">
+                <div
+                    className="card mb-2"
+                    onDragOver={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }}
+                    onDrop={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const file = e.dataTransfer.files?.[0];
+                        if (file && file.type.startsWith('image/')) {
+                            uploadImage.mutate(file);
+                        }
+                    }}
+                >
                     <h3>Image</h3>
                     {post.image_url ? (
                         <div className="mb-2 text-center">
                             <img src={`${post.image_url}?t=${imageTimestamp}`} alt="Post visual" style={{ maxWidth: '100%', borderRadius: '4px' }} />
                         </div>
                     ) : (
-                        <p className="text-muted">No image generated.</p>
+                        <p className="text-muted" style={{ border: '2px dashed var(--border)', padding: '2rem', textAlign: 'center', borderRadius: '8px' }}>
+                            Drag & Drop image here<br />
+                            <span style={{ fontSize: '0.8rem' }}>or paste from clipboard (Ctrl+V)</span>
+                        </p>
                     )}
 
                     {post.image_prompt && (
@@ -312,6 +392,39 @@ export default function PostEditor() {
                     >
                         {generateImage.isPending ? 'Generating...' : (post.image_url ? 'Regenerate Image' : 'Generate Image')}
                     </button>
+
+                    <div className="mt-2 text-center" style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+                        or
+                    </div>
+
+                    <div className="mt-2">
+                        <input
+                            type="file"
+                            accept="image/*"
+                            style={{ display: 'none' }}
+                            id="image-upload"
+                            onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                    uploadImage.mutate(file);
+                                }
+                            }}
+                        />
+                        <label
+                            htmlFor="image-upload"
+                            className="btn-secondary"
+                            style={{
+                                display: 'block',
+                                textAlign: 'center',
+                                width: '100%',
+                                cursor: 'pointer',
+                                padding: '0.75rem 1.5rem',
+                                borderRadius: '8px'
+                            }}
+                        >
+                            {uploadImage.isPending ? 'Uploading...' : 'Upload Image'}
+                        </label>
+                    </div>
                 </div>
 
                 <div className="card" style={{ position: 'sticky', top: '2rem' }}>

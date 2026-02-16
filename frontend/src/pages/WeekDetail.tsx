@@ -240,14 +240,7 @@ export default function WeekDetail() {
                                             onClick={() => generatePost.mutate({ postId: post.id, withImage: true })}
                                             disabled={generatingPostId === post.id}
                                         >
-                                            {generatingPostId === post.id ? 'Generating...' : 'Generate with Image (Short)'}
-                                        </button>
-                                        <button
-                                            className="btn-secondary"
-                                            onClick={() => generatePost.mutate({ postId: post.id, withImage: false })}
-                                            disabled={generatingPostId === post.id}
-                                        >
-                                            {generatingPostId === post.id ? 'Generating...' : 'Generate Text Only (Long)'}
+                                            {generatingPostId === post.id ? 'Generating...' : 'Generate Post'}
                                         </button>
                                     </div>
                                 </div>

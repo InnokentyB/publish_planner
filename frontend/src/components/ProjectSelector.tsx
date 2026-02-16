@@ -1,7 +1,11 @@
 import { useAuth } from '../context/AuthContext';
+import { useState } from 'react';
+import { createPortal } from 'react-dom';
+import CreateProjectModal from './CreateProjectModal';
 
 export default function ProjectSelector() {
-    const { currentProject, projects, setCurrentProject } = useAuth();
+    const { currentProject, projects, setCurrentProject, createProject } = useAuth();
+    const [showModal, setShowModal] = useState(false);
 
     if (projects.length === 0) return null;
 
@@ -11,6 +15,10 @@ export default function ProjectSelector() {
             <select
                 value={currentProject?.id || ''}
                 onChange={(e) => {
+                    if (e.target.value === 'NEW') {
+                        setShowModal(true);
+                        return;
+                    }
                     const project = projects.find(p => p.id === parseInt(e.target.value));
                     if (project) setCurrentProject(project);
                 }}
@@ -27,7 +35,15 @@ export default function ProjectSelector() {
                         {project.name}
                     </option>
                 ))}
+                <option value="NEW">+ Create New Project</option>
             </select>
+            {showModal && createPortal(
+                <CreateProjectModal
+                    onClose={() => setShowModal(false)}
+                    onSuccess={(project) => createProject(project)}
+                />,
+                document.body
+            )}
         </div>
     );
 }

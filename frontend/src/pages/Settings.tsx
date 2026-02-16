@@ -11,14 +11,6 @@ interface AgentConfig {
     provider?: string
 }
 
-interface AgentRun {
-    id: number
-    topic: string
-    final_score: number | null
-    total_iterations: number | null
-    created_at: string
-}
-
 interface PromptPreset {
     id: number
     name: string
@@ -33,14 +25,27 @@ interface ProviderKey {
     provider: string
 }
 
+interface SocialChannel {
+    id: number;
+    type: string;
+    name: string;
+    config: any;
+    is_active: boolean;
+}
+
 export default function Settings() {
     const queryClient = useQueryClient()
     const { currentProject } = useAuth()
-    const [activeTab, setActiveTab] = useState<'general' | 'keys' | 'team' | 'agents' | 'presets'>('general')
+    const [activeTab, setActiveTab] = useState<'general' | 'keys' | 'channels' | 'team' | 'agents' | 'presets'>('general')
 
     // Project State
     const [projectName, setProjectName] = useState('')
     const [projectDesc, setProjectDesc] = useState('')
+
+    // Channel State
+    const [newChannelName, setNewChannelName] = useState('')
+    const [newChannelId, setNewChannelId] = useState('')
+    const [newChannelUsername, setNewChannelUsername] = useState('')
 
     // Agent State
     const [selectedRole, setSelectedRole] = useState<string>('post_creator')
@@ -68,7 +73,7 @@ export default function Settings() {
     const { data: projectData } = useQuery({
         queryKey: ['project', currentProject?.id],
         queryFn: () => api.get(`/api/projects/${currentProject?.id}`),
-        enabled: !!currentProject && activeTab === 'general'
+        enabled: !!currentProject && (activeTab === 'general' || activeTab === 'team' || activeTab === 'channels')
     })
 
     const { data: agents } = useQuery<AgentConfig[]>({
@@ -82,24 +87,6 @@ export default function Settings() {
         queryFn: () => keysApi.getAll(),
         enabled: !!currentProject && (activeTab === 'keys' || activeTab === 'agents')
     })
-
-    // Use projectData.members count or structure might be different based on endpoint
-    // We might need a separate members query if not fully returned or for freshness
-    // But project detail endpoint includes count. Let's assume we need to list them.
-    // The project detail endpoint implementation returned: include: { channels: true, _count: ... }
-    // It did NOT returns actual members list in the GET /api/projects/:id usually.
-    // Wait, the GET /api/projects/:id only returned count. 
-    // We don't have a list members endpoint yet!? 
-    // Actually, create project returned members on creation.
-    // Let's modify the plan: we use the project data if it has members, or we blindly trust the logic.
-    // The route `GET /api/projects/:id` implementation: `include: { channels: true, _count: { select: { weeks: true, members: true } } }`.
-    // It does NOT return members list!
-    // I need to fetch members list. Or update the endpoint.
-    // Let's rely on what we have and maybe users just need add/remove blindly? No, they need a list.
-    // I will add members list to the project detail endpoint or just assume I can fetch it.
-    // Actually, I can update the backend endpoint right now in a previous step, OR just quick-fix the query here.
-    // But wait, I am replacing the file.
-    // Let's assume I will fix the backend to return members.
 
     const { data: presets } = useQuery<PromptPreset[]>({
         queryKey: ['presets', currentProject?.id],
@@ -115,6 +102,26 @@ export default function Settings() {
             alert('Project updated')
         }
     })
+
+    const addChannel = useMutation({
+        mutationFn: (data: { type: string, name: string, config: any }) => api.post(`/api/projects/${currentProject!.id}/channels`, data),
+        onSuccess: () => {
+            setNewChannelName('')
+            setNewChannelId('')
+            setNewChannelUsername('')
+            queryClient.invalidateQueries({ queryKey: ['project'] })
+            alert('Channel added')
+        },
+        onError: (err: any) => alert(err.message || 'Failed to add channel')
+    })
+
+    // Note: Delete channel endpoint might need to be added or we just hide it?
+    // Reviewing api routes: we don't have a specific delete channel route in project.routes.ts...
+    // Wait, let's check if we can delete. 
+    // We didn't add a delete route in project.routes.ts.
+    // I should probably add it or just allow adding for now.
+    // The user asked for "visual binding", adding is most important. 
+    // I can add delete logic to `project.routes.ts` quickly if needed, but let's stick to adding first.
 
     const addKey = useMutation({
         mutationFn: (data: { name: string; key: string }) => keysApi.create(data),
@@ -143,7 +150,7 @@ export default function Settings() {
         mutationFn: (data: { email: string; role: string }) => projectsApi.addMember(currentProject!.id, data.email, data.role),
         onSuccess: () => {
             setInviteEmail('')
-            queryClient.invalidateQueries({ queryKey: ['project'] }) // Assuming updated project returns members
+            queryClient.invalidateQueries({ queryKey: ['project'] })
             alert('Member added')
         },
         onError: (err: any) => alert(err.message)
@@ -251,6 +258,18 @@ export default function Settings() {
         updateAgent.mutate({ role: selectedRole, prompt, apiKey, model })
     }
 
+    const handleAddChannel = () => {
+        if (!newChannelName || !newChannelId) return;
+        const config: any = { telegram_channel_id: newChannelId };
+        if (newChannelUsername) config.channel_username = newChannelUsername;
+
+        addChannel.mutate({
+            type: 'telegram',
+            name: newChannelName,
+            config
+        });
+    }
+
     if (!currentProject) {
         return (
             <div className="container">
@@ -266,13 +285,13 @@ export default function Settings() {
         <div className="container">
             <h1 className="mb-3">Project Settings</h1>
 
-            <div className="flex mb-3" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
-                {['general', 'keys', 'team', 'agents', 'presets'].map(tab => (
+            <div className="flex mb-3" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem', overflowX: 'auto' }}>
+                {['general', 'keys', 'channels', 'team', 'agents', 'presets'].map(tab => (
                     <button
                         key={tab}
                         className={activeTab === tab ? 'btn-primary' : 'btn-secondary'}
                         onClick={() => setActiveTab(tab as any)}
-                        style={{ marginRight: '0.5rem', textTransform: 'capitalize' }}
+                        style={{ marginRight: '0.5rem', textTransform: 'capitalize', whiteSpace: 'nowrap' }}
                     >
                         {tab}
                     </button>
@@ -293,6 +312,74 @@ export default function Settings() {
                     <button className="btn-primary" onClick={() => updateProject.mutate({ name: projectName, description: projectDesc })}>
                         Save Changes
                     </button>
+                </div>
+            )}
+
+            {activeTab === 'channels' && (
+                <div className="card">
+                    <h2>Social Channels</h2>
+                    <p className="text-muted mb-2">Connect Telegram channels to publish posts directly.</p>
+
+                    <div className="mb-3 p-2" style={{ border: '1px solid var(--border)', borderRadius: '8px' }}>
+                        <h3>Add Telegram Channel</h3>
+                        <div className="grid-2" style={{ gap: '1rem' }}>
+                            <div>
+                                <label>Channel Name (Internal)</label>
+                                <input
+                                    placeholder="e.g. My Tech Blog"
+                                    value={newChannelName}
+                                    onChange={e => setNewChannelName(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label>Channel ID (starts with -100) or Chat ID</label>
+                                <input
+                                    placeholder="-100..."
+                                    value={newChannelId}
+                                    onChange={e => setNewChannelId(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label>Username (Optional, for links)</label>
+                                <input
+                                    placeholder="my_channel"
+                                    value={newChannelUsername}
+                                    onChange={e => setNewChannelUsername(e.target.value)}
+                                />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                                <button
+                                    className="btn-primary"
+                                    onClick={handleAddChannel}
+                                    disabled={!newChannelName || !newChannelId || addChannel.isPending}
+                                    style={{ width: '100%' }}
+                                >
+                                    {addChannel.isPending ? 'Adding...' : 'Add Channel'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid">
+                        {(projectData as any)?.channels?.map((channel: SocialChannel) => (
+                            <div key={channel.id} className="flex-between p-2" style={{ background: 'var(--bg-tertiary)', borderRadius: '6px', marginBottom: '0.5rem' }}>
+                                <div>
+                                    <div className="flex-center">
+                                        <strong>{channel.name}</strong>
+                                        <span className="badge" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>{channel.type}</span>
+                                    </div>
+                                    <div className="text-muted" style={{ fontSize: '0.8rem' }}>
+                                        ID: {channel.config?.telegram_channel_id}
+                                        {channel.config?.channel_username && ` • @${channel.config.channel_username}`}
+                                    </div>
+                                </div>
+                                {/* <button className="btn-danger">Disconnect</button> */ /* Delete endpoint not yet implemented */}
+                            </div>
+                        ))}
+                        {(!projectData || !(projectData as any).channels?.length) && (
+                            <p className="text-muted">No channels connected.</p>
+                        )}
+                    </div>
                 </div>
             )}
 
@@ -374,9 +461,6 @@ export default function Settings() {
                         </div>
                     </div>
 
-                    {/* Note: Members list currently requires backend support to be returned in project details or separate endpoint. 
-                        Assuming projectData might have members if we fix backend. If not, this will be empty/undefined check.
-                    */}
                     <div className="grid">
                         {(projectData as any)?.members?.map((m: any) => (
                             <div key={m.id} className="flex-between p-2" style={{ background: 'var(--bg-tertiary)', borderRadius: '6px', marginBottom: '0.5rem' }}>
@@ -389,7 +473,6 @@ export default function Settings() {
                                 )}
                             </div>
                         ))}
-                        {/* Fallback msg */}
                         {!(projectData as any)?.members && <p>Loading members...</p>}
                     </div>
                 </div>

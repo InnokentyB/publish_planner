@@ -74,8 +74,8 @@ class GeneratorService {
     async generateTopics(projectId, theme, weekId, promptOverride, count = 5, existingTopics = []) {
         return await multi_agent_service_1.default.refineTopics(projectId, theme, weekId, promptOverride, count, existingTopics);
     }
-    async generatePostText(projectId, theme, topic, postId, promptOverride) {
-        const result = await multi_agent_service_1.default.runPostGeneration(projectId, theme, topic, postId, promptOverride);
+    async generatePostText(projectId, theme, topic, postId, promptOverride, withImage = false) {
+        const result = await multi_agent_service_1.default.runPostGeneration(projectId, theme, topic, postId, promptOverride, withImage);
         return {
             text: result.finalText,
             category: result.category,

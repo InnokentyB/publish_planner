@@ -210,13 +210,35 @@ Start directly with the post content.`;
         };
     }
     // --- Post Generation Loop (New) ---
-    async runPostGeneration(projectId, theme, topic, postId, promptOverride) {
-        console.log(`[MultiAgent Post] Starting generation for: "${topic}"`);
+    async runPostGeneration(projectId, theme, topic, postId, promptOverride, withImage = false) {
+        console.log(`[MultiAgent Post] Starting generation for: "${topic}" (Image: ${withImage})`);
         // Fetch comments for context
-        const commentsContext = await comment_service_1.default.getCommentsForContext(projectId, 'post', postId);
+        let commentsContext = await comment_service_1.default.getCommentsForContext(projectId, 'post', postId);
         if (commentsContext) {
             console.log(`[MultiAgent Post] Found comments: ${commentsContext.length} chars`);
         }
+        else {
+            commentsContext = '';
+        }
+        // Define Strict Constraints
+        let lengthConstraint = "";
+        // With MTProto migration, we can handle longer captions (up to 2048 chars if premium, or just text splitting).
+        // However, standard caption limit is 1024 without premium. 
+        // Let's set a safe target of ~1000 for single caption or allow up to 2000 if we assume premium account/features.
+        // Given the request for "picture + long text", we should aim for ~1500-2000 chars and trust the publisher to split/handle it 
+        // OR rely on premium limits. 
+        // SAFE BET: Target 1000-1100. If we really want long text, we might need to send image + text as separate messages 
+        // or rely on the client splitting logic we implemented (which sends photo then text remainder).
+        if (withImage) {
+            // Unified approach: Always target long, detailed posts (2000+ chars).
+            // MTProto will handle splitting if needed, or send as long caption if supported.
+            lengthConstraint = "LIMIT: Target length is 2000-2500 characters. Max 4000. Ensure deep coverage of the topic. Do NOT shorten the text just because there is an image.";
+        }
+        else {
+            lengthConstraint = "LIMIT: Target length is 2000-2500 characters. Max 4000. Ensure deep coverage of the topic, do not be too brief.";
+        }
+        // Add to creator context
+        commentsContext += `\n\n[CONSTRAINT]: ${lengthConstraint}`;
         let runLogId = 0;
         try {
             const runLog = await this.prisma.agentRun.create({
@@ -232,6 +254,11 @@ Start directly with the post content.`;
             creatorConfig.prompt = promptOverride;
             console.log('[MultiAgent Post] Using prompt override');
         }
+        // Remove conflicting default max length from prompt if present
+        // (Legacy check, but we can verify)
+        // if (creatorConfig.prompt.includes("Max 4000 chars") && withImage) {
+        //      creatorConfig.prompt = creatorConfig.prompt.replace("Max 4000 chars", "Max 1000 chars");
+        // }
         let currentText = await this.postCreator(theme, topic, creatorConfig, runLogId, commentsContext);
         let currentScore = 0;
         let iterations = 0;
@@ -243,7 +270,8 @@ Start directly with the post content.`;
             console.log(`[MultiAgent Post] Iteration ${iterations} starting...`);
             const criticConfig = await this.getAgentConfig(projectId, 'post_critic');
             const fixerConfig = await this.getAgentConfig(projectId, 'post_fixer');
-            const critiqueResult = await this.postCritic(currentText, topic, criticConfig, runLogId, iterations);
+            // Pass constraint to Critic
+            const critiqueResult = await this.postCritic(currentText, topic, criticConfig, runLogId, iterations, lengthConstraint);
             currentScore = critiqueResult.score;
             history.push({
                 iteration: iterations,
@@ -266,7 +294,8 @@ Start directly with the post content.`;
             }
             if (iterations < MAX_ITERATIONS) {
                 console.log(`[MultiAgent Post] Fixing text based on critique...`);
-                currentText = await this.postFixer(currentText, critiqueResult.critique, fixerConfig, runLogId, iterations);
+                // Pass constraint to Fixer
+                currentText = await this.postFixer(currentText, critiqueResult.critique, fixerConfig, runLogId, iterations, lengthConstraint);
             }
         }
         // Run Classifier
@@ -369,9 +398,10 @@ Start directly with the post content.`;
         }
         return output;
     }
-    async postCritic(text, topic, config, runId, iteration) {
+    async postCritic(text, topic, config, runId, iteration, lengthConstraint = '') {
         let result = { score: 50, critique: '' };
         let content = '{}';
+        const context = `Topic: ${topic}\n\nPost to evaluate:\n${text}\n\n${lengthConstraint ? `CRITICAL CONSTRAINT TO VERIFY: ${lengthConstraint}. If text exceeds limit, SCORE MUST BE < 50 and critique must demand shortening.` : ''}`;
         if (config.apiKey && config.apiKey.startsWith('sk-ant')) {
             const anthropic = new sdk_1.default({ apiKey: config.apiKey });
             // Claude doesn't have JSON mode enforcement like OpenAI, so we ask politely in prompt
@@ -380,7 +410,7 @@ Start directly with the post content.`;
                 max_tokens: 1000,
                 system: config.prompt + "\nIMPORTANT: You MUST return valid JSON only.",
                 messages: [
-                    { role: 'user', content: `Topic: ${topic}\n\nPost to evaluate:\n${text}` }
+                    { role: 'user', content: context }
                 ]
             });
             // @ts-ignore
@@ -394,7 +424,7 @@ Start directly with the post content.`;
                 systemInstruction: config.prompt + "\nIMPORTANT: You MUST return valid JSON only.",
                 generationConfig: { responseMimeType: "application/json" }
             });
-            const result = await model.generateContent(`Topic: ${topic}\n\nPost to evaluate:\n${text}`);
+            const result = await model.generateContent(context);
             content = result.response.text();
         }
         else {
@@ -403,7 +433,7 @@ Start directly with the post content.`;
                 model: config.model,
                 messages: [
                     { role: 'system', content: config.prompt },
-                    { role: 'user', content: `Topic: ${topic}\n\nPost to evaluate:\n${text}` }
+                    { role: 'user', content: context }
                 ],
                 response_format: { type: "json_object" },
                 temperature: 0.3
@@ -441,8 +471,9 @@ Start directly with the post content.`;
         }
         return result;
     }
-    async postFixer(text, critique, config, runId, iteration) {
+    async postFixer(text, critique, config, runId, iteration, lengthConstraint = '') {
         let output = '';
+        const context = `Original Text:\n${text}\n\nCritique to address:\n${critique}\n\n${lengthConstraint ? `MANDATORY CONSTRAINT: ${lengthConstraint}` : ''}`;
         if (config.apiKey && config.apiKey.startsWith('sk-ant')) {
             const anthropic = new sdk_1.default({ apiKey: config.apiKey });
             const response = await anthropic.messages.create({
@@ -450,7 +481,7 @@ Start directly with the post content.`;
                 max_tokens: 4000,
                 system: config.prompt,
                 messages: [
-                    { role: 'user', content: `Original Text:\n${text}\n\nCritique to address:\n${critique}` }
+                    { role: 'user', content: context }
                 ]
             });
             // @ts-ignore
@@ -463,7 +494,7 @@ Start directly with the post content.`;
                 model: config.model,
                 systemInstruction: config.prompt
             });
-            const result = await model.generateContent(`Original Text:\n${text}\n\nCritique to address:\n${critique}`);
+            const result = await model.generateContent(context);
             output = result.response.text();
         }
         else {
@@ -472,7 +503,7 @@ Start directly with the post content.`;
                 model: config.model,
                 messages: [
                     { role: 'system', content: config.prompt },
-                    { role: 'user', content: `Original Text:\n${text}\n\nCritique to address:\n${critique}` }
+                    { role: 'user', content: context }
                 ],
                 temperature: 0.7,
                 response_format: { type: "json_object" }
@@ -520,9 +551,13 @@ Start directly with the post content.`;
     // ... rest of the file ...
     // --- Topic List Generation ---
     async refineTopics(projectId, theme, weekId, promptOverride, count = 2, existingTopics = []) {
+        const fs = require('fs');
+        fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Starting topic generation for theme: "${theme}", count: ${count}\n`);
         console.log(`[MultiAgent] Starting topic generation for theme: "${theme}", count: ${count}`);
+        fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Fetching comments...\n`);
         // Fetch comments
         const commentsContext = await comment_service_1.default.getCommentsForContext(projectId, 'week', weekId);
+        fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Comments fetched. Context length: ${commentsContext.length}\n`);
         // Context construction
         let fullContext = commentsContext;
         if (existingTopics.length > 0) {
@@ -532,18 +567,24 @@ Start directly with the post content.`;
         // 1. Create Run Log (Topics)
         let runLogId = 0;
         try {
+            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Creating Run Log...\n`);
             const runLog = await this.prisma.agentRun.create({
                 data: { topic: `TOPICS: ${theme}` }
             });
             runLogId = runLog.id;
+            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Run Log Created: ${runLogId}\n`);
         }
         catch (e) {
             console.error('Failed to create run log', e);
+            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Run Log Creation Failed: ${e}\n`);
         }
         // Creator
+        fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Fetching Creator Prompt...\n`);
         let creatorPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CREATOR, this.DEFAULT_TOPIC_CREATOR_PROMPT);
+        fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Creator Prompt fetched.\n`);
         if (promptOverride)
             creatorPrompt = promptOverride;
+        fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Calling Validated Topic Creator...\n`);
         let currentTopicsJSON = await this.topicCreator(theme, creatorPrompt, runLogId, fullContext);
         // Ensure it's valid JSON structure from the start
         try {
@@ -560,6 +601,7 @@ Start directly with the post content.`;
         const TARGET_SCORE = 80; // Changed from 90 to 80
         while (iterations < MAX_ITERATIONS) {
             iterations++;
+            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent Topics] Iteration ${iterations} starting...\n`);
             console.log(`[MultiAgent Topics] Iteration ${iterations} starting...`);
             const criticPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CRITIC, this.DEFAULT_TOPIC_CRITIC_PROMPT);
             const fixerPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_FIXER, this.DEFAULT_TOPIC_FIXER_PROMPT);
@@ -602,96 +644,136 @@ Start directly with the post content.`;
         return { topics, score: currentScore };
     }
     async topicCreator(theme, systemPrompt, runId, additionalContext = '') {
+        const fs = require('fs');
+        fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCreator] Starting... Theme: ${theme}\n`);
         let userContent = `Theme: ${theme}`;
         if (additionalContext) {
             userContent += `\n\nUSER COMMENTS / REQUIREMENTS:\n${additionalContext}`;
         }
-        const response = await this.openai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userContent }
-            ],
-            temperature: 0.7,
-            response_format: { type: "json_object" }
-        });
-        const output = response.choices[0].message.content || '{}';
-        if (runId > 0) {
-            try {
-                await this.prisma.agentIteration.create({
-                    data: {
-                        run_id: runId,
-                        iteration_number: 0,
-                        agent_role: 'topic_creator',
-                        input: theme,
-                        output: output
-                    }
-                });
+        try {
+            const response = await this.openai.chat.completions.create({
+                model: 'gpt-4o',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userContent }
+                ],
+                temperature: 0.7,
+                response_format: { type: "json_object" }
+            });
+            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCreator] OpenAI response received.\n`);
+            const output = response.choices[0].message.content || '{}';
+            if (runId > 0) {
+                try {
+                    await this.prisma.agentIteration.create({
+                        data: {
+                            run_id: runId,
+                            iteration_number: 0,
+                            agent_role: 'topic_creator',
+                            input: theme,
+                            output: output
+                        }
+                    });
+                }
+                catch (e) {
+                    console.error('Log error', e);
+                    fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCreator] DB Log Error: ${e}\n`);
+                }
             }
-            catch (e) {
-                console.error('Log error', e);
-            }
+            return output;
         }
-        return output;
+        catch (error) {
+            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCreator] ERROR: ${error.message}\n`);
+            throw error;
+        }
     }
     async topicCritic(topicsJSON, theme, systemPrompt, runId, iteration) {
-        const response = await this.openai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: `Theme: ${theme}\n\nTopics JSON:\n${topicsJSON}` }
-            ],
-            response_format: { type: "json_object" },
-            temperature: 0.3
-        });
-        let result;
+        const fs = require('fs');
+        fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCritic] Starting Iteration ${iteration}...\n`);
         try {
-            const content = response.choices[0].message.content || '{}';
-            result = JSON.parse(content);
-            if (!result.critique)
-                result.critique = "No critique provided.";
-        }
-        catch (e) {
-            result = { score: 50, critique: "Failed to parse critique." };
-        }
-        if (runId > 0) {
-            await this.prisma.agentIteration.create({
-                data: {
-                    run_id: runId,
-                    iteration_number: iteration,
-                    agent_role: 'topic_critic',
-                    input: topicsJSON.substring(0, 1000) + '...',
-                    output: JSON.stringify(result),
-                    score: result.score,
-                    critique: result.critique
+            const response = await this.openai.chat.completions.create({
+                model: 'gpt-4o',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: `Theme: ${theme}\n\nTopics JSON:\n${topicsJSON}` }
+                ],
+                response_format: { type: "json_object" },
+                temperature: 0.3
+            });
+            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCritic] OpenAI response received.\n`);
+            let result;
+            try {
+                const content = response.choices[0].message.content || '{}';
+                result = JSON.parse(content);
+                if (!result.critique)
+                    result.critique = "No critique provided.";
+            }
+            catch (e) {
+                result = { score: 50, critique: "Failed to parse critique." };
+            }
+            if (runId > 0) {
+                try {
+                    await this.prisma.agentIteration.create({
+                        data: {
+                            run_id: runId,
+                            iteration_number: iteration,
+                            agent_role: 'topic_critic',
+                            input: topicsJSON.substring(0, 1000) + '...',
+                            output: JSON.stringify(result),
+                            score: result.score,
+                            critique: result.critique
+                        }
+                    });
                 }
-            }).catch(console.error);
+                catch (e) {
+                    console.error('Log error', e);
+                    fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCritic] DB Log Error: ${e}\n`);
+                }
+            }
+            return result;
         }
-        return result;
+        catch (error) {
+            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCritic] CRITICAL ERROR: ${error.message}\n`);
+            throw error;
+        }
     }
     async topicFixer(topicsJSON, critique, systemPrompt, runId, iteration) {
-        const response = await this.openai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: `Original Topics:\n${topicsJSON}\n\nCritique:\n${critique}` }
-            ],
-            response_format: { type: "json_object" },
-            temperature: 0.7
-        });
-        const output = response.choices[0].message.content || topicsJSON;
-        if (runId > 0) {
-            await this.prisma.agentIteration.create({
-                data: {
-                    run_id: runId,
-                    iteration_number: iteration,
-                    agent_role: 'topic_fixer',
-                    input: `Critique: ${(critique || '').substring(0, 200)}...`,
-                    output: output
+        const fs = require('fs');
+        fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicFixer] Starting Iteration ${iteration}...\n`);
+        try {
+            const response = await this.openai.chat.completions.create({
+                model: 'gpt-4o',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: `Original Topics:\n${topicsJSON}\n\nCritique:\n${critique}` }
+                ],
+                response_format: { type: "json_object" },
+                temperature: 0.7
+            });
+            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicFixer] OpenAI response received.\n`);
+            const output = response.choices[0].message.content || topicsJSON;
+            if (runId > 0) {
+                try {
+                    await this.prisma.agentIteration.create({
+                        data: {
+                            run_id: runId,
+                            iteration_number: iteration,
+                            agent_role: 'topic_fixer',
+                            input: `Critique: ${(critique || '').substring(0, 200)}...`,
+                            output: output
+                        }
+                    });
                 }
-            }).catch(console.error);
+                catch (e) {
+                    console.error('Log error', e);
+                    fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicFixer] DB Log Error: ${e}\n`);
+                }
+            }
+            return output;
         }
-        return output;
+        catch (error) {
+            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicFixer] CRITICAL ERROR: ${error.message}\n`);
+            throw error;
+        }
     }
 }
 exports.default = new MultiAgentService();

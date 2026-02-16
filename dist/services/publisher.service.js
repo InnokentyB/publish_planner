@@ -7,6 +7,7 @@ const client_1 = require("@prisma/client");
 const pg_1 = require("pg");
 const adapter_pg_1 = require("@prisma/adapter-pg");
 const telegram_service_1 = __importDefault(require("./telegram.service"));
+const storage_service_1 = __importDefault(require("./storage.service"));
 const dotenv_1 = require("dotenv");
 (0, dotenv_1.config)();
 const connectionString = process.env.DATABASE_URL;
@@ -34,100 +35,150 @@ class PublisherService {
                 continue;
             try {
                 // Get the channel for this post
-                const channel = await prisma.socialChannel.findUnique({
-                    where: { id: post.channel_id || 0 }
-                });
+                let channel = null;
+                if (post.channel_id) {
+                    channel = await prisma.socialChannel.findUnique({
+                        where: { id: post.channel_id }
+                    });
+                }
+                // Fallback: Find first Telegram channel for project
+                if (!channel) {
+                    console.log(`[Publisher] Post ${post.id} has no channel_id or channel not found. Trying default...`);
+                    channel = await prisma.socialChannel.findFirst({
+                        where: { project_id: post.project_id, type: 'telegram' }
+                    });
+                }
                 if (!channel || channel.type !== 'telegram' || !channel.config.telegram_channel_id) {
                     console.error(`Channel not found or telegram config missing for post ${post.id}`);
                     continue;
                 }
                 const targetChannelId = channel.config.telegram_channel_id.toString();
                 const text = post.final_text || post.generated_text || '';
-                let sentMessage;
-                if (post.image_url) {
-                    let photoSource = post.image_url;
-                    if (post.image_url.startsWith('data:')) {
-                        const base64Data = post.image_url.split(',')[1];
-                        photoSource = { source: Buffer.from(base64Data, 'base64') };
+                let sentMessageId;
+                let isPublishedViaClient = false;
+                // Try MTProto Client First
+                try {
+                    const importedClient = require('./telegram_client.service').default;
+                    // Initialize (connect) if not already
+                    await importedClient.init(post.project_id);
+                    // We need to resolve image path here to pass string
+                    let imagePathOrUrl;
+                    if (post.image_url)
+                        imagePathOrUrl = post.image_url;
+                    const result = await importedClient.publishPost(post.project_id, targetChannelId, text, imagePathOrUrl);
+                    if (result) {
+                        sentMessageId = result.id; // gramjs message object has .id
+                        isPublishedViaClient = true;
+                        console.log(`[Publisher] Published via MTProto Client: Message ID ${sentMessageId}`);
                     }
-                    else if (post.image_url.startsWith('/uploads/')) {
-                        const fs = require('fs');
-                        const path = require('path');
-                        const filename = post.image_url.split('/').pop();
-                        const localPath = path.join(__dirname, '../../uploads', filename);
-                        if (fs.existsSync(localPath)) {
-                            photoSource = { source: fs.createReadStream(localPath) };
-                        }
-                        else {
-                            console.error(`Local image file not found: ${localPath}`);
-                            photoSource = null;
-                        }
+                }
+                catch (clientErr) {
+                    if (clientErr.message && clientErr.message.includes('FLOOD_WAIT')) {
+                        console.warn(`[Publisher] FLOOD_WAIT detected: ${clientErr.message}. Skipping this run for post ${post.id}.`);
+                        // Ideally schedule retry in X seconds. For now, we skip and let next scheduler run pick it up (if we don't change status)
+                        // But wait, scheduler runs every 60s. If flood wait is LONG, we should update post time?
+                        // For now, simple error log and fallback or abort.
+                        // Let's abort this post attempt so we don't spam.
+                        continue;
                     }
-                    if (photoSource) {
-                        const CAPTION_LIMIT = 1024;
-                        if (text.length > CAPTION_LIMIT) {
-                            // Split: Fill caption, then rest as text
-                            // Simple split logic: find last newline before limit
-                            let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
-                            if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
-                                // If no newline or it's too early, split by space
-                                splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
-                            }
-                            if (splitIndex === -1) {
-                                // Force split
-                                splitIndex = CAPTION_LIMIT;
-                            }
-                            const caption = text.substring(0, splitIndex);
-                            const remainder = text.substring(splitIndex).trim();
-                            await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
-                                caption: caption,
-                                parse_mode: 'Markdown'
-                            });
-                            if (remainder.length > 0) {
-                                sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                    console.warn(`[Publisher] MTProto Client failed (fallback to Bot API):`, clientErr);
+                }
+                if (!isPublishedViaClient) {
+                    // Fallback to Bot API Logic
+                    console.log(`[Publisher] Falling back to Bot API for post ${post.id}`);
+                    let sentMessage;
+                    // ... (Existing Bot API Logic) ...
+                    if (post.image_url) {
+                        let photoSource = post.image_url;
+                        if (post.image_url.startsWith('data:')) {
+                            const base64Data = post.image_url.split(',')[1];
+                            photoSource = { source: Buffer.from(base64Data, 'base64') };
+                        }
+                        else if (post.image_url.startsWith('/uploads/')) {
+                            const fs = require('fs');
+                            const path = require('path');
+                            const filename = post.image_url.split('/').pop();
+                            const localPath = path.join(__dirname, '../../uploads', filename);
+                            if (fs.existsSync(localPath)) {
+                                photoSource = { source: fs.createReadStream(localPath) };
                             }
                             else {
-                                // Should unlikely happen given checks, but just in case
-                                sentMessage = { message_id: 0 }; // Placeholder
+                                console.error(`Local image file not found: ${localPath}`);
+                                photoSource = null;
                             }
                         }
                         else {
-                            sentMessage = await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
-                                caption: text,
-                                parse_mode: 'Markdown'
-                            });
+                            // Assume it's a remote URL (Supabase or other)
+                            photoSource = post.image_url;
+                        }
+                        if (photoSource) {
+                            const CAPTION_LIMIT = 1024;
+                            if (text.length > CAPTION_LIMIT) {
+                                // Split logic for Bot API
+                                let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
+                                if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
+                                    splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                                }
+                                if (splitIndex === -1)
+                                    splitIndex = CAPTION_LIMIT;
+                                const caption = text.substring(0, splitIndex);
+                                const remainder = text.substring(splitIndex).trim();
+                                await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
+                                    caption: caption,
+                                    parse_mode: 'Markdown'
+                                });
+                                if (remainder.length > 0) {
+                                    sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                                }
+                                else {
+                                    sentMessage = { message_id: 0 };
+                                }
+                            }
+                            else {
+                                sentMessage = await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
+                                    caption: text,
+                                    parse_mode: 'Markdown'
+                                });
+                            }
+                        }
+                        else {
+                            sentMessage = await this.sendTextSplitting(targetChannelId, text);
                         }
                     }
                     else {
-                        // Image missing or invalid, send text only
                         sentMessage = await this.sendTextSplitting(targetChannelId, text);
                     }
-                }
-                else {
-                    sentMessage = await this.sendTextSplitting(targetChannelId, text);
+                    sentMessageId = sentMessage?.message_id;
                 }
                 // Construct link
-                // Assuming public channel. If private, link structure is different but t.me/c/ID/MSG_ID works for members
                 let publishedLink = null;
-                const channelUsername = channel.config.channel_username; // We might need to store this in config
-                // Fallback logic for link
+                const channelUsername = channel.config.channel_username;
                 if (channelUsername) {
-                    publishedLink = `https://t.me/${channelUsername}/${sentMessage?.message_id}`;
+                    publishedLink = `https://t.me/${channelUsername}/${sentMessageId}`;
                 }
                 else if (targetChannelId.startsWith('-100')) {
-                    // Private channel format: https://t.me/c/CHANNEL_ID_WITHOUT_-100/MSG_ID
                     const cleanId = targetChannelId.substring(4);
-                    publishedLink = `https://t.me/c/${cleanId}/${sentMessage?.message_id}`;
+                    publishedLink = `https://t.me/c/${cleanId}/${sentMessageId}`;
                 }
                 // Update status to published
                 await prisma.post.update({
                     where: { id: post.id },
                     data: {
                         status: 'published',
-                        telegram_message_id: sentMessage?.message_id,
+                        telegram_message_id: sentMessageId,
                         published_link: publishedLink
                     }
                 });
+                // Cleanup Image if it's from Supabase
+                if (post.image_url && post.image_url.includes('supabase.co')) {
+                    console.log(`[Publisher] Cleaning up Supabase image for post ${post.id}...`);
+                    try {
+                        await storage_service_1.default.deleteFile(post.image_url);
+                    }
+                    catch (cleanupErr) {
+                        console.error(`[Publisher] Failed to cleanup image:`, cleanupErr);
+                    }
+                }
                 console.log(`Successfully published post ${post.id} to channel ${targetChannelId}`);
             }
             catch (err) {
@@ -146,94 +197,137 @@ class PublisherService {
             throw new Error(`Post ${postId} not found`);
         }
         // 2. Get Channel info
-        const channel = await prisma.socialChannel.findUnique({ where: { id: post.channel_id || 0 } });
+        let channel = null;
+        if (post.channel_id) {
+            channel = await prisma.socialChannel.findUnique({ where: { id: post.channel_id } });
+        }
+        if (!channel) {
+            channel = await prisma.socialChannel.findFirst({
+                where: { project_id: post.project_id, type: 'telegram' }
+            });
+        }
         if (!channel || channel.type !== 'telegram' || !channel.config.telegram_channel_id) {
             throw new Error(`Telegram channel config not found for post ${postId}`);
         }
         const targetChannelId = channel.config.telegram_channel_id.toString();
         // 3. Send Immediately
         const text = post.final_text || post.generated_text || '';
-        let sentMessage;
-        if (post.image_url) {
-            let photoSource = post.image_url;
-            if (post.image_url.startsWith('data:')) {
-                const base64Data = post.image_url.split(',')[1];
-                photoSource = { source: Buffer.from(base64Data, 'base64') };
+        let sentMessageId;
+        let isPublishedViaClient = false;
+        // Try MTProto Client First
+        try {
+            const importedClient = require('./telegram_client.service').default;
+            // Initialize (connect) if not already
+            await importedClient.init(post.project_id);
+            // We need to resolve image path here to pass string
+            let imagePathOrUrl;
+            if (post.image_url)
+                imagePathOrUrl = post.image_url;
+            const result = await importedClient.publishPost(post.project_id, targetChannelId, text, imagePathOrUrl);
+            if (result) {
+                sentMessageId = result.id; // gramjs message object has .id
+                isPublishedViaClient = true;
+                console.log(`[Publisher] Published via MTProto Client: Message ID ${sentMessageId}`);
             }
-            else if (post.image_url.startsWith('/uploads/')) {
-                const fs = require('fs');
-                const path = require('path');
-                const filename = post.image_url.split('/').pop();
-                const localPath = path.join(__dirname, '../../uploads', filename);
-                if (fs.existsSync(localPath)) {
-                    photoSource = { source: fs.createReadStream(localPath) };
+        }
+        catch (clientErr) {
+            console.warn(`[Publisher] MTProto Client failed (fallback to Bot API):`, clientErr);
+        }
+        if (!isPublishedViaClient) {
+            // Fallback to Bot API Logic
+            let sentMessage;
+            if (post.image_url) {
+                let photoSource = post.image_url;
+                if (post.image_url.startsWith('data:')) {
+                    const base64Data = post.image_url.split(',')[1];
+                    photoSource = { source: Buffer.from(base64Data, 'base64') };
                 }
-                else {
-                    console.error(`Local image file not found: ${localPath}`);
-                    photoSource = null;
-                }
-            }
-            if (photoSource) {
-                const CAPTION_LIMIT = 1024;
-                if (text.length > CAPTION_LIMIT) {
-                    // Split: Fill caption, then rest as text
-                    // Simple split logic: find last newline before limit
-                    let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
-                    if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
-                        // If no newline or it's too early, split by space
-                        splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
-                    }
-                    if (splitIndex === -1) {
-                        // Force split
-                        splitIndex = CAPTION_LIMIT;
-                    }
-                    const caption = text.substring(0, splitIndex);
-                    const remainder = text.substring(splitIndex).trim();
-                    await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
-                        caption: caption,
-                        parse_mode: 'Markdown'
-                    });
-                    if (remainder.length > 0) {
-                        sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                else if (post.image_url.startsWith('/uploads/')) {
+                    const fs = require('fs');
+                    const path = require('path');
+                    const filename = post.image_url.split('/').pop();
+                    const localPath = path.join(__dirname, '../../uploads', filename);
+                    if (fs.existsSync(localPath)) {
+                        photoSource = { source: fs.createReadStream(localPath) };
                     }
                     else {
-                        // Should unlikely happen given checks, but just in case
-                        sentMessage = { message_id: 0 }; // Placeholder
+                        console.error(`Local image file not found: ${localPath}`);
+                        photoSource = null;
                     }
                 }
                 else {
-                    sentMessage = await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
-                        caption: text,
-                        parse_mode: 'Markdown'
-                    });
+                    // Remote URL
+                    photoSource = post.image_url;
+                }
+                if (photoSource) {
+                    const CAPTION_LIMIT = 1024;
+                    if (text.length > CAPTION_LIMIT) {
+                        // Split: Fill caption, then rest as text
+                        // Simple split logic: find last newline before limit
+                        let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
+                        if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
+                            // If no newline or it's too early, split by space
+                            splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                        }
+                        if (splitIndex === -1) {
+                            // Force split
+                            splitIndex = CAPTION_LIMIT;
+                        }
+                        const caption = text.substring(0, splitIndex);
+                        const remainder = text.substring(splitIndex).trim();
+                        await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
+                            caption: caption,
+                            parse_mode: 'Markdown'
+                        });
+                        if (remainder.length > 0) {
+                            sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                        }
+                        else {
+                            // Should unlikely happen given checks, but just in case
+                            sentMessage = { message_id: 0 }; // Placeholder
+                        }
+                    }
+                    else {
+                        sentMessage = await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
+                            caption: text,
+                            parse_mode: 'Markdown'
+                        });
+                    }
+                }
+                else {
+                    sentMessage = await this.sendTextSplitting(targetChannelId, text);
                 }
             }
             else {
                 sentMessage = await this.sendTextSplitting(targetChannelId, text);
             }
-        }
-        else {
-            sentMessage = await this.sendTextSplitting(targetChannelId, text);
+            sentMessageId = sentMessage?.message_id;
         }
         // Construct link
         let publishedLink = null;
         const channelUsername = channel.config.channel_username;
         if (channelUsername) {
-            publishedLink = `https://t.me/${channelUsername}/${sentMessage?.message_id}`;
+            publishedLink = `https://t.me/${channelUsername}/${sentMessageId}`;
         }
         else if (targetChannelId.startsWith('-100')) {
             const cleanId = targetChannelId.substring(4);
-            publishedLink = `https://t.me/c/${cleanId}/${sentMessage?.message_id}`;
+            publishedLink = `https://t.me/c/${cleanId}/${sentMessageId}`;
         }
         // 4. Update DB Status to published
         await prisma.post.update({
             where: { id: postId },
             data: {
                 status: 'published',
-                telegram_message_id: sentMessage?.message_id,
+                telegram_message_id: sentMessageId,
                 published_link: publishedLink
             }
         });
+        // Cleanup Image if it's from Supabase
+        if (post.image_url && post.image_url.includes('supabase.co')) {
+            console.log(`[Publisher] Cleaning up Supabase image for post ${postId}...`);
+            // Run in background to not block response
+            storage_service_1.default.deleteFile(post.image_url).catch(err => console.error(`[Publisher] Failed to cleanup image:`, err));
+        }
         return true;
     }
     async sendTextSplitting(chatId, text) {

@@ -46,6 +46,7 @@ model Project {
   prompt_presets PromptPreset[]
   comments       Comment[]
   provider_keys  ProviderKey[]
+  telegram_accounts TelegramAccount[]
 }
 
 model ProjectMember {
@@ -253,5 +254,21 @@ model ProviderKey {
   project    Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
   @@map("provider_keys")
+}
+
+model TelegramAccount {
+  id             Int      @id @default(autoincrement())
+  project_id     Int
+  project        Project  @relation(fields: [project_id], references: [id])
+  phone_number   String
+  session_string String   @db.Text
+  api_id         Int
+  api_hash       String
+  is_active      Boolean  @default(true)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  @@unique([project_id, phone_number])
+  @@map("telegram_accounts")
 }
 

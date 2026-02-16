@@ -67,6 +67,35 @@ export const api = {
     delete(endpoint: string, options?: ApiOptions) {
         return this.request(endpoint, { ...options, method: 'DELETE' });
     },
+
+    upload: (endpoint: string, file: File, options?: ApiOptions) => {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        // Custom config for file upload (don't set Content-Type header manually for FormData)
+        const headers = getHeaders();
+        delete headers['Content-Type'];
+
+        return fetch(endpoint, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                ...headers,
+                ...(options?.headers || {})
+            }
+        }).then(async response => {
+            if (response.status === 401) {
+                localStorage.removeItem('token');
+                window.location.href = '/login';
+                throw new Error('Unauthorized');
+            }
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Upload Failed');
+            }
+            return response.json();
+        });
+    }
 };
 
 export const commentsApi = {
@@ -97,6 +126,7 @@ export const modelsApi = {
 };
 
 export const projectsApi = {
+    create: (data: { name: string; slug?: string; description?: string }) => api.post('/api/projects', data),
     update: (id: number, data: { name: string; description: string }) => api.put(`/api/projects/${id}`, data),
     addMember: (id: number, email: string, role: string) => api.post(`/api/projects/${id}/members`, { email, role }),
     removeMember: (id: number, userId: number) => api.delete(`/api/projects/${id}/members/${userId}`)
