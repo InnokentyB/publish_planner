@@ -19,6 +19,7 @@ model User {
   updated_at    DateTime @updatedAt
 
   memberships ProjectMember[]
+  sent_invitations ProjectInvitation[]
 
   @@map("users")
 }
@@ -39,7 +40,9 @@ model Project {
   channels SocialChannel[]
   weeks    Week[]
   posts    Post[]
+  posts    Post[]
   settings ProjectSettings[]
+  invitations ProjectInvitation[]
 
   @@map("projects")
   
