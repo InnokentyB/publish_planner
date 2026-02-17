@@ -185,7 +185,19 @@ export default async function projectRoutes(fastify: FastifyInstance) {
 
         if (existing) {
             return reply.code(400).send({ error: 'User already in project' });
+        }
+
+        const member = await prisma.projectMember.create({
+            data: {
+                project_id: projectId,
+                user_id: targetUser.id,
+                role: role || 'viewer'
+            },
+            include: { user: { select: { id: true, name: true, email: true } } }
         });
+
+        return member;
+    });
 
     // --- Invitation Routes ---
 
