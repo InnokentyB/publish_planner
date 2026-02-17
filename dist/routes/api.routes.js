@@ -126,7 +126,7 @@ async function apiRoutes(fastify) {
             }
             console.log('Returning week:', week.id); // Debug Log
             // Sanitize BigInt for Fastify
-            const serializedPosts = week.posts.map(p => ({
+            const serializedPosts = week.posts.map((p) => ({
                 ...p,
                 approval_message_id: p.approval_message_id ? p.approval_message_id.toString() : null
             }));

@@ -40,7 +40,7 @@ async function main() {
     });
 
     const topicCounts: Record<string, number> = {};
-    posts.forEach(p => {
+    posts.forEach((p: any) => {
         if (p.topic) {
             topicCounts[p.topic] = (topicCounts[p.topic] || 0) + 1;
         }

@@ -34,7 +34,7 @@ async function main() {
         take: 100
     });
     const topicCounts = {};
-    posts.forEach(p => {
+    posts.forEach((p) => {
         if (p.topic) {
             topicCounts[p.topic] = (topicCounts[p.topic] || 0) + 1;
         }
