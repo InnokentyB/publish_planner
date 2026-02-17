@@ -530,54 +530,79 @@ export default async function apiRoutes(fastify: FastifyInstance) {
 
     // Settings
     fastify.get('/api/settings/agents', async (request, reply) => {
-        const projectId = (request as any).projectId;
-        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+        try {
+            const projectId = (request as any).projectId;
+            if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
 
-        const roles = ['post_creator', 'post_critic', 'post_fixer', 'topic_creator', 'topic_critic', 'topic_fixer'];
-        const agents = [];
+            const roles = ['post_creator', 'post_critic', 'post_fixer', 'topic_creator', 'topic_critic', 'topic_fixer'];
+            const agents = [];
 
-        // Text Agents
-        for (const role of roles) {
-            const config = await multiAgentService.getAgentConfig(projectId, role as any);
+            // Text Agents
+            for (const role of roles) {
+                try {
+                    const config = await multiAgentService.getAgentConfig(projectId, role as any);
 
-            let provider = 'Not Configured';
-            if (config.apiKey) {
-                if (config.apiKey.startsWith('sk-ant')) provider = 'Anthropic';
-                else if (config.apiKey.startsWith('AIza')) provider = 'Gemini';
-                else if (config.apiKey.startsWith('sk-')) provider = 'OpenAI';
-                else provider = 'Unknown';
+                    let provider = 'Not Configured';
+                    if (config.apiKey) {
+                        if (config.apiKey.startsWith('sk-ant')) provider = 'Anthropic';
+                        else if (config.apiKey.startsWith('AIza')) provider = 'Gemini';
+                        else if (config.apiKey.startsWith('sk-')) provider = 'OpenAI';
+                        else provider = 'Unknown';
+                    }
+
+                    agents.push({
+                        role,
+                        prompt: config.prompt,
+                        apiKey: config.apiKey,
+                        model: config.model,
+                        provider
+                    });
+                } catch (e) {
+                    console.error(`Failed to fetch config for role ${role}`, e);
+                    // Push safe default instead of crashing
+                    agents.push({
+                        role,
+                        prompt: '',
+                        apiKey: '',
+                        model: '',
+                        provider: 'Error'
+                    });
+                }
             }
 
-            agents.push({
-                role,
-                prompt: config.prompt,
-                apiKey: config.apiKey,
-                model: config.model,
-                provider
-            });
+            // Image Agents (DALL-E)
+            try {
+                const dallePrompt = await generatorService.getImagePromptTemplate(projectId, 'dalle');
+                agents.push({
+                    role: 'dalle_image_gen',
+                    prompt: dallePrompt,
+                    apiKey: '', // Managed via env mostly for now
+                    model: 'dall-e-3',
+                    provider: 'OpenAI (Env)'
+                });
+            } catch (e) {
+                console.error('Failed to fetch DALL-E config', e);
+            }
+
+            // Image Agents (Nano)
+            try {
+                const nanoPrompt = await generatorService.getImagePromptTemplate(projectId, 'nano');
+                agents.push({
+                    role: 'nano_image_gen',
+                    prompt: nanoPrompt,
+                    apiKey: '',
+                    model: 'imagen-3.0',
+                    provider: 'Google (Env)'
+                });
+            } catch (e) {
+                console.error('Failed to fetch Nano config', e);
+            }
+
+            return agents;
+        } catch (e: any) {
+            console.error('Error in GET /api/settings/agents:', e);
+            return reply.code(500).send({ error: 'Internal Server Error' });
         }
-
-        // Image Agents (DALL-E)
-        const dallePrompt = await generatorService.getImagePromptTemplate(projectId, 'dalle');
-        agents.push({
-            role: 'dalle_image_gen',
-            prompt: dallePrompt,
-            apiKey: '', // Managed via env mostly for now
-            model: 'dall-e-3',
-            provider: 'OpenAI (Env)'
-        });
-
-        // Image Agents (Nano)
-        const nanoPrompt = await generatorService.getImagePromptTemplate(projectId, 'nano');
-        agents.push({
-            role: 'nano_image_gen',
-            prompt: nanoPrompt,
-            apiKey: '',
-            model: 'imagen-3.0',
-            provider: 'Google (Env)'
-        });
-
-        return agents;
     });
 
     fastify.put('/api/settings/agents/:role', async (request, reply) => {

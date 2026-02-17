@@ -44,27 +44,36 @@ class GeneratorService {
         const key = provider === 'nano' ? this.PROMPT_KEY_NANO : this.PROMPT_KEY_DALLE;
         const defaultPrompt = provider === 'nano' ? this.DEFAULT_PROMPT_NANO : this.DEFAULT_PROMPT_DALLE;
 
-        const setting = await prisma.projectSettings.findUnique({
-            where: {
-                project_id_key: {
-                    project_id: projectId,
-                    key: key
+        try {
+            const setting = await prisma.projectSettings.findUnique({
+                where: {
+                    project_id_key: {
+                        project_id: projectId,
+                        key: key
+                    }
                 }
+            });
+
+            if (setting) return setting.value;
+
+            // If not set, initialize with default (safely)
+            try {
+                await prisma.projectSettings.create({
+                    data: {
+                        project_id: projectId,
+                        key: key,
+                        value: defaultPrompt
+                    }
+                });
+            } catch (e) {
+                // Ignore race condition if another process already created it
             }
-        });
 
-        if (setting) return setting.value;
-
-        // If not set, initialize with default
-        await prisma.projectSettings.create({
-            data: {
-                project_id: projectId,
-                key: key,
-                value: defaultPrompt
-            }
-        });
-
-        return defaultPrompt;
+            return defaultPrompt;
+        } catch (e) {
+            console.error(`Error fetching image prompt template for ${provider}`, e);
+            return defaultPrompt;
+        }
     }
 
     async updateImagePromptTemplate(projectId: number, value: string, provider: 'dalle' | 'nano' = 'dalle') {

@@ -40,7 +40,6 @@ model Project {
   channels SocialChannel[]
   weeks    Week[]
   posts    Post[]
-  posts    Post[]
   settings ProjectSettings[]
   invitations ProjectInvitation[]
 
