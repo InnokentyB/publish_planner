@@ -130,9 +130,11 @@ Start directly with the post content.`;
 Никакого текста вне JSON.`;
 
     constructor() {
-        this.openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY,
-        });
+        if (process.env.OPENAI_API_KEY) {
+            this.openai = new OpenAI({
+                apiKey: process.env.OPENAI_API_KEY,
+            });
+        }
 
         const connectionString = process.env.DATABASE_URL;
         const pool = new Pool({ connectionString });

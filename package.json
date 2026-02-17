@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon src/server.ts",
-    "build": "npx prisma generate && tsc",
+    "build": "npm install --prefix frontend && npm run build --prefix frontend && npx prisma generate && tsc",
     "postinstall": "prisma generate",
     "start": "node dist/server.js",
     "migrate": "npx prisma migrate dev",
