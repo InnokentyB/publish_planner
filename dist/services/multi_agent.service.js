@@ -112,9 +112,11 @@ Start directly with the post content.`;
         this.KEY_CREATOR = 'multi_agent_creator';
         this.KEY_CRITIC = 'multi_agent_critic';
         this.KEY_FIXER = 'multi_agent_fixer';
-        this.openai = new openai_1.default({
-            apiKey: process.env.OPENAI_API_KEY,
-        });
+        if (process.env.OPENAI_API_KEY) {
+            this.openai = new openai_1.default({
+                apiKey: process.env.OPENAI_API_KEY,
+            });
+        }
         const connectionString = process.env.DATABASE_URL;
         const pool = new pg_1.Pool({ connectionString });
         const adapter = new adapter_pg_1.PrismaPg(pool);
@@ -327,6 +329,8 @@ Start directly with the post content.`;
     }
     async postClassifier(text, config) {
         let output = '{}';
+        if (!this.openai)
+            return { category: '', tags: [] };
         const response = await this.openai.chat.completions.create({
             model: 'gpt-4o', // Force JSON capable model
             messages: [
@@ -578,6 +582,9 @@ Start directly with the post content.`;
             console.error('Failed to create run log', e);
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Run Log Creation Failed: ${e}\n`);
         }
+        // Initialize Agents
+        if (!this.openai)
+            throw new Error('OpenAI client not initialized (Missing API Key)');
         // Creator
         fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Fetching Creator Prompt...\n`);
         let creatorPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CREATOR, this.DEFAULT_TOPIC_CREATOR_PROMPT);
@@ -626,7 +633,7 @@ Start directly with the post content.`;
             if (iterations < MAX_ITERATIONS) {
                 // Fixer
                 console.log(`[MultiAgent Topics] Fixing based on critique...`);
-                currentTopicsJSON = await this.topicFixer(currentTopicsJSON, critiqueResult.critique, fixerPrompt, runLogId, iterations);
+                currentTopicsJSON = await this.topicFixer(currentTopicsJSON, critiqueResult.critique, theme, fixerPrompt, runLogId, iterations);
             }
         }
         // Parse final JSON
@@ -646,6 +653,8 @@ Start directly with the post content.`;
     async topicCreator(theme, systemPrompt, runId, additionalContext = '') {
         const fs = require('fs');
         fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCreator] Starting... Theme: ${theme}\n`);
+        if (!this.openai)
+            throw new Error('OpenAI client not initialized (Missing API Key)');
         let userContent = `Theme: ${theme}`;
         if (additionalContext) {
             userContent += `\n\nUSER COMMENTS / REQUIREMENTS:\n${additionalContext}`;
@@ -689,6 +698,8 @@ Start directly with the post content.`;
     async topicCritic(topicsJSON, theme, systemPrompt, runId, iteration) {
         const fs = require('fs');
         fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCritic] Starting Iteration ${iteration}...\n`);
+        if (!this.openai)
+            throw new Error('OpenAI client not initialized (Missing API Key)');
         try {
             const response = await this.openai.chat.completions.create({
                 model: 'gpt-4o',
@@ -736,9 +747,11 @@ Start directly with the post content.`;
             throw error;
         }
     }
-    async topicFixer(topicsJSON, critique, systemPrompt, runId, iteration) {
+    async topicFixer(topicsJSON, critique, theme, systemPrompt, runId, iteration) {
         const fs = require('fs');
         fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicFixer] Starting Iteration ${iteration}...\n`);
+        if (!this.openai)
+            throw new Error('OpenAI client not initialized (Missing API Key)');
         try {
             const response = await this.openai.chat.completions.create({
                 model: 'gpt-4o',
