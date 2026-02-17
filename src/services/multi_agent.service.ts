@@ -366,6 +366,8 @@ Start directly with the post content.`;
     private async postClassifier(text: string, config: any): Promise<{ category: string, tags: string[] }> {
         let output = '{}';
 
+        if (!this.openai) return { category: '', tags: [] };
+
         const response = await this.openai.chat.completions.create({
             model: 'gpt-4o', // Force JSON capable model
             messages: [
@@ -708,7 +710,7 @@ Start directly with the post content.`;
             if (iterations < MAX_ITERATIONS) {
                 // Fixer
                 console.log(`[MultiAgent Topics] Fixing based on critique...`);
-                currentTopicsJSON = await this.topicFixer(currentTopicsJSON, critiqueResult.critique, fixerPrompt, runLogId, iterations);
+                currentTopicsJSON = await this.topicFixer(currentTopicsJSON, critiqueResult.critique, theme, fixerPrompt, runLogId, iterations);
             }
         }
 
