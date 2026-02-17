@@ -63,6 +63,24 @@ model ProjectMember {
   @@map("project_members")
 }
 
+model ProjectInvitation {
+  id         Int      @id @default(autoincrement())
+  project_id Int
+  email      String
+  role       String   @default("viewer")
+  token      String   @unique
+  expires_at DateTime
+  created_at DateTime @default(now())
+  created_by Int
+
+  project    Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  creator    User     @relation(fields: [created_by], references: [id], onDelete: Cascade)
+
+  @@map("project_invitations")
+  @@index([email])
+  @@index([token])
+}
+
 model ProjectSettings {
   id         Int      @id @default(autoincrement())
   project_id Int

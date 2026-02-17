@@ -138,8 +138,44 @@ export default async function projectRoutes(fastify: FastifyInstance) {
 
         // Find user by email
         const targetUser = await prisma.user.findUnique({ where: { email } });
+
+        // If user not found, create invitation
         if (!targetUser) {
-            return reply.code(404).send({ error: 'User not found' });
+            // Check existing invitation
+            const existingInvite = await prisma.projectInvitation.findFirst({
+                where: { project_id: projectId, email }
+            });
+
+            if (existingInvite) {
+                // Return existing token
+                return {
+                    status: 'invited',
+                    message: 'Invitation already exists',
+                    invite_link: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/invite/${existingInvite.token}`
+                };
+            }
+
+            // Create new invitation
+            const token = require('crypto').randomBytes(32).toString('hex');
+            const expiresAt = new Date();
+            expiresAt.setDate(expiresAt.getDate() + 7); // 7 days expiry
+
+            const invitation = await prisma.projectInvitation.create({
+                data: {
+                    project_id: projectId,
+                    email,
+                    role: role || 'viewer',
+                    token,
+                    expires_at: expiresAt,
+                    created_by: user.id
+                }
+            });
+
+            return {
+                status: 'invited',
+                message: 'Invitation created',
+                invite_link: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/invite/${token}`
+            };
         }
 
         // Check if already member
@@ -149,20 +185,89 @@ export default async function projectRoutes(fastify: FastifyInstance) {
 
         if (existing) {
             return reply.code(400).send({ error: 'User already in project' });
-        }
-
-        const member = await prisma.projectMember.create({
-            data: {
-                project_id: projectId,
-                user_id: targetUser.id,
-                role: role || 'viewer'
-            },
-            include: { user: { select: { id: true, name: true, email: true } } }
         });
 
-        return member;
+    // --- Invitation Routes ---
+
+    // Get invitation details
+    fastify.get('/api/invitations/:token', async (request, reply) => {
+        const { token } = request.params as any;
+
+        const invitation = await prisma.projectInvitation.findUnique({
+            where: { token },
+            include: {
+                project: { select: { name: true, description: true } },
+                creator: { select: { name: true, email: true } }
+            }
+        });
+
+        if (!invitation) {
+            return reply.code(404).send({ error: 'Invitation not found' });
+        }
+
+        if (new Date() > invitation.expires_at) {
+            return reply.code(410).send({ error: 'Invitation expired' });
+        }
+
+        return {
+            email: invitation.email,
+            role: invitation.role,
+            project_name: invitation.project.name,
+            inviter_name: invitation.creator.name
+        };
     });
 
+    // Accept invitation
+    fastify.post('/api/invitations/:token/accept', async (request, reply) => {
+        const tokenHeader = request.headers.authorization?.split(' ')[1];
+        if (!tokenHeader) {
+            return reply.code(401).send({ error: 'Auth required' });
+        }
+
+        let user;
+        try {
+            user = authService.verifyToken(tokenHeader);
+        } catch (e) {
+            return reply.code(401).send({ error: 'Invalid token' });
+        }
+
+        const { token } = request.params as any;
+
+        const invitation = await prisma.projectInvitation.findUnique({
+            where: { token }
+        });
+
+        if (!invitation) {
+            return reply.code(404).send({ error: 'Invitation not found' });
+        }
+
+        if (new Date() > invitation.expires_at) {
+            return reply.code(410).send({ error: 'Invitation expired' });
+        }
+
+        // Optional: strict email check
+        // if (invitation.email !== user.email) { ... }
+        // For now, allow accepting with any email as long as they have the link (flexible)
+
+        // Add to project
+        try {
+            await prisma.projectMember.create({
+                data: {
+                    project_id: invitation.project_id,
+                    user_id: user.id,
+                    role: invitation.role
+                }
+            });
+        } catch (e) {
+            // Ignore if already member
+        }
+
+        // Delete invitation
+        await prisma.projectInvitation.delete({ where: { token } });
+
+        return { success: true, projectId: invitation.project_id };
+    });
+    // DELETE member
     fastify.delete('/api/projects/:id/members/:userId', async (request, reply) => {
         const user = (request as any).user;
         const { id, userId } = request.params as any;
