@@ -26,7 +26,7 @@ interface MultiAgentResult {
 }
 
 class MultiAgentService {
-    private openai: OpenAI;
+    private openai?: OpenAI;
     private prisma: PrismaClient;
 
     // Keys for Post Generation Agents
@@ -650,6 +650,9 @@ Start directly with the post content.`;
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Run Log Creation Failed: ${e}\n`);
         }
 
+        // Initialize Agents
+        if (!this.openai) throw new Error('OpenAI client not initialized (Missing API Key)');
+
         // Creator
         fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Fetching Creator Prompt...\n`);
         let creatorPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CREATOR, this.DEFAULT_TOPIC_CREATOR_PROMPT);
@@ -727,6 +730,8 @@ Start directly with the post content.`;
         const fs = require('fs');
         fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCreator] Starting... Theme: ${theme}\n`);
 
+        if (!this.openai) throw new Error('OpenAI client not initialized (Missing API Key)');
+
         let userContent = `Theme: ${theme}`;
         if (additionalContext) {
             userContent += `\n\nUSER COMMENTS / REQUIREMENTS:\n${additionalContext}`;
@@ -769,6 +774,8 @@ Start directly with the post content.`;
     private async topicCritic(topicsJSON: string, theme: string, systemPrompt: string, runId: number, iteration: number): Promise<CritiqueResult> {
         const fs = require('fs');
         fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCritic] Starting Iteration ${iteration}...\n`);
+
+        if (!this.openai) throw new Error('OpenAI client not initialized (Missing API Key)');
 
         try {
             const response = await this.openai.chat.completions.create({
@@ -813,9 +820,11 @@ Start directly with the post content.`;
         }
     }
 
-    private async topicFixer(topicsJSON: string, critique: string, systemPrompt: string, runId: number, iteration: number): Promise<string> {
+    private async topicFixer(topicsJSON: string, critique: string, theme: string, systemPrompt: string, runId: number, iteration: number): Promise<string> {
         const fs = require('fs');
         fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicFixer] Starting Iteration ${iteration}...\n`);
+
+        if (!this.openai) throw new Error('OpenAI client not initialized (Missing API Key)');
 
         try {
             const response = await this.openai.chat.completions.create({
