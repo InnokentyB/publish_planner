@@ -350,6 +350,89 @@ class PublisherService {
         return true;
     }
 
+    async scheduleNativePosts() {
+        const now = new Date();
+        const lookahead = new Date(now.getTime() + 5 * 60 * 1000); // Posts due in > 5m
+
+        // Find posts that are 'scheduled' but far enough in the future
+        const futurePosts = await prisma.post.findMany({
+            where: {
+                status: 'scheduled',
+                publish_at: { gt: lookahead }
+            },
+            include: {
+                project: {
+                    include: {
+                        settings: true,
+                        channels: true
+                    }
+                }
+            }
+        });
+
+        console.log(`[Publisher] Checking ${futurePosts.length} future posts for native scheduling...`);
+
+        for (const post of futurePosts) {
+            // Check if Native Scheduling is enabled for this project
+            const settings = post.project.settings;
+            const nativeEnabled = settings.find(s => s.key === 'telegram_native_scheduling')?.value === 'true';
+
+            if (!nativeEnabled) continue;
+
+            // Find Channel
+            let channel = null;
+            if (post.channel_id) {
+                channel = post.project.channels.find(c => c.id === post.channel_id);
+            } else {
+                // Fallback default
+                channel = post.project.channels.find(c => c.type === 'telegram');
+            }
+
+            if (!channel || channel.type !== 'telegram' || !(channel.config as any).telegram_channel_id) {
+                continue;
+            }
+
+            const targetChannelId = (channel.config as any).telegram_channel_id.toString();
+            const text = post.final_text || post.generated_text || '';
+
+            // Try MTProto Client
+            try {
+                const importedClient = require('./telegram_client.service').default;
+                await importedClient.init(post.project_id);
+
+                let imagePathOrUrl: string | undefined;
+                if (post.image_url) imagePathOrUrl = post.image_url;
+
+                // Pass schedule param (UNIX timestamp or Date object depending on library, gramjs takes Date or int)
+                // Note: telegram_client.service.ts publishPost signature needs update or we pass it in options?
+                // The current publishPost signature is: (projectId, target, text, imageUrl)
+                // We need to update TelegramClientService.publishPost to accept 'scheduleDate'.
+
+                // Let's first update TelegramClientService, then come back here? 
+                // Or I can update TelegramClientService.publishPost to take an options object.
+                // Current signature: publishPost(projectId: number, target: string | number, text: string, imageUrl?: string | null)
+
+                // I will assume I update TelegramClientService to accept a 5th arg 'scheduleDate'.
+                const result = await importedClient.publishPost(post.project_id, targetChannelId, text, imagePathOrUrl, post.publish_at);
+
+                if (result) {
+                    console.log(`[Publisher] Scheduled natively via MTProto: Message ID ${result.id}`);
+
+                    // Update Status
+                    await prisma.post.update({
+                        where: { id: post.id },
+                        data: {
+                            status: 'scheduled_native',
+                            telegram_message_id: result.id
+                        }
+                    });
+                }
+            } catch (err) {
+                console.error(`[Publisher] Failed to natively schedule post ${post.id}:`, err);
+            }
+        }
+    }
+
     private async sendTextSplitting(chatId: string, text: string) {
         const MAX_LENGTH = 4090; // Leave room for markdown safety
         if (text.length <= MAX_LENGTH) {

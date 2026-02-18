@@ -53,6 +53,39 @@ export default async function projectRoutes(fastify: FastifyInstance) {
         return project;
     });
 
+
+
+    // Update project settings
+    fastify.post('/api/projects/:id/settings', async (request, reply) => {
+        const user = (request as any).user;
+        const { id } = request.params as any;
+        const { key, value } = request.body as any;
+        const projectId = parseInt(id);
+
+        const hasAccess = await authService.hasProjectAccess(user.id, projectId, 'editor');
+        if (!hasAccess) {
+            reply.code(403).send({ error: 'No access' });
+            return;
+        }
+
+        const setting = await prisma.projectSettings.upsert({
+            where: {
+                project_id_key: {
+                    project_id: projectId,
+                    key: key
+                }
+            },
+            update: { value },
+            create: {
+                project_id: projectId,
+                key,
+                value
+            }
+        });
+
+        return setting;
+    });
+
     // Get project details
     fastify.get('/api/projects/:id', async (request, reply) => {
         const user = (request as any).user;
@@ -69,6 +102,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
             where: { id: projectId },
             include: {
                 channels: true,
+                settings: true,
                 _count: { select: { weeks: true } }, // Removed members count as we fetch list
                 members: {
                     include: { user: { select: { id: true, name: true, email: true } } }

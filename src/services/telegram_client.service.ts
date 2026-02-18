@@ -74,7 +74,7 @@ export class TelegramClientService {
      * Publish a post to a channel/chat
      * @param target which could be a username, phone number, or chat ID
      */
-    async publishPost(projectId: number, target: string | number, text: string, imageUrl?: string | null) {
+    async publishPost(projectId: number, target: string | number, text: string, imageUrl?: string | null, scheduleDate?: Date) {
         const client = await this.getClient(projectId);
         if (!client) {
             throw new Error("Telegram Client not initialized or no account found.");
@@ -131,24 +131,39 @@ export class TelegramClientService {
                     }
                 }
 
+                let scheduleTime: number | undefined;
+                if (scheduleDate) {
+                    scheduleTime = Math.floor(scheduleDate.getTime() / 1000);
+                }
+
                 if (!fileSource) {
                     // Fallback to text only if image fails? Or Error?
                     console.warn(`[TelegramClient] Image source invalid: ${imageUrl}. Sending text only.`);
-                    result = await client.sendMessage(entity, { message: text });
+                    result = await client.sendMessage(entity, {
+                        message: text,
+                        schedule: scheduleTime
+                    });
                 } else {
                     // Send message with media
                     result = await client.sendMessage(entity, {
                         message: text,
                         file: fileSource,
-                        parseMode: "markdown", // check capitalization for gramjs
+                        parseMode: "markdown",
+                        schedule: scheduleTime
                     });
                 }
 
             } else {
                 // Text only
+                let scheduleTime: number | undefined;
+                if (scheduleDate) {
+                    scheduleTime = Math.floor(scheduleDate.getTime() / 1000);
+                }
+
                 result = await client.sendMessage(entity, {
                     message: text,
                     parseMode: "markdown",
+                    schedule: scheduleTime
                 });
             }
 

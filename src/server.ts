@@ -100,6 +100,7 @@ const start = async () => {
         setInterval(async () => {
             try {
                 const count = await publisherService.publishDuePosts();
+                await publisherService.scheduleNativePosts();
                 if (count > 0) {
                     console.log(`[Scheduler] Published ${count} posts.`);
                 }
