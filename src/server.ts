@@ -44,7 +44,16 @@ server.register(require('@fastify/cors'), {
     origin: true
 });
 server.register(require('@fastify/formbody'));
-server.register(require('@fastify/multipart'));
+server.register(require('@fastify/multipart'), {
+    limits: {
+        fieldNameSize: 100, // Max field name size in bytes
+        fieldSize: 100,     // Max field value size in bytes
+        fields: 10,         // Max number of non-file fields
+        fileSize: 15 * 1024 * 1024, // 15MB
+        files: 1,           // Max number of file fields
+        headerPairs: 2000   // Max number of header key=>value pairs
+    }
+});
 server.register(require('@fastify/static'), {
     root: path.join(__dirname, '../frontend/dist'),
     prefix: '/',
