@@ -126,15 +126,21 @@ export default function PostEditor() {
     useEffect(() => {
         const handlePaste = (e: ClipboardEvent) => {
             const items = e.clipboardData?.items;
+            console.log('[PostEditor] Paste event detected', { items: items?.length });
+
             if (!items) return;
 
             for (const item of items) {
+                console.log('[PostEditor] Item type:', item.type);
                 if (item.type.indexOf('image') !== -1) {
                     const file = item.getAsFile();
                     if (file) {
+                        console.log('[PostEditor] Image found in clipboard', file.name, file.type, file.size);
+                        // Prevent default paste (e.g. into textarea)
+                        e.preventDefault();
                         uploadImage.mutate(file);
+                        return; // Stop after first image
                     }
-                    break;
                 }
             }
         };

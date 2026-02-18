@@ -129,17 +129,131 @@ Start directly with the post content.`;
 Верни ТОЛЬКО JSON с объектом { "topics": [...] }.
 Никакого текста вне JSON.`;
 
+    // Keys for Image Agent Chain
+    public readonly KEY_VISUAL_ARCHITECT_PROMPT = 'visual_architect_prompt';
+    public readonly KEY_VISUAL_ARCHITECT_KEY = 'visual_architect_key';
+    public readonly KEY_VISUAL_ARCHITECT_MODEL = 'visual_architect_model';
+
+    public readonly KEY_STRUCTURAL_CRITIC_PROMPT = 'structural_critic_prompt';
+    public readonly KEY_STRUCTURAL_CRITIC_KEY = 'structural_critic_key';
+    public readonly KEY_STRUCTURAL_CRITIC_MODEL = 'structural_critic_model';
+
+    public readonly KEY_PRECISION_FIXER_PROMPT = 'precision_fixer_prompt';
+    public readonly KEY_PRECISION_FIXER_KEY = 'precision_fixer_key';
+    public readonly KEY_PRECISION_FIXER_MODEL = 'precision_fixer_model';
+
+    // Default Prompts for Image Chain
+    public readonly DEFAULT_VISUAL_ARCHITECT_PROMPT = "You are a Visual Architect. Your goal is to analyze the text, identify the core architectural conflict, select a single metaphor, and propose a rough scene. You MUST NOT generate the final prompt. Output ONLY a JSON object with keys: 'conflict', 'metaphor', 'scene_concept'.";
+    public readonly DEFAULT_STRUCTURAL_CRITIC_PROMPT = "You are a Structural Critic. Analyze the provided scene concept. Check for: 1) Dominant conflict, 2) Causal link, 3) Abstraction level (should not be too abstract), 4) Dynamics. valid categories: Opinion, Education, Critique. Output ONLY a JSON object with keys: 'critique', 'weaknesses' (array of strings), 'score' (1-10).";
+    public readonly DEFAULT_PRECISION_FIXER_PROMPT = "You are a Precision Fixer. Take the original concept and the critic's feedback. Rewrite the scene to: 1) Remove abstraction, 2) Strengthen conflict, 3) Improve readability, 4) Add engineering details. Output ONLY the raw final image prompt for DALL-E/Midjourney. Do not add markdown or labels.";
+
     constructor() {
         if (process.env.OPENAI_API_KEY) {
             this.openai = new OpenAI({
                 apiKey: process.env.OPENAI_API_KEY,
             });
         }
-
         const connectionString = process.env.DATABASE_URL;
         const pool = new Pool({ connectionString });
         const adapter = new PrismaPg(pool);
         this.prisma = new PrismaClient({ adapter });
+    }
+
+    private async logRun(projectId: number, type: string, agentRole: string | null, status: 'success' | 'failed', input: string | null, prompt: string | null, output: string | null, error: string | null) {
+        try {
+            await this.prisma.agentRun.create({
+                data: {
+                    project: { connect: { id: projectId } },
+                    type,
+                    agent_role: agentRole,
+                    status,
+                    input: input ? input.substring(0, 5000) : null,
+                    prompt: prompt ? prompt.substring(0, 5000) : null,
+                    output: output ? output.substring(0, 5000) : null,
+                    error: error ? error.substring(0, 5000) : null
+                }
+            });
+        } catch (e) {
+            console.error('Failed to log agent run', e);
+        }
+    }
+
+    // ... existing methods (need to be updated to use logRun) ...
+    // I will update them one by one or in blocks to avoid huge replacement
+
+    public async runImagePromptingChain(projectId: number, postText: string, topic: string): Promise<string> {
+        console.log(`[MultiAgent] Starting Image Chain for project ${projectId}`);
+
+        // 1. Visual Architect
+        const architectPrompt = await this.getPrompt(projectId, this.KEY_VISUAL_ARCHITECT_PROMPT, this.DEFAULT_VISUAL_ARCHITECT_PROMPT);
+        const architectConfig = await this.getAgentConfig(projectId, 'visual_architect'); // Use getAgentConfig for model and key
+
+        const architectInput = `Topic: ${topic}\n\nContent:\n${postText.substring(0, 2000)}`;
+        let architectOutput = '';
+
+        try {
+            const completion = await this.openai!.chat.completions.create({
+                model: architectConfig.model, // Use model from config
+                messages: [
+                    { role: 'system', content: architectPrompt },
+                    { role: 'user', content: architectInput }
+                ],
+                temperature: 0.7
+            });
+            architectOutput = completion.choices[0].message.content || '';
+            await this.logRun(projectId, 'image_chain', 'visual_architect', 'success', architectInput, architectPrompt, architectOutput, null);
+        } catch (e: any) {
+            await this.logRun(projectId, 'image_chain', 'visual_architect', 'failed', architectInput, architectPrompt, null, e.message);
+            throw e;
+        }
+
+        // 2. Structural Critic
+        const criticPrompt = await this.getPrompt(projectId, this.KEY_STRUCTURAL_CRITIC_PROMPT, this.DEFAULT_STRUCTURAL_CRITIC_PROMPT);
+        const criticConfig = await this.getAgentConfig(projectId, 'structural_critic'); // Use getAgentConfig for model and key
+
+        const criticInput = `Architect Output:\n${architectOutput}`;
+        let criticOutput = '';
+
+        try {
+            const completion = await this.openai!.chat.completions.create({
+                model: criticConfig.model, // Use model from config
+                messages: [
+                    { role: 'system', content: criticPrompt },
+                    { role: 'user', content: criticInput }
+                ],
+                temperature: 0.7
+            });
+            criticOutput = completion.choices[0].message.content || '';
+            await this.logRun(projectId, 'image_chain', 'structural_critic', 'success', criticInput, criticPrompt, criticOutput, null);
+        } catch (e: any) {
+            await this.logRun(projectId, 'image_chain', 'structural_critic', 'failed', criticInput, criticPrompt, null, e.message);
+            throw e; // Or continue with warning? For now throw.
+        }
+
+        // 3. Precision Fixer
+        const fixerPrompt = await this.getPrompt(projectId, this.KEY_PRECISION_FIXER_PROMPT, this.DEFAULT_PRECISION_FIXER_PROMPT);
+        const fixerConfig = await this.getAgentConfig(projectId, 'precision_fixer'); // Use getAgentConfig for model and key
+
+        const fixerInput = `Original Concept:\n${architectOutput}\n\nCritic Feedback:\n${criticOutput}`;
+        let fixerOutput = '';
+
+        try {
+            const completion = await this.openai!.chat.completions.create({
+                model: fixerConfig.model, // Use model from config
+                messages: [
+                    { role: 'system', content: fixerPrompt },
+                    { role: 'user', content: fixerInput }
+                ],
+                temperature: 0.7
+            });
+            fixerOutput = completion.choices[0].message.content || '';
+            await this.logRun(projectId, 'image_chain', 'precision_fixer', 'success', fixerInput, fixerPrompt, fixerOutput, null);
+        } catch (e: any) {
+            await this.logRun(projectId, 'image_chain', 'precision_fixer', 'failed', fixerInput, fixerPrompt, null, e.message);
+            throw e;
+        }
+
+        return fixerOutput;
     }
 
 
@@ -202,6 +316,21 @@ Start directly with the post content.`;
             modelKey = this.KEY_TOPIC_FIXER_MODEL;
             promptKey = this.KEY_TOPIC_FIXER_PROMPT;
             defaultPrompt = this.DEFAULT_TOPIC_FIXER_PROMPT;
+        } else if (rolePrefix === 'visual_architect') {
+            apiKeyKey = this.KEY_VISUAL_ARCHITECT_KEY;
+            modelKey = this.KEY_VISUAL_ARCHITECT_MODEL;
+            promptKey = this.KEY_VISUAL_ARCHITECT_PROMPT;
+            defaultPrompt = this.DEFAULT_VISUAL_ARCHITECT_PROMPT;
+        } else if (rolePrefix === 'structural_critic') {
+            apiKeyKey = this.KEY_STRUCTURAL_CRITIC_KEY;
+            modelKey = this.KEY_STRUCTURAL_CRITIC_MODEL;
+            promptKey = this.KEY_STRUCTURAL_CRITIC_PROMPT;
+            defaultPrompt = this.DEFAULT_STRUCTURAL_CRITIC_PROMPT;
+        } else if (rolePrefix === 'precision_fixer') {
+            apiKeyKey = this.KEY_PRECISION_FIXER_KEY;
+            modelKey = this.KEY_PRECISION_FIXER_MODEL;
+            promptKey = this.KEY_PRECISION_FIXER_PROMPT;
+            defaultPrompt = this.DEFAULT_PRECISION_FIXER_PROMPT;
         }
 
         let apiKey = await this.getPrompt(projectId, apiKeyKey, '');
@@ -269,7 +398,12 @@ Start directly with the post content.`;
         let runLogId = 0;
         try {
             const runLog = await this.prisma.agentRun.create({
-                data: { topic: `POST: ${topic}` }
+                data: {
+                    project: { connect: { id: projectId } },
+                    type: 'post_gen_loop',
+                    status: 'running',
+                    input: `Topic: ${topic}`
+                }
             });
             runLogId = runLog.id;
         } catch (e) { console.error('Failed to create run log', e); }
@@ -643,7 +777,12 @@ Start directly with the post content.`;
         try {
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Creating Run Log...\n`);
             const runLog = await this.prisma.agentRun.create({
-                data: { topic: `TOPICS: ${theme}` }
+                data: {
+                    project: { connect: { id: projectId } },
+                    type: 'topic_gen_loop',
+                    status: 'running',
+                    input: `Theme: ${theme}`
+                }
             });
             runLogId = runLog.id;
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Run Log Created: ${runLogId}\n`);

@@ -24,7 +24,7 @@
     "@fastify/static": "^9.0.0",
     "@google/generative-ai": "^0.24.1",
     "@prisma/adapter-pg": "^7.2.0",
-    "@prisma/client": "^7.2.0",
+    "@prisma/client": "^7.4.0",
     "@supabase/supabase-js": "^2.95.3",
     "@types/bcrypt": "^6.0.0",
     "@types/jsonwebtoken": "^9.0.10",

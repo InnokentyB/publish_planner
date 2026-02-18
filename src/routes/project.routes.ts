@@ -225,7 +225,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
             email: invitation.email,
             role: invitation.role,
             project_name: invitation.project.name,
-            inviter_name: invitation.creator.name
+            inviter_name: invitation.creator?.name || 'Unknown'
         };
     });
 

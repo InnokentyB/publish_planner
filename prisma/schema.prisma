@@ -42,6 +42,7 @@ model Project {
   posts    Post[]
   settings ProjectSettings[]
   invitations ProjectInvitation[]
+  runs        AgentRun[]
 
   @@map("projects")
   
@@ -67,16 +68,16 @@ model ProjectMember {
 
 model ProjectInvitation {
   id         Int      @id @default(autoincrement())
-  project_id Int
-  email      String
-  role       String   @default("viewer")
   token      String   @unique
-  expires_at DateTime
-  created_at DateTime @default(now())
-  created_by Int
-
+  email      String?
+  project_id Int
   project    Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
-  creator    User     @relation(fields: [created_by], references: [id], onDelete: Cascade)
+  role       String   @default("viewer") // viewer, editor, owner
+  created_at DateTime @default(now())
+  expires_at DateTime
+  created_by Int? // Make created_by optional for now, will be added back if needed
+
+  creator    User?     @relation(fields: [created_by], references: [id], onDelete: SetNull)
 
   @@map("project_invitations")
   @@index([email])
@@ -188,17 +189,31 @@ model Event {
 }
 
 model AgentRun {
-  id               Int      @id @default(autoincrement())
-  topic            String
+  id        Int      @id @default(autoincrement())
+  project_id Int
+  project   Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  type      String   // 'week_plan', 'post_write', 'image_gen', 'image_chain', etc.
+  agent_role String? // 'visual_architect', 'post_creator', 'critic', etc.
+  status    String   // 'success', 'failed'
+  input     String?
+  prompt    String?
+  output    String?
+  error     String?
+  created_at DateTime @default(now())
+
+  // Legacy fields (optional to match old schema if needed, or removed)
+  // topic            String // Removed/Mapped to input
   final_score      Int      @default(0)
   total_iterations Int      @default(0)
-  created_at       DateTime @default(now())
 
-  iterations AgentIteration[]
+  iterations AgentIteration[] // Relation 
 
   @@map("agent_runs")
+  @@index([project_id])
+  @@index([type])
 }
 
+// Keeping AgentIteration for now but might be unused if we log everything in AgentRun or separate table
 model AgentIteration {
   id               Int      @id @default(autoincrement())
   run_id           Int

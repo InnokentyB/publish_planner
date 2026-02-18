@@ -119,7 +119,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             if (week.status === 'topics_generated') {
                 console.log('Week status is topics_generated, looking for run...');
                 const run = await prisma.agentRun.findFirst({
-                    where: { topic: `TOPICS: ${week.theme}` },
+                    where: { input: `Theme: ${week.theme}` },
                     orderBy: { created_at: 'desc' },
                     include: { iterations: true }
                 });
@@ -355,9 +355,9 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             const textToUse = post.final_text || post.generated_text || post.topic || '';
             const fs = require('fs');
 
-            // 1. Generate Prompt
-            console.log('[Generate Image] Generating prompt...');
-            const imagePrompt = await generatorService.generateImagePrompt(post.project_id, post.topic || 'Tech Post', textToUse, provider || 'dalle');
+            // 1. Generate Prompt (Multi-Agent Chain)
+            console.log('[Generate Image] Generating prompt via Multi-Agent Chain...');
+            const imagePrompt = await multiAgentService.runImagePromptingChain(post.project_id, textToUse, post.topic || 'Tech Post');
             console.log(`[Generate Image] Generated prompt: ${imagePrompt.substring(0, 100)}...`);
 
             // 2. Generate Image
@@ -534,7 +534,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             const projectId = (request as any).projectId;
             if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
 
-            const roles = ['post_creator', 'post_critic', 'post_fixer', 'topic_creator', 'topic_critic', 'topic_fixer'];
+            const roles = ['post_creator', 'post_critic', 'post_fixer', 'topic_creator', 'topic_critic', 'topic_fixer', 'visual_architect', 'structural_critic', 'precision_fixer'];
             const agents = [];
 
             // Text Agents
@@ -624,39 +624,85 @@ export default async function apiRoutes(fastify: FastifyInstance) {
 
         // Handle Text Agents
         const roleMap: any = {
-            'post_creator': { prompt: 'multi_agent_post_creator_prompt', key: 'multi_agent_post_creator_key', model: 'multi_agent_post_creator_model' },
-            'post_critic': { prompt: 'multi_agent_post_critic_prompt', key: 'multi_agent_post_critic_key', model: 'multi_agent_post_critic_model' },
-            'post_fixer': { prompt: 'multi_agent_post_fixer_prompt', key: 'multi_agent_post_fixer_key', model: 'multi_agent_post_fixer_model' },
-            'topic_creator': { prompt: 'multi_agent_topic_creator', key: 'multi_agent_topic_creator_key', model: 'multi_agent_topic_creator_model' },
-            'topic_critic': { prompt: 'multi_agent_topic_critic', key: 'multi_agent_topic_critic_key', model: 'multi_agent_topic_critic_model' },
-            'topic_fixer': { prompt: 'multi_agent_topic_fixer', key: 'multi_agent_topic_fixer_key', model: 'multi_agent_topic_fixer_model' }
+            'post_creator': {
+                prompt: multiAgentService.KEY_POST_CREATOR_PROMPT,
+                key: multiAgentService.KEY_POST_CREATOR_KEY,
+                model: multiAgentService.KEY_POST_CREATOR_MODEL
+            },
+            'post_critic': {
+                prompt: multiAgentService.KEY_POST_CRITIC_PROMPT,
+                key: multiAgentService.KEY_POST_CRITIC_KEY,
+                model: multiAgentService.KEY_POST_CRITIC_MODEL
+            },
+            'post_fixer': {
+                prompt: multiAgentService.KEY_POST_FIXER_PROMPT,
+                key: multiAgentService.KEY_POST_FIXER_KEY,
+                model: multiAgentService.KEY_POST_FIXER_MODEL
+            },
+            'topic_creator': {
+                prompt: multiAgentService.KEY_TOPIC_CREATOR_PROMPT,
+                key: multiAgentService.KEY_TOPIC_CREATOR_KEY,
+                model: multiAgentService.KEY_TOPIC_CREATOR_MODEL
+            },
+            'topic_critic': {
+                prompt: multiAgentService.KEY_TOPIC_CRITIC_PROMPT,
+                key: multiAgentService.KEY_TOPIC_CRITIC_KEY,
+                model: multiAgentService.KEY_TOPIC_CRITIC_MODEL
+            },
+            'topic_fixer': {
+                prompt: multiAgentService.KEY_TOPIC_FIXER_PROMPT,
+                key: multiAgentService.KEY_TOPIC_FIXER_KEY,
+                model: multiAgentService.KEY_TOPIC_FIXER_MODEL
+            },
+            'visual_architect': {
+                prompt: multiAgentService.KEY_VISUAL_ARCHITECT_PROMPT,
+                key: multiAgentService.KEY_VISUAL_ARCHITECT_KEY,
+                model: multiAgentService.KEY_VISUAL_ARCHITECT_MODEL
+            },
+            'structural_critic': {
+                prompt: multiAgentService.KEY_STRUCTURAL_CRITIC_PROMPT,
+                key: multiAgentService.KEY_STRUCTURAL_CRITIC_KEY,
+                model: multiAgentService.KEY_STRUCTURAL_CRITIC_MODEL
+            },
+            'precision_fixer': {
+                prompt: multiAgentService.KEY_PRECISION_FIXER_PROMPT,
+                key: multiAgentService.KEY_PRECISION_FIXER_KEY,
+                model: multiAgentService.KEY_PRECISION_FIXER_MODEL
+            }
         };
 
         const keys = roleMap[role];
         if (!keys) {
-            reply.code(400).send({ error: 'Invalid role' });
-            return;
+            return reply.code(400).send({ error: 'Invalid role' });
         }
 
-        await prisma.projectSettings.upsert({
-            where: { project_id_key: { project_id: projectId, key: keys.prompt } },
-            update: { value: prompt },
-            create: { project_id: projectId, key: keys.prompt, value: prompt }
-        });
+        try {
+            // Helper to safe update
+            const saveSetting = async (key: string, value: string) => {
+                const existing = await prisma.projectSettings.findUnique({
+                    where: { project_id_key: { project_id: projectId, key } }
+                });
+                if (existing) {
+                    await prisma.projectSettings.update({
+                        where: { id: existing.id },
+                        data: { value }
+                    });
+                } else {
+                    await prisma.projectSettings.create({
+                        data: { project_id: projectId, key, value }
+                    });
+                }
+            };
 
-        await prisma.projectSettings.upsert({
-            where: { project_id_key: { project_id: projectId, key: keys.key } },
-            update: { value: apiKey },
-            create: { project_id: projectId, key: keys.key, value: apiKey || '' }
-        });
+            await saveSetting(keys.prompt, prompt);
+            await saveSetting(keys.key, apiKey || '');
+            await saveSetting(keys.model, model);
 
-        await prisma.projectSettings.upsert({
-            where: { project_id_key: { project_id: projectId, key: keys.model } },
-            update: { value: model },
-            create: { project_id: projectId, key: keys.model, value: model }
-        });
-
-        return { success: true };
+            return { success: true };
+        } catch (e: any) {
+            console.error(`Failed to save settings for ${role}`, e);
+            return reply.code(500).send({ error: 'Failed to save settings', details: e.message });
+        }
     });
 
     fastify.get('/api/settings/runs', async (request, reply) => {

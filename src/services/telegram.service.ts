@@ -611,8 +611,8 @@ class TelegramService {
                 throw new Error('GOOGLE_API_KEY is not configured for Nano Banana.');
             }
 
-            const prompt = await generatorService.generateImagePrompt(projectId, post.topic, post.generated_text, provider);
-            console.log(`Image Prompt for ${postId} (${provider}):`, prompt);
+            const prompt = await multiAgentService.runImagePromptingChain(projectId, post.generated_text, post.topic);
+            console.log(`Image Prompt for ${postId} (${provider}) via Chain:`, prompt);
 
             // Show prompt to user
             await ctx.reply(`📝 **Генерация промпта (${providerName}):**\n\n\`${prompt}\`\n\n⏳ Начинаю рисовать...`, { parse_mode: 'Markdown' });
