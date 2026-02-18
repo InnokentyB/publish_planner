@@ -415,7 +415,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             return { success: true, imageUrl };
         } catch (error: any) {
             request.log.error(error);
-            return reply.code(500).send({ error: 'Upload failed' });
+            return reply.code(500).send({ error: 'Upload failed', details: error.message || error });
         }
     });
 

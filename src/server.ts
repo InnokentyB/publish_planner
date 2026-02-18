@@ -78,6 +78,10 @@ const start = async () => {
         // Initialize Telegram Bot
         await telegramService.launch();
 
+        // Initialize Storage
+        const storageService = require('./services/storage.service').default;
+        await storageService.ensureBucketExists();
+
         const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3003;
         await server.listen({ port: PORT, host: '0.0.0.0' });
         console.log(`Server is running on port ${PORT}`);
