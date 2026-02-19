@@ -106,7 +106,11 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             const { id } = request.params as { id: string };
             const week = await prisma.week.findUnique({
                 where: { id: parseInt(id) },
-                include: { posts: true }
+                include: {
+                    posts: {
+                        orderBy: { publish_at: 'asc' }
+                    }
+                }
             });
 
             if (!week) {
