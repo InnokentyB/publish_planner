@@ -337,6 +337,29 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         return { success: true, message: 'Generation started' };
     });
 
+    fastify.post('/api/weeks/:id/generate-sequential', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        const { id } = request.params as { id: string };
+
+        const week = await prisma.week.findUnique({
+            where: { id: parseInt(id) }
+        });
+
+        if (!week) return reply.code(404).send({ error: 'Week not found' });
+
+        // Trigger background generation
+        (async () => {
+            const writer = require('../services/sequential_writer.service').default;
+            try {
+                await writer.generateWeekPosts(projectId, week.id);
+            } catch (e) {
+                console.error('Sequential generation failed', e);
+            }
+        })();
+
+        return { success: true, message: 'Sequential generation started' };
+    });
+
     fastify.post('/api/posts/:id/generate-image', async (request, reply) => {
         const projectId = (request as any).projectId;
         const { id } = request.params as { id: string };
@@ -712,7 +735,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         });
 
         return runs;
-        return runs;
+
     });
 
     // Agents Presets

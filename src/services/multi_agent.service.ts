@@ -5,6 +5,7 @@ import { config } from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
+import prisma from '../db';
 import commentService from './comment.service';
 
 config();
@@ -147,16 +148,146 @@ Start directly with the post content.`;
     public readonly DEFAULT_STRUCTURAL_CRITIC_PROMPT = "You are a Structural Critic. Analyze the provided scene concept. Check for: 1) Dominant conflict, 2) Causal link, 3) Abstraction level (should not be too abstract), 4) Dynamics. valid categories: Opinion, Education, Critique. Output ONLY a JSON object with keys: 'critique', 'weaknesses' (array of strings), 'score' (1-10).";
     public readonly DEFAULT_PRECISION_FIXER_PROMPT = "You are a Precision Fixer. Take the original concept and the critic's feedback. Rewrite the scene to: 1) Remove abstraction, 2) Strengthen conflict, 3) Improve readability, 4) Add engineering details. Output ONLY the raw final image prompt for DALL-E/Midjourney. Do not add markdown or labels.";
 
+    // Keys for Sequential Generation Agents (Week Memory)
+    public readonly KEY_SEQ_WRITER_PROMPT = 'multi_agent_seq_writer_prompt';
+    public readonly KEY_SEQ_WRITER_KEY = 'multi_agent_seq_writer_key';
+    public readonly KEY_SEQ_WRITER_MODEL = 'multi_agent_seq_writer_model';
+
+    public readonly KEY_SEQ_CRITIC_PROMPT = 'multi_agent_seq_critic_prompt';
+    public readonly KEY_SEQ_CRITIC_KEY = 'multi_agent_seq_critic_key';
+    public readonly KEY_SEQ_CRITIC_MODEL = 'multi_agent_seq_critic_model';
+
+    public readonly KEY_SEQ_FIXER_PROMPT = 'multi_agent_seq_fixer_prompt';
+    public readonly KEY_SEQ_FIXER_KEY = 'multi_agent_seq_fixer_key';
+    public readonly KEY_SEQ_FIXER_MODEL = 'multi_agent_seq_fixer_model';
+
+    // Default Sequential Prompts
+    private readonly DEFAULT_SEQ_WRITER_PROMPT = `You are a professional Content Writer based on context and memory.
+Your goal is to write a Telegram post that fits into a weekly narrative.
+
+Input Constraint:
+- You receive the week's theme, specific topic, and "Week Memory" (what has been covered).
+- You MUST NOT repeat "banned takeaways".
+- You MUST try to use a different "angle" and "tool" than recently used.
+
+Output JSON Format (Strict):
+{
+  "title": "...",
+  "text": "...",
+  "core_takeaway": "...",
+  "key_points": ["...", "..."],
+  "tool_used": "...",
+  "angle": "...",
+  "cta_question": "...",
+  "hashtags": ["..."]
+}
+
+Definitions:
+- core_takeaway: 1 sentence summary of the main value.
+- tool_used: checklist / 3 questions / framework / case study / personal story / rant.
+- angle: contrarian / analytical / emotional / educational.
+
+Language: Russian (text), English (keys in JSON).`;
+
+    private readonly DEFAULT_SEQ_CRITIC_PROMPT = `You are a strict Content Critic.
+Review the provided post against the "Week Memory".
+
+Criteria:
+1. Is the "core_takeaway" unique? (Check banned_takeaways).
+2. Is the content high value, no fluff?
+3. Is the "tool_used" different from immediately previous posts?
+4. Is the tone professional yet engaging?
+
+Output JSON Format:
+{
+  "score": 0-100,
+  "critique": "Specific feedback in Russian..."
+}`;
+
+    private readonly DEFAULT_SEQ_FIXER_PROMPT = `You are a Content Editor (Fixer).
+Rewrite the post based on the critique. 
+Maintain the JSON structure.
+Ensure "core_takeaway" is distinct.
+
+Output JSON Format (Strict):
+{
+  "title": "...",
+  "text": "...",
+  "core_takeaway": "...",
+  "key_points": ["...", "..."],
+  "tool_used": "...",
+  "angle": "...",
+  "cta_question": "...",
+  "hashtags": ["..."]
+}`;
+
+    /**
+     * Run Sequential Writer
+     */
+    async runSequentialWriter(projectId: number, context: any): Promise<any> {
+        return this.runJsonAgent(projectId, 'seq_writer', this.KEY_SEQ_WRITER_PROMPT, this.DEFAULT_SEQ_WRITER_PROMPT, JSON.stringify(context));
+    }
+
+    /**
+     * Run Content Critic
+     */
+    async runContentCritic(projectId: number, context: any): Promise<{ score: number, critique: string }> {
+        const result = await this.runJsonAgent(projectId, 'seq_critic', this.KEY_SEQ_CRITIC_PROMPT, this.DEFAULT_SEQ_CRITIC_PROMPT, JSON.stringify(context));
+        return {
+            score: result?.score || 0,
+            critique: result?.critique || "Parsing error"
+        };
+    }
+
+    /**
+     * Run Content Fixer
+     */
+    async runContentFixer(projectId: number, context: any): Promise<any> {
+        return this.runJsonAgent(projectId, 'seq_fixer', this.KEY_SEQ_FIXER_PROMPT, this.DEFAULT_SEQ_FIXER_PROMPT, JSON.stringify(context));
+    }
+
+    /**
+     * Generic JSON Agent Runner
+     */
+    private async runJsonAgent(projectId: number, role: string, promptKey: string, defaultPrompt: string, input: string): Promise<any> {
+        const config = await this.getAgentConfig(projectId, role as any); // cast for now
+        const systemPrompt = config.prompt || defaultPrompt;
+
+        let responseText = '';
+
+        if (!this.openai) throw new Error("OpenAI not initialized");
+
+        try {
+            const completion = await this.openai.chat.completions.create({
+                model: config.model || 'gpt-4o',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: input }
+                ],
+                response_format: { type: 'json_object' }
+            });
+
+            responseText = completion.choices[0].message.content || '{}';
+
+            // Log run
+            await this.logRun(projectId, 'seq_gen', role, 'success', input, systemPrompt, responseText, null);
+
+            return JSON.parse(responseText);
+
+        } catch (error: any) {
+            console.error(`[MultiAgent] ${role} failed:`, error);
+            await this.logRun(projectId, 'seq_gen', role, 'failed', input, systemPrompt, '', error.message);
+            return null;
+        }
+    }
+
     constructor() {
         if (process.env.OPENAI_API_KEY) {
             this.openai = new OpenAI({
                 apiKey: process.env.OPENAI_API_KEY,
             });
         }
-        const connectionString = process.env.DATABASE_URL;
-        const pool = new Pool({ connectionString });
-        const adapter = new PrismaPg(pool);
-        this.prisma = new PrismaClient({ adapter });
+        this.prisma = prisma;
     }
 
     private async logRun(projectId: number, type: string, agentRole: string | null, status: 'success' | 'failed', input: string | null, prompt: string | null, output: string | null, error: string | null) {
@@ -182,80 +313,9 @@ Start directly with the post content.`;
     // I will update them one by one or in blocks to avoid huge replacement
 
     public async runImagePromptingChain(projectId: number, postText: string, topic: string): Promise<string> {
-        console.log(`[MultiAgent] Starting Image Chain for project ${projectId}`);
-
-        // 1. Visual Architect
-        const architectPrompt = await this.getPrompt(projectId, this.KEY_VISUAL_ARCHITECT_PROMPT, this.DEFAULT_VISUAL_ARCHITECT_PROMPT);
-        const architectConfig = await this.getAgentConfig(projectId, 'visual_architect'); // Use getAgentConfig for model and key
-
-        const architectInput = `Topic: ${topic}\n\nContent:\n${postText.substring(0, 2000)}`;
-        let architectOutput = '';
-
-        try {
-            const completion = await this.openai!.chat.completions.create({
-                model: architectConfig.model, // Use model from config
-                messages: [
-                    { role: 'system', content: architectPrompt },
-                    { role: 'user', content: architectInput }
-                ],
-                temperature: 0.7
-            });
-            architectOutput = completion.choices[0].message.content || '';
-            await this.logRun(projectId, 'image_chain', 'visual_architect', 'success', architectInput, architectPrompt, architectOutput, null);
-        } catch (e: any) {
-            await this.logRun(projectId, 'image_chain', 'visual_architect', 'failed', architectInput, architectPrompt, null, e.message);
-            throw e;
-        }
-
-        // 2. Structural Critic
-        const criticPrompt = await this.getPrompt(projectId, this.KEY_STRUCTURAL_CRITIC_PROMPT, this.DEFAULT_STRUCTURAL_CRITIC_PROMPT);
-        const criticConfig = await this.getAgentConfig(projectId, 'structural_critic'); // Use getAgentConfig for model and key
-
-        const criticInput = `Architect Output:\n${architectOutput}`;
-        let criticOutput = '';
-
-        try {
-            const completion = await this.openai!.chat.completions.create({
-                model: criticConfig.model, // Use model from config
-                messages: [
-                    { role: 'system', content: criticPrompt },
-                    { role: 'user', content: criticInput }
-                ],
-                temperature: 0.7
-            });
-            criticOutput = completion.choices[0].message.content || '';
-            await this.logRun(projectId, 'image_chain', 'structural_critic', 'success', criticInput, criticPrompt, criticOutput, null);
-        } catch (e: any) {
-            await this.logRun(projectId, 'image_chain', 'structural_critic', 'failed', criticInput, criticPrompt, null, e.message);
-            throw e; // Or continue with warning? For now throw.
-        }
-
-        // 3. Precision Fixer
-        const fixerPrompt = await this.getPrompt(projectId, this.KEY_PRECISION_FIXER_PROMPT, this.DEFAULT_PRECISION_FIXER_PROMPT);
-        const fixerConfig = await this.getAgentConfig(projectId, 'precision_fixer'); // Use getAgentConfig for model and key
-
-        const fixerInput = `Original Concept:\n${architectOutput}\n\nCritic Feedback:\n${criticOutput}`;
-        let fixerOutput = '';
-
-        try {
-            const completion = await this.openai!.chat.completions.create({
-                model: fixerConfig.model, // Use model from config
-                messages: [
-                    { role: 'system', content: fixerPrompt },
-                    { role: 'user', content: fixerInput }
-                ],
-                temperature: 0.7
-            });
-            fixerOutput = completion.choices[0].message.content || '';
-            await this.logRun(projectId, 'image_chain', 'precision_fixer', 'success', fixerInput, fixerPrompt, fixerOutput, null);
-        } catch (e: any) {
-            await this.logRun(projectId, 'image_chain', 'precision_fixer', 'failed', fixerInput, fixerPrompt, null, e.message);
-            throw e;
-        }
-
-        return fixerOutput;
+        console.log(`[MultiAgent] Stubbed Image Chain for project ${projectId}`);
+        return "";
     }
-
 
     private async getPrompt(projectId: number, key: string, defaultVal: string): Promise<string> {
         try {
@@ -275,7 +335,7 @@ Start directly with the post content.`;
             });
             return defaultVal;
         } catch (e) {
-            console.error(`Failed to fetch prompt for ${key} in project ${projectId}`, e);
+            console.error(`Failed to fetch prompt for ${key} in project ${projectId} `, e);
             return defaultVal;
         }
     }
@@ -331,6 +391,21 @@ Start directly with the post content.`;
             modelKey = this.KEY_PRECISION_FIXER_MODEL;
             promptKey = this.KEY_PRECISION_FIXER_PROMPT;
             defaultPrompt = this.DEFAULT_PRECISION_FIXER_PROMPT;
+        } else if (rolePrefix === 'seq_writer') {
+            apiKeyKey = ''; // No specific key for now, use default
+            modelKey = '';
+            promptKey = this.KEY_SEQ_WRITER_PROMPT;
+            defaultPrompt = this.DEFAULT_SEQ_WRITER_PROMPT;
+        } else if (rolePrefix === 'seq_critic') {
+            apiKeyKey = '';
+            modelKey = '';
+            promptKey = this.KEY_SEQ_CRITIC_PROMPT;
+            defaultPrompt = this.DEFAULT_SEQ_CRITIC_PROMPT;
+        } else if (rolePrefix === 'seq_fixer') {
+            apiKeyKey = '';
+            modelKey = '';
+            promptKey = this.KEY_SEQ_FIXER_PROMPT;
+            defaultPrompt = this.DEFAULT_SEQ_FIXER_PROMPT;
         }
 
         let apiKey = await this.getPrompt(projectId, apiKeyKey, '');
@@ -363,7 +438,7 @@ Start directly with the post content.`;
     // --- Post Generation Loop (New) ---
 
     async runPostGeneration(projectId: number, theme: string, topic: string, postId: number, promptOverride?: string, withImage: boolean = false): Promise<MultiAgentResult & { category?: string, tags?: string[] }> {
-        console.log(`[MultiAgent Post] Starting generation for: "${topic}" (Image: ${withImage})`);
+        console.log(`[MultiAgent Post] Starting generation for: "${topic}"(Image: ${withImage})`);
 
         // Fetch comments for context
         let commentsContext = await commentService.getCommentsForContext(projectId, 'post', postId);
@@ -393,7 +468,7 @@ Start directly with the post content.`;
         }
 
         // Add to creator context
-        commentsContext += `\n\n[CONSTRAINT]: ${lengthConstraint}`;
+        commentsContext += `\n\n[CONSTRAINT]: ${lengthConstraint} `;
 
         let runLogId = 0;
         try {
@@ -402,7 +477,7 @@ Start directly with the post content.`;
                     project: { connect: { id: projectId } },
                     type: 'post_gen_loop',
                     status: 'running',
-                    input: `Topic: ${topic}`
+                    input: `Topic: ${topic} `
                 }
             });
             runLogId = runLog.id;
@@ -445,7 +520,7 @@ Start directly with the post content.`;
                 critique: critiqueResult.critique
             });
 
-            console.log(`[MultiAgent Post] Iteration ${iterations} score: ${currentScore}`);
+            console.log(`[MultiAgent Post]Iteration ${iterations} score: ${currentScore} `);
 
             if (runLogId > 0) {
                 try {
@@ -506,7 +581,7 @@ Start directly with the post content.`;
             model: 'gpt-4o', // Force JSON capable model
             messages: [
                 { role: 'system', content: config.prompt || this.DEFAULT_POST_CLASSIFIER_PROMPT },
-                { role: 'user', content: `Post Content:\n${text}` }
+                { role: 'user', content: `Post Content: \n${text} ` }
             ],
             temperature: 0.3,
             response_format: { type: "json_object" }
@@ -525,9 +600,9 @@ Start directly with the post content.`;
     private async postCreator(theme: string, topic: string, config: any, runId: number, additionalContext: string = ''): Promise<string> {
         let output = '';
 
-        let userContent = `Theme: ${theme}\nPost Topic: ${topic}`;
+        let userContent = `Theme: ${theme} \nPost Topic: ${topic} `;
         if (additionalContext) {
-            userContent += `\n\nUSER COMMENTS / REQUIREMENTS:\n${additionalContext}`;
+            userContent += `\n\nUSER COMMENTS / REQUIREMENTS: \n${additionalContext} `;
         }
 
         if (config.apiKey && config.apiKey.startsWith('sk-ant')) {
@@ -581,7 +656,7 @@ Start directly with the post content.`;
         let result: CritiqueResult = { score: 50, critique: '' };
         let content = '{}';
 
-        const context = `Topic: ${topic}\n\nPost to evaluate:\n${text}\n\n${lengthConstraint ? `CRITICAL CONSTRAINT TO VERIFY: ${lengthConstraint}. If text exceeds limit, SCORE MUST BE < 50 and critique must demand shortening.` : ''}`;
+        const context = `Topic: ${topic} \n\nPost to evaluate: \n${text} \n\n${lengthConstraint ? `CRITICAL CONSTRAINT TO VERIFY: ${lengthConstraint}. If text exceeds limit, SCORE MUST BE < 50 and critique must demand shortening.` : ''} `;
 
         if (config.apiKey && config.apiKey.startsWith('sk-ant')) {
             const anthropic = new Anthropic({ apiKey: config.apiKey });
@@ -658,7 +733,7 @@ Start directly with the post content.`;
     private async postFixer(text: string, critique: string, config: any, runId: number, iteration: number, lengthConstraint: string = ''): Promise<string> {
         let output = '';
 
-        const context = `Original Text:\n${text}\n\nCritique to address:\n${critique}\n\n${lengthConstraint ? `MANDATORY CONSTRAINT: ${lengthConstraint}` : ''}`;
+        const context = `Original Text: \n${text} \n\nCritique to address: \n${critique} \n\n${lengthConstraint ? `MANDATORY CONSTRAINT: ${lengthConstraint}` : ''} `;
 
         if (config.apiKey && config.apiKey.startsWith('sk-ant')) {
             const anthropic = new Anthropic({ apiKey: config.apiKey });
@@ -703,7 +778,7 @@ Start directly with the post content.`;
             let cleaned = output.trim();
 
             // Remove markdown code blocks if present
-            cleaned = cleaned.replace(/^```json\s*/, '').replace(/^```\s*/, '').replace(/\s*```$/, '');
+            cleaned = cleaned.replace(/^```json\s * /, '').replace(/ ^ ```\s*/, '').replace(/\s*```$ /, '');
 
             const firstBrace = cleaned.indexOf('{');
             const lastBrace = cleaned.lastIndexOf('}');
@@ -1000,6 +1075,9 @@ Start directly with the post content.`;
             throw error;
         }
     }
+
+
+
 }
 
 export default new MultiAgentService();

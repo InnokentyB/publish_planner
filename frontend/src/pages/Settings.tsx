@@ -36,7 +36,7 @@ interface SocialChannel {
 export default function Settings() {
     const queryClient = useQueryClient()
     const { currentProject } = useAuth()
-    const [activeTab, setActiveTab] = useState<'general' | 'keys' | 'channels' | 'team' | 'agents' | 'presets'>('general')
+    const [activeTab, setActiveTab] = useState<'general' | 'keys' | 'channels' | 'team' | 'agents' | 'presets' | 'history'>('general')
 
     // Project State
     const [projectName, setProjectName] = useState('')
@@ -281,6 +281,66 @@ export default function Settings() {
         });
     }
 
+    const { data: runs } = useQuery<any[]>({
+        queryKey: ['runs', currentProject?.id],
+        queryFn: () => api.get('/api/settings/runs'),
+        enabled: !!currentProject && activeTab === 'history'
+    })
+
+    const RunRow = ({ run }: { run: any }) => {
+        const [expanded, setExpanded] = useState(false)
+        return (
+            <div style={{ borderBottom: '1px solid var(--border)', padding: '1rem 0' }}>
+                <div className="flex-between mb-1" style={{ cursor: 'pointer' }} onClick={() => setExpanded(!expanded)}>
+                    <div>
+                        <span className={`badge badge-${run.status === 'success' ? 'generated' : 'error'}`} style={{ marginRight: '0.5rem' }}>
+                            {run.status || 'unknown'}
+                        </span>
+                        <strong>{run.agent_role || run.type || 'Unknown Agent'}</strong>
+                        <span className="text-muted ml-1" style={{ fontSize: '0.8rem' }}>
+                            {new Date(run.created_at).toLocaleString()}
+                        </span>
+                    </div>
+                    <div className="text-muted" style={{ fontSize: '1.2rem' }}>{expanded ? '−' : '+'}</div>
+                </div>
+                {expanded && (
+                    <div className="grid-2 mt-2" style={{ gap: '1rem', background: 'var(--bg-tertiary)', padding: '1rem', borderRadius: '8px' }}>
+                        <div>
+                            <strong>Input / Prompt</strong>
+                            <div style={{
+                                whiteSpace: 'pre-wrap',
+                                fontFamily: 'monospace',
+                                fontSize: '0.8rem',
+                                maxHeight: '300px',
+                                overflowY: 'auto',
+                                background: 'var(--bg-secondary)',
+                                padding: '0.5rem',
+                                borderRadius: '4px'
+                            }}>
+                                {run.input || run.prompt || '(No input logged)'}
+                            </div>
+                        </div>
+                        <div>
+                            <strong>Output / Response</strong>
+                            <div style={{
+                                whiteSpace: 'pre-wrap',
+                                fontFamily: 'monospace',
+                                fontSize: '0.8rem',
+                                maxHeight: '300px',
+                                overflowY: 'auto',
+                                background: 'var(--bg-secondary)',
+                                padding: '0.5rem',
+                                borderRadius: '4px'
+                            }}>
+                                {run.output || run.error || '(No output logged)'}
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        )
+    }
+
     if (!currentProject) {
         return (
             <div className="container">
@@ -297,7 +357,7 @@ export default function Settings() {
             <h1 className="mb-3">Project Settings</h1>
 
             <div className="flex mb-3" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem', overflowX: 'auto' }}>
-                {['general', 'keys', 'channels', 'team', 'agents', 'presets'].map(tab => (
+                {['general', 'keys', 'channels', 'team', 'agents', 'presets', 'history'].map(tab => (
                     <button
                         key={tab}
                         className={activeTab === tab ? 'btn-primary' : 'btn-secondary'}
@@ -654,6 +714,19 @@ export default function Settings() {
                                     {p.prompt_text}
                                 </div>
                             </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'history' && (
+                <div className="card">
+                    <h2>Prompt History</h2>
+                    <p className="text-muted mb-3">View the log of agent interactions for this project.</p>
+                    {runs && runs.length === 0 && <p>No history found.</p>}
+                    <div>
+                        {runs?.map(run => (
+                            <RunRow key={run.id} run={run} />
                         ))}
                     </div>
                 </div>

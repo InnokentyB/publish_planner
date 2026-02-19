@@ -134,6 +134,7 @@ model Week {
 
   project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
   posts   Post[]
+  week_memory WeekMemory?
 
   @@unique([project_id, week_start, week_end])
   @@map("weeks")
@@ -159,6 +160,14 @@ model Post {
   approval_message_id BigInt?
   telegram_message_id Int?
   published_link      String?
+  
+  // Sequential Generation Fields
+  core_takeaway       String?
+  key_points          Json?    // Array of strings
+  tool_used           String?
+  angle               String?
+  critic_score        Int?
+
   created_at          DateTime @default(now())
   updated_at          DateTime @updatedAt
 
@@ -171,6 +180,19 @@ model Post {
   @@index([publish_at])
   @@index([status])
   @@map("posts")
+}
+
+model WeekMemory {
+  id              Int      @id @default(autoincrement())
+  week_id         Int      @unique
+  week            Week     @relation(fields: [week_id], references: [id], onDelete: Cascade)
+  week_core_summary String // Aggregated summary
+  covered_angles  Json     // Array of strings
+  used_tools      Json     // Array of strings
+  banned_takeaways Json    // Array of strings
+  updated_at      DateTime @updatedAt
+
+  @@map("week_memories")
 }
 
 // ============================================
