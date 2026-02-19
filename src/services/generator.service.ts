@@ -150,30 +150,19 @@ class GeneratorService {
     }
 
     private async downloadAndSaveImage(url: string, filename: string): Promise<string> {
-        const fs = require('fs');
-        const path = require('path');
-        const https = require('https');
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
 
-        const uploadsDir = path.join(__dirname, '../../uploads');
-        if (!fs.existsSync(uploadsDir)) {
-            fs.mkdirSync(uploadsDir, { recursive: true });
+            const arrayBuffer = await response.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+
+            const storageService = require('./storage.service').default;
+            return await storageService.uploadFileFromBuffer(buffer, 'image/png', `generated/${filename}`);
+        } catch (e: any) {
+            console.error('Failed to upload generated image to storage', e);
+            throw e;
         }
-
-        const filepath = path.join(uploadsDir, filename);
-        const file = fs.createWriteStream(filepath);
-
-        return new Promise((resolve, reject) => {
-            https.get(url, (response: any) => {
-                response.pipe(file);
-                file.on('finish', () => {
-                    file.close();
-                    resolve(`/uploads/${filename}`);
-                });
-            }).on('error', (err: any) => {
-                fs.unlink(filepath, () => { }); // Delete the file async
-                reject(err);
-            });
-        });
     }
 
     async generateImageNanoBanana(prompt: string): Promise<string> {

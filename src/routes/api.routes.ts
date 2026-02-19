@@ -409,7 +409,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             const fs = require('fs');
             fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Image Gen Error (Post ${id}): ${error.message}\n${error.stack}\n\n`);
             request.log.error(error);
-            return reply.code(500).send({ error: 'Upload failed' });
+            return reply.code(500).send({ error: `Upload failed: ${error.message}` });
         }
     });
 
