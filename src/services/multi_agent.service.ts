@@ -313,8 +313,62 @@ Output JSON Format (Strict):
     // I will update them one by one or in blocks to avoid huge replacement
 
     public async runImagePromptingChain(projectId: number, postText: string, topic: string): Promise<string> {
-        console.log(`[MultiAgent] Stubbed Image Chain for project ${projectId}`);
-        return "";
+        console.log(`[MultiAgent] Running Image Chain for project ${projectId}`);
+
+        // 1. Visual Architect
+        const archInput = `Topic: ${topic}\n\nKey Text Context:\n${postText.substring(0, 500)}...`;
+
+        let concept = await this.runJsonAgent(projectId, 'visual_architect', this.KEY_VISUAL_ARCHITECT_PROMPT, this.DEFAULT_VISUAL_ARCHITECT_PROMPT, archInput);
+
+        // Fallback if Architect fails
+        if (!concept || !concept.scene_concept) {
+            console.warn('[MultiAgent] Visual Architect failed or returned invalid JSON. Using fallback.');
+            return `A professional, high-quality, abstract illustration about: ${topic}. Minimalist style, corporate tech colors.`;
+        }
+
+        console.log('[MultiAgent] Visual Architect Concept:', concept.scene_concept.substring(0, 50));
+
+        // 2. Structural Critic
+        const criticInput = `Scene Concept: ${concept.scene_concept}`;
+        let critique = await this.runJsonAgent(projectId, 'structural_critic', this.KEY_STRUCTURAL_CRITIC_PROMPT, this.DEFAULT_STRUCTURAL_CRITIC_PROMPT, criticInput);
+
+        console.log('[MultiAgent] Structural Critic Score:', critique?.score);
+
+        // 3. Precision Fixer (Final Prompt)
+        const fixerInput = `Original Concept: ${concept.scene_concept}\nCritique: ${critique?.critique || 'No critique'}`;
+
+        // Precision Fixer returns a STRING (Raw Prompt), not JSON usually, but let's check input/output format
+        // The default prompt says: "Output ONLY the raw final image prompt"
+        // So runJsonAgent might be wrong if it expects JSON. 
+        // Let's use a generic runTextAgent for this or handle it.
+
+        // Let's create a runTextAgent helper if not exists, or just manually call getAgentConfig + openai
+        const fixerConfig = await this.getAgentConfig(projectId, 'precision_fixer');
+        const systemPrompt = fixerConfig.prompt || this.DEFAULT_PRECISION_FIXER_PROMPT;
+
+        try {
+            if (!this.openai) throw new Error("OpenAI not initialized");
+            const response = await this.openai.chat.completions.create({
+                model: fixerConfig.model || 'gpt-4o',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: fixerInput }
+                ],
+                temperature: 0.7
+            });
+
+            const finalPrompt = response.choices[0].message.content || '';
+
+            await this.logRun(projectId, 'image_chain', 'precision_fixer', 'success', fixerInput, systemPrompt, finalPrompt, null);
+
+            // Clean up prompt (remove quotes if added by LLM)
+            return finalPrompt.replace(/^"|"$/g, '').trim() || `Illustration about ${topic}`;
+
+        } catch (e: any) {
+            console.error('[MultiAgent] Precision Fixer failed:', e);
+            await this.logRun(projectId, 'image_chain', 'precision_fixer', 'failed', fixerInput, systemPrompt, null, e.message);
+            return concept.scene_concept; // Fallback to raw ID
+        }
     }
 
     private async getPrompt(projectId: number, key: string, defaultVal: string): Promise<string> {
