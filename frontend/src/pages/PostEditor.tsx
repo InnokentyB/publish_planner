@@ -65,7 +65,8 @@ export default function PostEditor() {
 
     const { data: post, isLoading } = useQuery<Post>({
         queryKey: ['post', id],
-        queryFn: () => api.get(`/api/posts/${id}`)
+        queryFn: () => api.get(`/api/posts/${id}`),
+        refetchInterval: (query) => query.state.data?.status === 'generating' ? 3000 : false
     })
 
     useEffect(() => {

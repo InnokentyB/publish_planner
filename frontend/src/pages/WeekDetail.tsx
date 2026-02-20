@@ -55,7 +55,11 @@ export default function WeekDetail() {
     const { data: week, isLoading } = useQuery<Week>({
         queryKey: ['week', id],
         queryFn: () => api.get(`/api/weeks/${id}`),
-        enabled: !!currentProject
+        enabled: !!currentProject,
+        refetchInterval: (query) => {
+            const data = query.state.data as Week | undefined;
+            return (data?.status === 'generating' || data?.posts.some(p => p.status === 'generating')) ? 3000 : false;
+        }
     })
 
     // Mutations

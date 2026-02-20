@@ -389,22 +389,30 @@ export default async function apiRoutes(fastify: FastifyInstance) {
 
             // 2. Generate Image
             let imageUrl = '';
+
+            // Ensure prompt is valid for DALL-E (not empty or just whitespace)
+            let safePrompt = imagePrompt;
+            if (!safePrompt || safePrompt.trim().length === 0) {
+                console.warn('[Generate Image] Fallback triggered: imagePrompt was empty or whitespace');
+                safePrompt = `A professional vector illustration for a tech blog post about: ${post.topic || 'Technology'}. Minimalist style.`;
+            }
+
             if (provider === 'nano') {
                 fs.appendFileSync('debug.log', `[${new Date().toISOString()}] Calling Nano...\n`);
-                imageUrl = await generatorService.generateImageNanoBanana(imagePrompt);
+                imageUrl = await generatorService.generateImageNanoBanana(safePrompt);
             } else {
                 fs.appendFileSync('debug.log', `[${new Date().toISOString()}] Calling DALL-E...\n`);
-                imageUrl = await generatorService.generateImage(imagePrompt);
+                imageUrl = await generatorService.generateImage(safePrompt);
             }
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] Image Gen Success. URL: ${imageUrl}\n`);
 
             // 3. Save to DB
             await plannerService.updatePost(post.id, {
                 image_url: imageUrl,
-                image_prompt: imagePrompt
+                image_prompt: safePrompt
             });
 
-            return { success: true, imageUrl, imagePrompt };
+            return { success: true, imageUrl, imagePrompt: safePrompt };
         } catch (error: any) {
             const fs = require('fs');
             fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Image Gen Error (Post ${id}): ${error.message}\n${error.stack}\n\n`);
@@ -532,27 +540,46 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             if (preset) promptOverride = preset.prompt_text;
         }
 
-        const result = await generatorService.generatePostText(projectId, post.week.theme, post.topic, post.id, promptOverride, withImage);
-
-        let fullText = result.text;
-        if (result.tags && result.tags.length > 0) {
-            fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '')}`).join(' ');
-        } else if (post.category) { // Fallback to existing category if new tags fail
-            fullText += `\n\n#${post.category.replace(/\s+/g, '')}`;
-        }
-
-        const updated = await prisma.post.update({
+        // Immediately update status and return 202 to prevent 503 timeouts
+        await prisma.post.update({
             where: { id: post.id },
-            data: {
-                generated_text: fullText,
-                final_text: fullText,
-                status: 'generated',
-                category: result.category || undefined,
-                tags: result.tags || undefined
-            }
+            data: { status: 'generating' }
         });
 
-        return updated;
+        // Background generation
+        (async () => {
+            try {
+                const result = await generatorService.generatePostText(projectId, post.week!.theme, post.topic as string, post.id, promptOverride, withImage);
+
+                let fullText = result.text;
+                if (result.tags && result.tags.length > 0) {
+                    fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '')}`).join(' ');
+                } else if (post.category) { // Fallback to existing category if new tags fail
+                    fullText += `\n\n#${post.category.replace(/\s+/g, '')}`;
+                }
+
+                await prisma.post.update({
+                    where: { id: post.id },
+                    data: {
+                        generated_text: fullText,
+                        final_text: fullText,
+                        status: 'generated',
+                        category: result.category || undefined,
+                        tags: result.tags || undefined
+                    }
+                });
+            } catch (err: any) {
+                console.error(`Error generating post ${post.id}:`, err);
+                const fs = require('fs');
+                fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Post Gen Error (Post ${post.id}): ${err.message}\n${err.stack}\n\n`);
+                await prisma.post.update({
+                    where: { id: post.id },
+                    data: { status: 'planned' }
+                });
+            }
+        })();
+
+        return reply.code(202).send({ success: true, message: 'Generation started in background' });
     });
 
     // Settings
