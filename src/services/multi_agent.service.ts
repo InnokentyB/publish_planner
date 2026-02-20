@@ -537,83 +537,110 @@ Output JSON Format (Strict):
             runLogId = runLog.id;
         } catch (e) { console.error('Failed to create run log', e); }
 
-        const creatorConfig = await this.getAgentConfig(projectId, 'post_creator');
-        if (promptOverride) {
-            creatorConfig.prompt = promptOverride;
-            console.log('[MultiAgent Post] Using prompt override');
-        }
-
-        // Remove conflicting default max length from prompt if present
-        // (Legacy check, but we can verify)
-        // if (creatorConfig.prompt.includes("Max 4000 chars") && withImage) {
-        //      creatorConfig.prompt = creatorConfig.prompt.replace("Max 4000 chars", "Max 1000 chars");
-        // }
-
-        let currentText = await this.postCreator(theme, topic, creatorConfig, runLogId, commentsContext);
-
+        let currentText = '';
         let currentScore = 0;
         let iterations = 0;
-        const history = [];
-        const MAX_ITERATIONS = 3;
-        const TARGET_SCORE = 80;
+        const history: any[] = [];
+        let category: string | undefined;
+        let tags: string[] | undefined;
 
-        while (iterations < MAX_ITERATIONS) {
-            iterations++;
-            console.log(`[MultiAgent Post] Iteration ${iterations} starting...`);
+        try {
+            const creatorConfig = await this.getAgentConfig(projectId, 'post_creator');
+            if (promptOverride) {
+                creatorConfig.prompt = promptOverride;
+                console.log('[MultiAgent Post] Using prompt override');
+            }
 
-            const criticConfig = await this.getAgentConfig(projectId, 'post_critic');
-            const fixerConfig = await this.getAgentConfig(projectId, 'post_fixer');
+            currentText = await this.postCreator(theme, topic, creatorConfig, runLogId, commentsContext);
 
-            // Pass constraint to Critic
-            const critiqueResult = await this.postCritic(currentText, topic, criticConfig, runLogId, iterations, lengthConstraint);
-            currentScore = critiqueResult.score;
+            const MAX_ITERATIONS = 3;
+            const TARGET_SCORE = 80;
 
-            history.push({
-                iteration: iterations,
-                score: currentScore,
-                critique: critiqueResult.critique
-            });
+            while (iterations < MAX_ITERATIONS) {
+                iterations++;
+                console.log(`[MultiAgent Post] Iteration ${iterations} starting...`);
 
-            console.log(`[MultiAgent Post]Iteration ${iterations} score: ${currentScore} `);
+                const criticConfig = await this.getAgentConfig(projectId, 'post_critic');
+                const fixerConfig = await this.getAgentConfig(projectId, 'post_fixer');
+
+                // Pass constraint to Critic
+                const critiqueResult = await this.postCritic(currentText, topic, criticConfig, runLogId, iterations, lengthConstraint);
+                currentScore = critiqueResult.score;
+
+                history.push({
+                    iteration: iterations,
+                    score: currentScore,
+                    critique: critiqueResult.critique
+                });
+
+                console.log(`[MultiAgent Post]Iteration ${iterations} score: ${currentScore} `);
+
+                if (runLogId > 0) {
+                    try {
+                        await this.prisma.agentRun.update({
+                            where: { id: runLogId },
+                            data: { final_score: currentScore, total_iterations: iterations }
+                        });
+                    } catch (e) { }
+                }
+
+                if (currentScore >= TARGET_SCORE) {
+                    console.log(`[MultiAgent Post] Target score reached!`);
+                    break;
+                }
+
+                if (iterations < MAX_ITERATIONS) {
+                    console.log(`[MultiAgent Post] Fixing text based on critique...`);
+                    // Pass constraint to Fixer
+                    currentText = await this.postFixer(currentText, critiqueResult.critique, fixerConfig, runLogId, iterations, lengthConstraint);
+                }
+            }
+
+            // Run Classifier
+            try {
+                console.log('[MultiAgent Post] Running Classifier...');
+                const classifierConfig = await this.getAgentConfig(projectId, this.KEY_POST_CLASSIFIER);
+                if (!classifierConfig.prompt || classifierConfig.prompt === this.DEFAULT_POST_CREATOR_PROMPT) {
+                    classifierConfig.prompt = this.DEFAULT_POST_CLASSIFIER_PROMPT;
+                }
+
+                const classification = await this.postClassifier(currentText, classifierConfig);
+                category = classification.category;
+                tags = classification.tags;
+                console.log('[MultiAgent Post] Classification result:', classification);
+            } catch (e) {
+                console.error('[MultiAgent Post] Classification failed:', e);
+            }
 
             if (runLogId > 0) {
                 try {
                     await this.prisma.agentRun.update({
                         where: { id: runLogId },
-                        data: { final_score: currentScore, total_iterations: iterations }
+                        data: {
+                            status: 'success',
+                            output: currentText.substring(0, 5000),
+                            final_score: currentScore,
+                            total_iterations: iterations
+                        }
+                    });
+                } catch (e) { console.error('Failed to finalize run log', e); }
+            }
+        } catch (error: any) {
+            console.error('[MultiAgent Post] Fatal Error in loop:', error);
+            if (runLogId > 0) {
+                try {
+                    await this.prisma.agentRun.update({
+                        where: { id: runLogId },
+                        data: {
+                            status: 'failed',
+                            error: error.message || 'Unknown error',
+                            final_score: currentScore,
+                            total_iterations: iterations
+                        }
                     });
                 } catch (e) { }
             }
-
-            if (currentScore >= TARGET_SCORE) {
-                console.log(`[MultiAgent Post] Target score reached!`);
-                break;
-            }
-
-            if (iterations < MAX_ITERATIONS) {
-                console.log(`[MultiAgent Post] Fixing text based on critique...`);
-                // Pass constraint to Fixer
-                currentText = await this.postFixer(currentText, critiqueResult.critique, fixerConfig, runLogId, iterations, lengthConstraint);
-            }
-        }
-
-        // Run Classifier
-        let category: string | undefined;
-        let tags: string[] | undefined;
-        try {
-            console.log('[MultiAgent Post] Running Classifier...');
-            const classifierConfig = await this.getAgentConfig(projectId, this.KEY_POST_CLASSIFIER);
-            // Use default prompt if not configured in DB (which it likely isn't yet)
-            if (!classifierConfig.prompt || classifierConfig.prompt === this.DEFAULT_POST_CREATOR_PROMPT) {
-                classifierConfig.prompt = this.DEFAULT_POST_CLASSIFIER_PROMPT;
-            }
-
-            const classification = await this.postClassifier(currentText, classifierConfig);
-            category = classification.category;
-            tags = classification.tags;
-            console.log('[MultiAgent Post] Classification result:', classification);
-        } catch (e) {
-            console.error('[MultiAgent Post] Classification failed:', e);
+            throw error;
         }
 
         return {
@@ -923,63 +950,96 @@ Output JSON Format (Strict):
         // Initialize Agents
         if (!this.openai) throw new Error('OpenAI client not initialized (Missing API Key)');
 
-        // Creator
-        fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Fetching Creator Prompt...\n`);
-        let creatorPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CREATOR, this.DEFAULT_TOPIC_CREATOR_PROMPT);
-        fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Creator Prompt fetched.\n`);
-
-        if (promptOverride) creatorPrompt = promptOverride;
-
-        fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Calling Validated Topic Creator...\n`);
-        let currentTopicsJSON = await this.topicCreator(theme, creatorPrompt, runLogId, fullContext);
-
-        // Ensure it's valid JSON structure from the start
-        try {
-            const parsed = JSON.parse(currentTopicsJSON);
-            if (!parsed.topics && Array.isArray(parsed)) {
-                // Handle raw array return by wrapping it
-                currentTopicsJSON = JSON.stringify({ topics: parsed });
-            }
-        } catch (e) { }
-
+        let currentTopicsJSON = '{}';
         let currentScore = 0;
         let iterations = 0;
         const MAX_ITERATIONS = 3;
         const TARGET_SCORE = 80; // Changed from 90 to 80
 
-        while (iterations < MAX_ITERATIONS) {
-            iterations++;
-            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent Topics] Iteration ${iterations} starting...\n`);
-            console.log(`[MultiAgent Topics] Iteration ${iterations} starting...`);
+        try {
+            // Creator
+            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Fetching Creator Prompt...\n`);
+            let creatorPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CREATOR, this.DEFAULT_TOPIC_CREATOR_PROMPT);
+            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Creator Prompt fetched.\n`);
 
-            const criticPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CRITIC, this.DEFAULT_TOPIC_CRITIC_PROMPT);
-            const fixerPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_FIXER, this.DEFAULT_TOPIC_FIXER_PROMPT);
+            if (promptOverride) creatorPrompt = promptOverride;
 
-            // Critic
-            const critiqueResult = await this.topicCritic(currentTopicsJSON, theme, criticPrompt, runLogId, iterations);
-            currentScore = critiqueResult.score;
-            console.log(`[MultiAgent Topics] Iteration ${iterations} score: ${currentScore}`);
+            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Calling Validated Topic Creator...\n`);
+            currentTopicsJSON = await this.topicCreator(theme, creatorPrompt, runLogId, fullContext);
 
-            // Update Log
+            // Ensure it's valid JSON structure from the start
+            try {
+                const parsed = JSON.parse(currentTopicsJSON);
+                if (!parsed.topics && Array.isArray(parsed)) {
+                    // Handle raw array return by wrapping it
+                    currentTopicsJSON = JSON.stringify({ topics: parsed });
+                }
+            } catch (e) { }
+
+            while (iterations < MAX_ITERATIONS) {
+                iterations++;
+                fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent Topics] Iteration ${iterations} starting...\n`);
+                console.log(`[MultiAgent Topics] Iteration ${iterations} starting...`);
+
+                const criticPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CRITIC, this.DEFAULT_TOPIC_CRITIC_PROMPT);
+                const fixerPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_FIXER, this.DEFAULT_TOPIC_FIXER_PROMPT);
+
+                // Critic
+                const critiqueResult = await this.topicCritic(currentTopicsJSON, theme, criticPrompt, runLogId, iterations);
+                currentScore = critiqueResult.score;
+                console.log(`[MultiAgent Topics] Iteration ${iterations} score: ${currentScore}`);
+
+                // Update Log
+                if (runLogId > 0) {
+                    try {
+                        await this.prisma.agentRun.update({
+                            where: { id: runLogId },
+                            data: { final_score: currentScore, total_iterations: iterations }
+                        });
+                    } catch (e) { }
+                }
+
+                if (currentScore >= TARGET_SCORE) {
+                    console.log(`[MultiAgent Topics] Target score (${TARGET_SCORE}) reached! Stopping early.`);
+                    break;
+                }
+
+                if (iterations < MAX_ITERATIONS) {
+                    // Fixer
+                    console.log(`[MultiAgent Topics] Fixing based on critique...`);
+                    currentTopicsJSON = await this.topicFixer(currentTopicsJSON, critiqueResult.critique, theme, fixerPrompt, runLogId, iterations);
+                }
+            }
+
             if (runLogId > 0) {
                 try {
                     await this.prisma.agentRun.update({
                         where: { id: runLogId },
-                        data: { final_score: currentScore, total_iterations: iterations }
+                        data: {
+                            status: 'success',
+                            output: currentTopicsJSON.substring(0, 5000),
+                            final_score: currentScore,
+                            total_iterations: iterations
+                        }
+                    });
+                } catch (e) { console.error('Failed to finalize run log', e); }
+            }
+        } catch (error: any) {
+            console.error('[MultiAgent Topics] Fatal Error in loop:', error);
+            if (runLogId > 0) {
+                try {
+                    await this.prisma.agentRun.update({
+                        where: { id: runLogId },
+                        data: {
+                            status: 'failed',
+                            error: error.message || 'Unknown error',
+                            final_score: currentScore,
+                            total_iterations: iterations
+                        }
                     });
                 } catch (e) { }
             }
-
-            if (currentScore >= TARGET_SCORE) {
-                console.log(`[MultiAgent Topics] Target score (${TARGET_SCORE}) reached! Stopping early.`);
-                break;
-            }
-
-            if (iterations < MAX_ITERATIONS) {
-                // Fixer
-                console.log(`[MultiAgent Topics] Fixing based on critique...`);
-                currentTopicsJSON = await this.topicFixer(currentTopicsJSON, critiqueResult.critique, theme, fixerPrompt, runLogId, iterations);
-            }
+            throw error;
         }
 
         // Parse final JSON
