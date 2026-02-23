@@ -320,22 +320,41 @@ Output JSON Format (Strict):
 
         let concept = await this.runJsonAgent(projectId, 'visual_architect', this.KEY_VISUAL_ARCHITECT_PROMPT, this.DEFAULT_VISUAL_ARCHITECT_PROMPT, archInput);
 
-        // Fallback if Architect fails
-        if (!concept || !concept.scene_concept) {
+        let sceneConcept = concept?.scene_concept;
+
+        if (concept && !sceneConcept) {
+            // Handle custom UI prompts that return custom keys like "Draft scene" or "scene"
+            const sceneKey = Object.keys(concept).find(k => k.toLowerCase().includes('scene'));
+            if (sceneKey) {
+                sceneConcept = concept[sceneKey];
+            } else {
+                // Fallback to stringifying the entire JSON if no specific scene key is found
+                sceneConcept = concept;
+            }
+        }
+
+        if (sceneConcept && typeof sceneConcept === 'object') {
+            sceneConcept = JSON.stringify(sceneConcept);
+        } else if (sceneConcept != null) {
+            sceneConcept = String(sceneConcept);
+        }
+
+        // Fallback if Architect completely fails or returns empty
+        if (!sceneConcept || sceneConcept === '{}') {
             console.warn('[MultiAgent] Visual Architect failed or returned invalid JSON. Using fallback.');
             return `A professional, high-quality, abstract illustration about: ${topic}. Minimalist style, corporate tech colors.`;
         }
 
-        console.log('[MultiAgent] Visual Architect Concept:', concept.scene_concept.substring(0, 50));
+        console.log('[MultiAgent] Visual Architect Concept:', sceneConcept.substring(0, 50));
 
         // 2. Structural Critic
-        const criticInput = `Scene Concept: ${concept.scene_concept}`;
+        const criticInput = `Scene Concept: ${sceneConcept}`;
         let critique = await this.runJsonAgent(projectId, 'structural_critic', this.KEY_STRUCTURAL_CRITIC_PROMPT, this.DEFAULT_STRUCTURAL_CRITIC_PROMPT, criticInput);
 
         console.log('[MultiAgent] Structural Critic Score:', critique?.score);
 
         // 3. Precision Fixer (Final Prompt)
-        const fixerInput = `Original Concept: ${concept.scene_concept}\nCritique: ${critique?.critique || 'No critique'}`;
+        const fixerInput = `Original Concept: ${sceneConcept}\nCritique: ${critique?.critique || 'No critique'}`;
 
         // Precision Fixer returns a STRING (Raw Prompt), not JSON usually, but let's check input/output format
         // The default prompt says: "Output ONLY the raw final image prompt"
@@ -367,7 +386,7 @@ Output JSON Format (Strict):
         } catch (e: any) {
             console.error('[MultiAgent] Precision Fixer failed:', e);
             await this.logRun(projectId, 'image_chain', 'precision_fixer', 'failed', fixerInput, systemPrompt, null, e.message);
-            return concept.scene_concept; // Fallback to raw ID
+            return sceneConcept; // Fallback to raw text from previous agent
         }
     }
 
