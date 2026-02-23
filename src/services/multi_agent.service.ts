@@ -261,7 +261,7 @@ Output JSON Format (Strict):
             const completion = await this.openai.chat.completions.create({
                 model: config.model || 'gpt-4o',
                 messages: [
-                    { role: 'system', content: systemPrompt },
+                    { role: 'system', content: systemPrompt + (systemPrompt.toLowerCase().includes('json') ? '' : '\n\nOutput must be in JSON format.') },
                     { role: 'user', content: input }
                 ],
                 response_format: { type: 'json_object' }
@@ -661,7 +661,7 @@ Output JSON Format (Strict):
         const response = await this.openai.chat.completions.create({
             model: 'gpt-4o', // Force JSON capable model
             messages: [
-                { role: 'system', content: config.prompt || this.DEFAULT_POST_CLASSIFIER_PROMPT },
+                { role: 'system', content: (config.prompt || this.DEFAULT_POST_CLASSIFIER_PROMPT) + ((config.prompt || this.DEFAULT_POST_CLASSIFIER_PROMPT).toLowerCase().includes('json') ? '' : '\n\nOutput must be in JSON format.') },
                 { role: 'user', content: `Post Content: \n${text} ` }
             ],
             temperature: 0.3,
@@ -767,7 +767,7 @@ Output JSON Format (Strict):
             const response = await client.chat.completions.create({
                 model: config.model,
                 messages: [
-                    { role: 'system', content: config.prompt },
+                    { role: 'system', content: config.prompt + (config.prompt.toLowerCase().includes('json') ? '' : '\n\nOutput must be in JSON format.') },
                     { role: 'user', content: context }
                 ],
                 response_format: { type: "json_object" },
@@ -842,7 +842,7 @@ Output JSON Format (Strict):
             const response = await client.chat.completions.create({
                 model: config.model,
                 messages: [
-                    { role: 'system', content: config.prompt },
+                    { role: 'system', content: config.prompt + (config.prompt.toLowerCase().includes('json') ? '' : '\n\nOutput must be in JSON format.') },
                     { role: 'user', content: context }
                 ],
                 temperature: 0.7,
@@ -1071,7 +1071,7 @@ Output JSON Format (Strict):
             const response = await this.openai.chat.completions.create({
                 model: 'gpt-4o',
                 messages: [
-                    { role: 'system', content: systemPrompt },
+                    { role: 'system', content: systemPrompt + (systemPrompt.toLowerCase().includes('json') ? '' : '\n\nOutput must be in JSON format.') },
                     { role: 'user', content: userContent }
                 ],
                 temperature: 0.7,
@@ -1111,7 +1111,7 @@ Output JSON Format (Strict):
             const response = await this.openai.chat.completions.create({
                 model: 'gpt-4o',
                 messages: [
-                    { role: 'system', content: systemPrompt },
+                    { role: 'system', content: systemPrompt + (systemPrompt.toLowerCase().includes('json') ? '' : '\n\nOutput must be in JSON format.') },
                     { role: 'user', content: `Theme: ${theme}\n\nTopics JSON:\n${topicsJSON}` }
                 ],
                 response_format: { type: "json_object" },
@@ -1160,7 +1160,7 @@ Output JSON Format (Strict):
             const response = await this.openai.chat.completions.create({
                 model: 'gpt-4o',
                 messages: [
-                    { role: 'system', content: systemPrompt },
+                    { role: 'system', content: systemPrompt + (systemPrompt.toLowerCase().includes('json') ? '' : '\n\nOutput must be in JSON format.') },
                     { role: 'user', content: `Original Topics:\n${topicsJSON}\n\nCritique:\n${critique}` }
                 ],
                 response_format: { type: "json_object" },
