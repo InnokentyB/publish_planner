@@ -620,14 +620,17 @@ class TelegramService {
             const criticResult = await multi_agent_service_1.default.runImageCritic(projectId, post.generated_text, dalleUrl);
             if (!criticResult)
                 throw new Error("Critic failed to generate feedback.");
-            const feedbackMsg = `📝 **Анализ Критика:**\n\n**Оценка:** ${criticResult.critique}\n\n**Рекомендации:** ${criticResult.recommendations}\n\n**Новый промпт:** \`${criticResult.new_prompt}\``;
+            const newPromptToUse = criticResult.new_prompt || criticResult.prompt || `A highly detailed image about: ${post.topic}`;
+            const feedbackMsg = `📝 **Анализ Критика:**\n\n**Оценка:** ${criticResult.critique || 'N/A'}\n\n**Рекомендации:** ${criticResult.recommendations || 'N/A'}\n\n**Новый промпт:** \`${newPromptToUse}\``;
             await ctx.reply(feedbackMsg, { parse_mode: 'Markdown' });
             try {
                 await ctx.telegram.editMessageCaption(ctx.chat?.id, loadingMsg.message_id, undefined, '🧠 (Этап 3/3) Nano Banana генерирует финальную версию...');
             }
             catch (e) { }
             // Step 3: Nano Banana generates with reference and new prompt
-            const nanoUrl = await generator_service_1.default.generateImageNanoBanana(criticResult.new_prompt, dalleUrl);
+            if (!newPromptToUse || newPromptToUse.trim() === '')
+                throw new Error("Prompt generation failed, resulting string was empty.");
+            const nanoUrl = await generator_service_1.default.generateImageNanoBanana(newPromptToUse, dalleUrl);
             // Fetch the image to send if it's a data URI
             let photoSource = nanoUrl;
             if (nanoUrl.startsWith('data:')) {

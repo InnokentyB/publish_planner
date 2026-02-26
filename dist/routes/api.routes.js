@@ -364,7 +364,12 @@ async function apiRoutes(fastify) {
                 const criticResult = await multi_agent_service_1.default.runImageCritic(post.project_id, textToUse, dalleUrl);
                 if (!criticResult)
                     throw new Error("Critic failed to generate feedback.");
-                safePrompt = criticResult.new_prompt; // Update prompt to the new one
+                // Ensure we have a prompt, the model might use 'prompt' instead of 'new_prompt'
+                safePrompt = criticResult.new_prompt || criticResult.prompt || `A highly detailed image about: ${post.topic}`;
+                // Ensure safePrompt is valid
+                if (!safePrompt || typeof safePrompt !== 'string' || safePrompt.trim() === '') {
+                    safePrompt = `A professional illustration for: ${post.topic}`;
+                }
                 // 3. Nano Banana with reference
                 imageUrl = await generator_service_1.default.generateImageNanoBanana(safePrompt, dalleUrl);
             }
@@ -533,7 +538,7 @@ async function apiRoutes(fastify) {
             const projectId = request.projectId;
             if (!projectId)
                 return reply.code(400).send({ error: 'Project ID required' });
-            const roles = ['post_creator', 'post_critic', 'post_fixer', 'topic_creator', 'topic_critic', 'topic_fixer', 'visual_architect', 'structural_critic', 'precision_fixer'];
+            const roles = ['post_creator', 'post_critic', 'post_fixer', 'topic_creator', 'topic_critic', 'topic_fixer', 'visual_architect', 'structural_critic', 'precision_fixer', 'image_critic'];
             const agents = [];
             // Text Agents
             for (const role of roles) {
@@ -666,6 +671,11 @@ async function apiRoutes(fastify) {
                 prompt: multi_agent_service_1.default.KEY_PRECISION_FIXER_PROMPT,
                 key: multi_agent_service_1.default.KEY_PRECISION_FIXER_KEY,
                 model: multi_agent_service_1.default.KEY_PRECISION_FIXER_MODEL
+            },
+            'image_critic': {
+                prompt: multi_agent_service_1.default.KEY_IMAGE_CRITIC_PROMPT,
+                key: multi_agent_service_1.default.KEY_IMAGE_CRITIC_KEY,
+                model: multi_agent_service_1.default.KEY_IMAGE_CRITIC_MODEL
             }
         };
         const keys = roleMap[role];

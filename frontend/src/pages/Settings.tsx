@@ -589,6 +589,7 @@ export default function Settings() {
                                 <option value="visual_architect">Visual Architect</option>
                                 <option value="structural_critic">Structural Critic</option>
                                 <option value="precision_fixer">Precision Fixer</option>
+                                <option value="image_critic">Image Critic</option>
                                 <option disabled>--- Legacy / Simple Image ---</option>
                                 <option value="dalle_image_gen">DALL-E Prompt</option>
                                 <option value="nano_image_gen">Nano Banana Prompt</option>

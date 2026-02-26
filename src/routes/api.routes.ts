@@ -407,7 +407,14 @@ export default async function apiRoutes(fastify: FastifyInstance) {
                 // 2. Critic
                 const criticResult = await multiAgentService.runImageCritic(post.project_id, textToUse, dalleUrl);
                 if (!criticResult) throw new Error("Critic failed to generate feedback.");
-                safePrompt = criticResult.new_prompt; // Update prompt to the new one
+                // Ensure we have a prompt, the model might use 'prompt' instead of 'new_prompt'
+                safePrompt = criticResult.new_prompt || (criticResult as any).prompt || `A highly detailed image about: ${post.topic}`;
+
+                // Ensure safePrompt is valid
+                if (!safePrompt || typeof safePrompt !== 'string' || safePrompt.trim() === '') {
+                    safePrompt = `A professional illustration for: ${post.topic}`;
+                }
+
                 // 3. Nano Banana with reference
                 imageUrl = await generatorService.generateImageNanoBanana(safePrompt, dalleUrl);
             } else {
@@ -598,7 +605,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             const projectId = (request as any).projectId;
             if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
 
-            const roles = ['post_creator', 'post_critic', 'post_fixer', 'topic_creator', 'topic_critic', 'topic_fixer', 'visual_architect', 'structural_critic', 'precision_fixer'];
+            const roles = ['post_creator', 'post_critic', 'post_fixer', 'topic_creator', 'topic_critic', 'topic_fixer', 'visual_architect', 'structural_critic', 'precision_fixer', 'image_critic'];
             const agents = [];
 
             // Text Agents
@@ -732,6 +739,11 @@ export default async function apiRoutes(fastify: FastifyInstance) {
                 prompt: multiAgentService.KEY_PRECISION_FIXER_PROMPT,
                 key: multiAgentService.KEY_PRECISION_FIXER_KEY,
                 model: multiAgentService.KEY_PRECISION_FIXER_MODEL
+            },
+            'image_critic': {
+                prompt: multiAgentService.KEY_IMAGE_CRITIC_PROMPT,
+                key: multiAgentService.KEY_IMAGE_CRITIC_KEY,
+                model: multiAgentService.KEY_IMAGE_CRITIC_MODEL
             }
         };
 
