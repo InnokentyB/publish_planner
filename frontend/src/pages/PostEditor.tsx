@@ -371,7 +371,7 @@ export default function PostEditor() {
                     <h3>Image</h3>
                     {post.image_url ? (
                         <div className="mb-2 text-center">
-                            <img src={`${post.image_url}?t=${imageTimestamp}`} alt="Post visual" style={{ maxWidth: '100%', borderRadius: '4px' }} />
+                            <img src={post.image_url.startsWith('data:') ? post.image_url : `${post.image_url}?t=${imageTimestamp}`} alt="Post visual" style={{ maxWidth: '100%', borderRadius: '4px' }} />
                         </div>
                     ) : (
                         <p className="text-muted" style={{ border: '2px dashed var(--border)', padding: '2rem', textAlign: 'center', borderRadius: '8px' }}>
