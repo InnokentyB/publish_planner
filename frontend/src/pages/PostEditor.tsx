@@ -106,7 +106,7 @@ export default function PostEditor() {
     })
 
     const generateImage = useMutation({
-        mutationFn: () => api.post(`/api/posts/${id}/generate-image`, { provider: 'dalle' }),
+        mutationFn: (provider: 'dalle' | 'nano' | 'full' = 'dalle') => api.post(`/api/posts/${id}/generate-image`, { provider }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['post', id] })
             setImageTimestamp(Date.now())
@@ -387,18 +387,44 @@ export default function PostEditor() {
                         </div>
                     )}
 
-                    <button
-                        className="btn-secondary"
-                        style={{ width: '100%' }}
-                        onClick={() => {
-                            if (window.confirm('Generate image for this post?')) {
-                                generateImage.mutate();
-                            }
-                        }}
-                        disabled={generateImage.isPending}
-                    >
-                        {generateImage.isPending ? 'Generating...' : (post.image_url ? 'Regenerate Image' : 'Generate Image')}
-                    </button>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        <button
+                            className="btn-secondary"
+                            style={{ width: '100%' }}
+                            onClick={() => {
+                                if (window.confirm('Generate basic DALL-E image?')) {
+                                    generateImage.mutate('dalle');
+                                }
+                            }}
+                            disabled={generateImage.isPending}
+                        >
+                            {generateImage.isPending ? 'Generating...' : (post.image_url ? 'Regenerate DALL-E' : 'Generate DALL-E')}
+                        </button>
+                        <button
+                            className="btn-secondary"
+                            style={{ width: '100%' }}
+                            onClick={() => {
+                                if (window.confirm('Generate Nano Banana image?')) {
+                                    generateImage.mutate('nano');
+                                }
+                            }}
+                            disabled={generateImage.isPending}
+                        >
+                            {generateImage.isPending ? 'Generating...' : (post.image_url ? 'Regenerate Nano Banana' : 'Generate Nano Banana')}
+                        </button>
+                        <button
+                            className="btn-primary"
+                            style={{ width: '100%' }}
+                            onClick={() => {
+                                if (window.confirm('Run full pipeline: DALL-E -> Image Critic -> Nano Banana? This may take up to a minute.')) {
+                                    generateImage.mutate('full');
+                                }
+                            }}
+                            disabled={generateImage.isPending}
+                        >
+                            🧠 {generateImage.isPending ? 'Running Pipeline...' : 'DALL-E -> Critic -> Nano'}
+                        </button>
+                    </div>
 
                     <div className="mt-2 text-center" style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
                         or

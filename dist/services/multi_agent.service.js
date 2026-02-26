@@ -1,68 +1,94 @@
-import OpenAI from 'openai';
-import Anthropic from '@anthropic-ai/sdk';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { config } from 'dotenv';
-import { PrismaClient } from '@prisma/client';
-import { Pool } from 'pg';
-import { PrismaPg } from '@prisma/adapter-pg';
-import prisma from '../db';
-import commentService from './comment.service';
-
-config();
-
-interface CritiqueResult {
-    score: number;
-    critique: string;
-}
-
-interface MultiAgentResult {
-    finalText: string;
-    score: number;
-    iterations: number;
-    history: {
-        iteration: number;
-        score: number;
-        critique: string;
-    }[];
-}
-
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const openai_1 = __importDefault(require("openai"));
+const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const generative_ai_1 = require("@google/generative-ai");
+const dotenv_1 = require("dotenv");
+const db_1 = __importDefault(require("../db"));
+const comment_service_1 = __importDefault(require("./comment.service"));
+(0, dotenv_1.config)();
 class MultiAgentService {
-    private openai?: OpenAI;
-    private prisma: PrismaClient;
-
-    // Keys for Post Generation Agents
-    public readonly KEY_POST_CREATOR_PROMPT = 'multi_agent_post_creator_prompt';
-    public readonly KEY_POST_CREATOR_KEY = 'multi_agent_post_creator_key';
-    public readonly KEY_POST_CREATOR_MODEL = 'multi_agent_post_creator_model';
-
-    public readonly KEY_POST_CRITIC_PROMPT = 'multi_agent_post_critic_prompt';
-    public readonly KEY_POST_CRITIC_KEY = 'multi_agent_post_critic_key';
-    public readonly KEY_POST_CRITIC_MODEL = 'multi_agent_post_critic_model';
-
-    public readonly KEY_POST_FIXER_PROMPT = 'multi_agent_post_fixer_prompt';
-    public readonly KEY_POST_FIXER_KEY = 'multi_agent_post_fixer_key';
-    public readonly KEY_POST_FIXER_MODEL = 'multi_agent_post_fixer_model';
-
-    public readonly KEY_POST_CLASSIFIER = 'post_classifier';
-    public readonly DEFAULT_POST_CLASSIFIER_PROMPT = "You are an AI classifier. Analyze the provided social media post and determine the best category for it (e.g., 'Soft Skills', 'Tech News', 'Tutorial', 'Opinion', 'Case Study'). Also, generate exactly 3 relevant hashtags. Return ONLY a JSON object with keys 'category' (string) and 'tags' (array of strings).";
-
-    // Keys for Topic Generation Agents
-    public readonly KEY_TOPIC_CREATOR_PROMPT = 'multi_agent_topic_creator_prompt';
-    public readonly KEY_TOPIC_CREATOR_KEY = 'multi_agent_topic_creator_key';
-    public readonly KEY_TOPIC_CREATOR_MODEL = 'multi_agent_topic_creator_model';
-
-    public readonly KEY_TOPIC_CRITIC_PROMPT = 'multi_agent_topic_critic_prompt';
-    public readonly KEY_TOPIC_CRITIC_KEY = 'multi_agent_topic_critic_key';
-    public readonly KEY_TOPIC_CRITIC_MODEL = 'multi_agent_topic_critic_model';
-
-    public readonly KEY_TOPIC_FIXER_PROMPT = 'multi_agent_topic_fixer_prompt';
-    public readonly KEY_TOPIC_FIXER_KEY = 'multi_agent_topic_fixer_key';
-    public readonly KEY_TOPIC_FIXER_MODEL = 'multi_agent_topic_fixer_model';
-
-    // Default Propmts for Post Generation (similar to legacy but split)
-    private readonly DEFAULT_POST_CREATOR_PROMPT = `You are an expert content creator. Write an engaging, insightful, and professionally formatted Telegram post about the given topic. Use Markdown. Focus on value. Max 4000 chars. Language: Russian.`;
-    private readonly DEFAULT_POST_CRITIC_PROMPT = `You are a strict editor. Evaluate the post based on relevance, insight, clarity, engagement, and formatting. Output JSON with "score" (0-100) and "critique" (in Russian).`;
-    private readonly DEFAULT_POST_FIXER_PROMPT = `You are an expert editor. Rewrite the post to address the critique while keeping the original meaning. Language: Russian. 
+    /**
+     * Run Sequential Writer
+     */
+    async runSequentialWriter(projectId, context) {
+        return this.runJsonAgent(projectId, 'seq_writer', this.KEY_SEQ_WRITER_PROMPT, this.DEFAULT_SEQ_WRITER_PROMPT, JSON.stringify(context));
+    }
+    /**
+     * Run Content Critic
+     */
+    async runContentCritic(projectId, context) {
+        const result = await this.runJsonAgent(projectId, 'seq_critic', this.KEY_SEQ_CRITIC_PROMPT, this.DEFAULT_SEQ_CRITIC_PROMPT, JSON.stringify(context));
+        return {
+            score: result?.score || 0,
+            critique: result?.critique || "Parsing error"
+        };
+    }
+    /**
+     * Run Content Fixer
+     */
+    async runContentFixer(projectId, context) {
+        return this.runJsonAgent(projectId, 'seq_fixer', this.KEY_SEQ_FIXER_PROMPT, this.DEFAULT_SEQ_FIXER_PROMPT, JSON.stringify(context));
+    }
+    /**
+     * Generic JSON Agent Runner
+     */
+    async runJsonAgent(projectId, role, promptKey, defaultPrompt, input) {
+        const config = await this.getAgentConfig(projectId, role); // cast for now
+        const systemPrompt = config.prompt || defaultPrompt;
+        let responseText = '';
+        if (!this.openai)
+            throw new Error("OpenAI not initialized");
+        try {
+            const completion = await this.openai.chat.completions.create({
+                model: config.model || 'gpt-4o',
+                messages: [
+                    { role: 'system', content: systemPrompt + (systemPrompt.toLowerCase().includes('json') ? '' : '\n\nOutput must be in JSON format.') },
+                    { role: 'user', content: input }
+                ],
+                response_format: { type: 'json_object' }
+            });
+            responseText = completion.choices[0].message.content || '{}';
+            // Log run
+            await this.logRun(projectId, 'seq_gen', role, 'success', input, systemPrompt, responseText, null);
+            return JSON.parse(responseText);
+        }
+        catch (error) {
+            console.error(`[MultiAgent] ${role} failed:`, error);
+            await this.logRun(projectId, 'seq_gen', role, 'failed', input, systemPrompt, '', error.message);
+            return null;
+        }
+    }
+    constructor() {
+        // Keys for Post Generation Agents
+        this.KEY_POST_CREATOR_PROMPT = 'multi_agent_post_creator_prompt';
+        this.KEY_POST_CREATOR_KEY = 'multi_agent_post_creator_key';
+        this.KEY_POST_CREATOR_MODEL = 'multi_agent_post_creator_model';
+        this.KEY_POST_CRITIC_PROMPT = 'multi_agent_post_critic_prompt';
+        this.KEY_POST_CRITIC_KEY = 'multi_agent_post_critic_key';
+        this.KEY_POST_CRITIC_MODEL = 'multi_agent_post_critic_model';
+        this.KEY_POST_FIXER_PROMPT = 'multi_agent_post_fixer_prompt';
+        this.KEY_POST_FIXER_KEY = 'multi_agent_post_fixer_key';
+        this.KEY_POST_FIXER_MODEL = 'multi_agent_post_fixer_model';
+        this.KEY_POST_CLASSIFIER = 'post_classifier';
+        this.DEFAULT_POST_CLASSIFIER_PROMPT = "You are an AI classifier. Analyze the provided social media post and determine the best category for it (e.g., 'Soft Skills', 'Tech News', 'Tutorial', 'Opinion', 'Case Study'). Also, generate exactly 3 relevant hashtags. Return ONLY a JSON object with keys 'category' (string) and 'tags' (array of strings).";
+        // Keys for Topic Generation Agents
+        this.KEY_TOPIC_CREATOR_PROMPT = 'multi_agent_topic_creator_prompt';
+        this.KEY_TOPIC_CREATOR_KEY = 'multi_agent_topic_creator_key';
+        this.KEY_TOPIC_CREATOR_MODEL = 'multi_agent_topic_creator_model';
+        this.KEY_TOPIC_CRITIC_PROMPT = 'multi_agent_topic_critic_prompt';
+        this.KEY_TOPIC_CRITIC_KEY = 'multi_agent_topic_critic_key';
+        this.KEY_TOPIC_CRITIC_MODEL = 'multi_agent_topic_critic_model';
+        this.KEY_TOPIC_FIXER_PROMPT = 'multi_agent_topic_fixer_prompt';
+        this.KEY_TOPIC_FIXER_KEY = 'multi_agent_topic_fixer_key';
+        this.KEY_TOPIC_FIXER_MODEL = 'multi_agent_topic_fixer_model';
+        // Default Propmts for Post Generation (similar to legacy but split)
+        this.DEFAULT_POST_CREATOR_PROMPT = `You are an expert content creator. Write an engaging, insightful, and professionally formatted Telegram post about the given topic. Use Markdown. Focus on value. Max 4000 chars. Language: Russian.`;
+        this.DEFAULT_POST_CRITIC_PROMPT = `You are a strict editor. Evaluate the post based on relevance, insight, clarity, engagement, and formatting. Output JSON with "score" (0-100) and "critique" (in Russian).`;
+        this.DEFAULT_POST_FIXER_PROMPT = `You are an expert editor. Rewrite the post to address the critique while keeping the original meaning. Language: Russian. 
 
 CRITICAL: Return ONLY the improved post text itself. Do NOT include:
 - Any meta-commentary about what you changed
@@ -71,9 +97,8 @@ CRITICAL: Return ONLY the improved post text itself. Do NOT include:
 - Introductory phrases like "Here's the improved version" or "Замечательная работа"
 
 Start directly with the post content.`;
-
-    // Default Prompts for Topic Generation (Restored & Localized)
-    private readonly DEFAULT_TOPIC_CREATOR_PROMPT = `Ты — TopicAgent, генератор тем для Telegram-канала про системный и бизнес-анализ в IT.
+        // Default Prompts for Topic Generation (Restored & Localized)
+        this.DEFAULT_TOPIC_CREATOR_PROMPT = `Ты — TopicAgent, генератор тем для Telegram-канала про системный и бизнес-анализ в IT.
 
 Контекст:
 Автор канала — опытный системный аналитик и технический продакт.
@@ -93,8 +118,7 @@ Start directly with the post content.`;
 Верни ТОЛЬКО JSON строго по схеме:
 { "topics": [{"topic": "...", "category": "...", "tags": [...]}, ...] }
 Никакого текста вне JSON.`;
-
-    private readonly DEFAULT_TOPIC_CRITIC_PROMPT = `Ты — TopicCriticAgent, строгий редактор и критик контент-плана.
+        this.DEFAULT_TOPIC_CRITIC_PROMPT = `Ты — TopicCriticAgent, строгий редактор и критик контент-плана.
 
 Твоя задача — оценить список тем для Telegram-канала.
 
@@ -113,8 +137,7 @@ Start directly with the post content.`;
     "score": <number 0-100>,
     "critique": "<detailed feedback in Russian>"
 }`;
-
-    private readonly DEFAULT_TOPIC_FIXER_PROMPT = `Ты — TopicFixerAgent, автоматический редактор контент-плана.
+        this.DEFAULT_TOPIC_FIXER_PROMPT = `Ты — TopicFixerAgent, автоматический редактор контент-плана.
 
 Твоя задача:
 Применить правки, предложенные TopicCriticAgent, к списку тем.
@@ -129,46 +152,37 @@ Start directly with the post content.`;
 Формат:
 Верни ТОЛЬКО JSON с объектом { "topics": [...] }.
 Никакого текста вне JSON.`;
-
-    // Keys for Image Agent Chain
-    public readonly KEY_VISUAL_ARCHITECT_PROMPT = 'visual_architect_prompt';
-    public readonly KEY_VISUAL_ARCHITECT_KEY = 'visual_architect_key';
-    public readonly KEY_VISUAL_ARCHITECT_MODEL = 'visual_architect_model';
-
-    public readonly KEY_STRUCTURAL_CRITIC_PROMPT = 'structural_critic_prompt';
-    public readonly KEY_STRUCTURAL_CRITIC_KEY = 'structural_critic_key';
-    public readonly KEY_STRUCTURAL_CRITIC_MODEL = 'structural_critic_model';
-
-    public readonly KEY_PRECISION_FIXER_PROMPT = 'precision_fixer_prompt';
-    public readonly KEY_PRECISION_FIXER_KEY = 'precision_fixer_key';
-    public readonly KEY_PRECISION_FIXER_MODEL = 'precision_fixer_model';
-
-    // Keys for Image Critic Agent (GPT-4o Vision)
-    public readonly KEY_IMAGE_CRITIC_PROMPT = 'image_critic_prompt';
-    public readonly KEY_IMAGE_CRITIC_KEY = 'image_critic_key';
-    public readonly KEY_IMAGE_CRITIC_MODEL = 'image_critic_model';
-
-    // Default Prompts for Image Chain
-    public readonly DEFAULT_VISUAL_ARCHITECT_PROMPT = "You are a Visual Architect. Your goal is to analyze the text, identify the core architectural conflict, select a single metaphor, and propose a rough scene. You MUST NOT generate the final prompt. Output ONLY a JSON object with keys: 'conflict', 'metaphor', 'scene_concept'.";
-    public readonly DEFAULT_STRUCTURAL_CRITIC_PROMPT = "You are a Structural Critic. Analyze the provided scene concept. Check for: 1) Dominant conflict, 2) Causal link, 3) Abstraction level (should not be too abstract), 4) Dynamics. valid categories: Opinion, Education, Critique. Output ONLY a JSON object with keys: 'critique', 'weaknesses' (array of strings), 'score' (1-10).";
-    public readonly DEFAULT_PRECISION_FIXER_PROMPT = "You are a Precision Fixer. Take the original concept and the critic's feedback. Rewrite the scene to: 1) Remove abstraction, 2) Strengthen conflict, 3) Improve readability, 4) Add engineering details. Output ONLY the raw final image prompt for DALL-E/Midjourney. Do not add markdown or labels.";
-    public readonly DEFAULT_IMAGE_CRITIC_PROMPT = "You are an expert Image Critic. Your task is to analyze a generated image (DALL-E) against the original post text. Describe what the image missed, what works well, and how to improve it to better match the post's core message. Finally, write a NEW, EXTREMELY DETAILED prompt for a photorealistic image generator (like Imagen 4). You MUST output ONLY valid JSON with exactly three keys: 'critique' (string in Russian), 'recommendations' (string in Russian), and 'new_prompt' (string in English).";
-
-    // Keys for Sequential Generation Agents (Week Memory)
-    public readonly KEY_SEQ_WRITER_PROMPT = 'multi_agent_seq_writer_prompt';
-    public readonly KEY_SEQ_WRITER_KEY = 'multi_agent_seq_writer_key';
-    public readonly KEY_SEQ_WRITER_MODEL = 'multi_agent_seq_writer_model';
-
-    public readonly KEY_SEQ_CRITIC_PROMPT = 'multi_agent_seq_critic_prompt';
-    public readonly KEY_SEQ_CRITIC_KEY = 'multi_agent_seq_critic_key';
-    public readonly KEY_SEQ_CRITIC_MODEL = 'multi_agent_seq_critic_model';
-
-    public readonly KEY_SEQ_FIXER_PROMPT = 'multi_agent_seq_fixer_prompt';
-    public readonly KEY_SEQ_FIXER_KEY = 'multi_agent_seq_fixer_key';
-    public readonly KEY_SEQ_FIXER_MODEL = 'multi_agent_seq_fixer_model';
-
-    // Default Sequential Prompts
-    private readonly DEFAULT_SEQ_WRITER_PROMPT = `You are a professional Content Writer based on context and memory.
+        // Keys for Image Agent Chain
+        this.KEY_VISUAL_ARCHITECT_PROMPT = 'visual_architect_prompt';
+        this.KEY_VISUAL_ARCHITECT_KEY = 'visual_architect_key';
+        this.KEY_VISUAL_ARCHITECT_MODEL = 'visual_architect_model';
+        this.KEY_STRUCTURAL_CRITIC_PROMPT = 'structural_critic_prompt';
+        this.KEY_STRUCTURAL_CRITIC_KEY = 'structural_critic_key';
+        this.KEY_STRUCTURAL_CRITIC_MODEL = 'structural_critic_model';
+        this.KEY_PRECISION_FIXER_PROMPT = 'precision_fixer_prompt';
+        this.KEY_PRECISION_FIXER_KEY = 'precision_fixer_key';
+        this.KEY_PRECISION_FIXER_MODEL = 'precision_fixer_model';
+        // Keys for Image Critic Agent (GPT-4o Vision)
+        this.KEY_IMAGE_CRITIC_PROMPT = 'image_critic_prompt';
+        this.KEY_IMAGE_CRITIC_KEY = 'image_critic_key';
+        this.KEY_IMAGE_CRITIC_MODEL = 'image_critic_model';
+        // Default Prompts for Image Chain
+        this.DEFAULT_VISUAL_ARCHITECT_PROMPT = "You are a Visual Architect. Your goal is to analyze the text, identify the core architectural conflict, select a single metaphor, and propose a rough scene. You MUST NOT generate the final prompt. Output ONLY a JSON object with keys: 'conflict', 'metaphor', 'scene_concept'.";
+        this.DEFAULT_STRUCTURAL_CRITIC_PROMPT = "You are a Structural Critic. Analyze the provided scene concept. Check for: 1) Dominant conflict, 2) Causal link, 3) Abstraction level (should not be too abstract), 4) Dynamics. valid categories: Opinion, Education, Critique. Output ONLY a JSON object with keys: 'critique', 'weaknesses' (array of strings), 'score' (1-10).";
+        this.DEFAULT_PRECISION_FIXER_PROMPT = "You are a Precision Fixer. Take the original concept and the critic's feedback. Rewrite the scene to: 1) Remove abstraction, 2) Strengthen conflict, 3) Improve readability, 4) Add engineering details. Output ONLY the raw final image prompt for DALL-E/Midjourney. Do not add markdown or labels.";
+        this.DEFAULT_IMAGE_CRITIC_PROMPT = "You are an expert Image Critic. Your task is to analyze a generated image (DALL-E) against the original post text. Describe what the image missed, what works well, and how to improve it to better match the post's core message. Finally, write a NEW, EXTREMELY DETAILED prompt for a photorealistic image generator (like Imagen 4). You MUST output ONLY valid JSON with exactly three keys: 'critique' (string in Russian), 'recommendations' (string in Russian), and 'new_prompt' (string in English).";
+        // Keys for Sequential Generation Agents (Week Memory)
+        this.KEY_SEQ_WRITER_PROMPT = 'multi_agent_seq_writer_prompt';
+        this.KEY_SEQ_WRITER_KEY = 'multi_agent_seq_writer_key';
+        this.KEY_SEQ_WRITER_MODEL = 'multi_agent_seq_writer_model';
+        this.KEY_SEQ_CRITIC_PROMPT = 'multi_agent_seq_critic_prompt';
+        this.KEY_SEQ_CRITIC_KEY = 'multi_agent_seq_critic_key';
+        this.KEY_SEQ_CRITIC_MODEL = 'multi_agent_seq_critic_model';
+        this.KEY_SEQ_FIXER_PROMPT = 'multi_agent_seq_fixer_prompt';
+        this.KEY_SEQ_FIXER_KEY = 'multi_agent_seq_fixer_key';
+        this.KEY_SEQ_FIXER_MODEL = 'multi_agent_seq_fixer_model';
+        // Default Sequential Prompts
+        this.DEFAULT_SEQ_WRITER_PROMPT = `You are a professional Content Writer based on context and memory.
 Your goal is to write a Telegram post that fits into a weekly narrative.
 
 Input Constraint:
@@ -194,8 +208,7 @@ Definitions:
 - angle: contrarian / analytical / emotional / educational.
 
 Language: Russian (text), English (keys in JSON).`;
-
-    private readonly DEFAULT_SEQ_CRITIC_PROMPT = `You are a strict Content Critic.
+        this.DEFAULT_SEQ_CRITIC_PROMPT = `You are a strict Content Critic.
 Review the provided post against the "Week Memory".
 
 Criteria:
@@ -209,8 +222,7 @@ Output JSON Format:
   "score": 0-100,
   "critique": "Specific feedback in Russian..."
 }`;
-
-    private readonly DEFAULT_SEQ_FIXER_PROMPT = `You are a Content Editor (Fixer).
+        this.DEFAULT_SEQ_FIXER_PROMPT = `You are a Content Editor (Fixer).
 Rewrite the post based on the critique. 
 Maintain the JSON structure.
 Ensure "core_takeaway" is distinct.
@@ -226,77 +238,23 @@ Output JSON Format (Strict):
   "cta_question": "...",
   "hashtags": ["..."]
 }`;
-
-    /**
-     * Run Sequential Writer
-     */
-    async runSequentialWriter(projectId: number, context: any): Promise<any> {
-        return this.runJsonAgent(projectId, 'seq_writer', this.KEY_SEQ_WRITER_PROMPT, this.DEFAULT_SEQ_WRITER_PROMPT, JSON.stringify(context));
-    }
-
-    /**
-     * Run Content Critic
-     */
-    async runContentCritic(projectId: number, context: any): Promise<{ score: number, critique: string }> {
-        const result = await this.runJsonAgent(projectId, 'seq_critic', this.KEY_SEQ_CRITIC_PROMPT, this.DEFAULT_SEQ_CRITIC_PROMPT, JSON.stringify(context));
-        return {
-            score: result?.score || 0,
-            critique: result?.critique || "Parsing error"
-        };
-    }
-
-    /**
-     * Run Content Fixer
-     */
-    async runContentFixer(projectId: number, context: any): Promise<any> {
-        return this.runJsonAgent(projectId, 'seq_fixer', this.KEY_SEQ_FIXER_PROMPT, this.DEFAULT_SEQ_FIXER_PROMPT, JSON.stringify(context));
-    }
-
-    /**
-     * Generic JSON Agent Runner
-     */
-    private async runJsonAgent(projectId: number, role: string, promptKey: string, defaultPrompt: string, input: string): Promise<any> {
-        const config = await this.getAgentConfig(projectId, role as any); // cast for now
-        const systemPrompt = config.prompt || defaultPrompt;
-
-        let responseText = '';
-
-        if (!this.openai) throw new Error("OpenAI not initialized");
-
-        try {
-            const completion = await this.openai.chat.completions.create({
-                model: config.model || 'gpt-4o',
-                messages: [
-                    { role: 'system', content: systemPrompt + (systemPrompt.toLowerCase().includes('json') ? '' : '\n\nOutput must be in JSON format.') },
-                    { role: 'user', content: input }
-                ],
-                response_format: { type: 'json_object' }
-            });
-
-            responseText = completion.choices[0].message.content || '{}';
-
-            // Log run
-            await this.logRun(projectId, 'seq_gen', role, 'success', input, systemPrompt, responseText, null);
-
-            return JSON.parse(responseText);
-
-        } catch (error: any) {
-            console.error(`[MultiAgent] ${role} failed:`, error);
-            await this.logRun(projectId, 'seq_gen', role, 'failed', input, systemPrompt, '', error.message);
-            return null;
-        }
-    }
-
-    constructor() {
+        // --- Legacy / Topic Generation ---
+        // Keys for prompt settings (Topics)
+        this.KEY_TOPIC_CREATOR = 'multi_agent_topic_creator';
+        this.KEY_TOPIC_CRITIC = 'multi_agent_topic_critic';
+        this.KEY_TOPIC_FIXER = 'multi_agent_topic_fixer';
+        // Legacy Single Post (Keeping for backward compatibility if needed, but confusingly named 'run')
+        this.KEY_CREATOR = 'multi_agent_creator';
+        this.KEY_CRITIC = 'multi_agent_critic';
+        this.KEY_FIXER = 'multi_agent_fixer';
         if (process.env.OPENAI_API_KEY) {
-            this.openai = new OpenAI({
+            this.openai = new openai_1.default({
                 apiKey: process.env.OPENAI_API_KEY,
             });
         }
-        this.prisma = prisma;
+        this.prisma = db_1.default;
     }
-
-    private async logRun(projectId: number, type: string, agentRole: string | null, status: 'success' | 'failed', input: string | null, prompt: string | null, output: string | null, error: string | null) {
+    async logRun(projectId, type, agentRole, status, input, prompt, output, error) {
         try {
             await this.prisma.agentRun.create({
                 data: {
@@ -310,69 +268,58 @@ Output JSON Format (Strict):
                     error: error ? error.substring(0, 5000) : null
                 }
             });
-        } catch (e) {
+        }
+        catch (e) {
             console.error('Failed to log agent run', e);
         }
     }
-
     // ... existing methods (need to be updated to use logRun) ...
     // I will update them one by one or in blocks to avoid huge replacement
-
-    public async runImagePromptingChain(projectId: number, postText: string, topic: string): Promise<string> {
+    async runImagePromptingChain(projectId, postText, topic) {
         console.log(`[MultiAgent] Running Image Chain for project ${projectId}`);
-
         // 1. Visual Architect
         const archInput = `Topic: ${topic}\n\nKey Text Context:\n${postText.substring(0, 500)}...`;
-
         let concept = await this.runJsonAgent(projectId, 'visual_architect', this.KEY_VISUAL_ARCHITECT_PROMPT, this.DEFAULT_VISUAL_ARCHITECT_PROMPT, archInput);
-
         let sceneConcept = concept?.scene_concept;
-
         if (concept && !sceneConcept) {
             // Handle custom UI prompts that return custom keys like "Draft scene" or "scene"
             const sceneKey = Object.keys(concept).find(k => k.toLowerCase().includes('scene'));
             if (sceneKey) {
                 sceneConcept = concept[sceneKey];
-            } else {
+            }
+            else {
                 // Fallback to stringifying the entire JSON if no specific scene key is found
                 sceneConcept = concept;
             }
         }
-
         if (sceneConcept && typeof sceneConcept === 'object') {
             sceneConcept = JSON.stringify(sceneConcept);
-        } else if (sceneConcept != null) {
+        }
+        else if (sceneConcept != null) {
             sceneConcept = String(sceneConcept);
         }
-
         // Fallback if Architect completely fails or returns empty
         if (!sceneConcept || sceneConcept === '{}') {
             console.warn('[MultiAgent] Visual Architect failed or returned invalid JSON. Using fallback.');
             return `A professional, high-quality, abstract illustration about: ${topic}. Minimalist style, corporate tech colors.`;
         }
-
         console.log('[MultiAgent] Visual Architect Concept:', sceneConcept.substring(0, 50));
-
         // 2. Structural Critic
         const criticInput = `Scene Concept: ${sceneConcept}`;
         let critique = await this.runJsonAgent(projectId, 'structural_critic', this.KEY_STRUCTURAL_CRITIC_PROMPT, this.DEFAULT_STRUCTURAL_CRITIC_PROMPT, criticInput);
-
         console.log('[MultiAgent] Structural Critic Score:', critique?.score);
-
         // 3. Precision Fixer (Final Prompt)
         const fixerInput = `Original Concept: ${sceneConcept}\nCritique: ${critique?.critique || 'No critique'}`;
-
         // Precision Fixer returns a STRING (Raw Prompt), not JSON usually, but let's check input/output format
         // The default prompt says: "Output ONLY the raw final image prompt"
         // So runJsonAgent might be wrong if it expects JSON. 
         // Let's use a generic runTextAgent for this or handle it.
-
         // Let's create a runTextAgent helper if not exists, or just manually call getAgentConfig + openai
         const fixerConfig = await this.getAgentConfig(projectId, 'precision_fixer');
         const systemPrompt = fixerConfig.prompt || this.DEFAULT_PRECISION_FIXER_PROMPT;
-
         try {
-            if (!this.openai) throw new Error("OpenAI not initialized");
+            if (!this.openai)
+                throw new Error("OpenAI not initialized");
             const response = await this.openai.chat.completions.create({
                 model: fixerConfig.model || 'gpt-4o',
                 messages: [
@@ -381,28 +328,23 @@ Output JSON Format (Strict):
                 ],
                 temperature: 0.7
             });
-
             const finalPrompt = response.choices[0].message.content || '';
-
             await this.logRun(projectId, 'image_chain', 'precision_fixer', 'success', fixerInput, systemPrompt, finalPrompt, null);
-
             // Clean up prompt (remove quotes if added by LLM)
             return finalPrompt.replace(/^"|"$/g, '').trim() || `Illustration about ${topic}`;
-
-        } catch (e: any) {
+        }
+        catch (e) {
             console.error('[MultiAgent] Precision Fixer failed:', e);
             await this.logRun(projectId, 'image_chain', 'precision_fixer', 'failed', fixerInput, systemPrompt, null, e.message);
             return sceneConcept; // Fallback to raw text from previous agent
         }
     }
-
-    public async runImageCritic(projectId: number, postText: string, imageUrl: string): Promise<{ critique: string, recommendations: string, new_prompt: string } | null> {
+    async runImageCritic(projectId, postText, imageUrl) {
         console.log(`[MultiAgent] Running Image Critic for project ${projectId}`);
         const config = await this.getAgentConfig(projectId, 'image_critic');
         const systemPrompt = config.prompt || this.DEFAULT_IMAGE_CRITIC_PROMPT;
-
-        if (!this.openai) throw new Error("OpenAI not initialized");
-
+        if (!this.openai)
+            throw new Error("OpenAI not initialized");
         try {
             const response = await this.openai.chat.completions.create({
                 model: 'gpt-4o', // Must use a vision-capable model
@@ -418,19 +360,17 @@ Output JSON Format (Strict):
                 ],
                 response_format: { type: 'json_object' }
             });
-
             const content = response.choices[0].message.content || '{}';
             await this.logRun(projectId, 'image_critic', 'image_critic', 'success', 'Image URL + Text', systemPrompt, content, null);
-
             return JSON.parse(content);
-        } catch (e: any) {
+        }
+        catch (e) {
             console.error('[MultiAgent] Image Critic failed:', e);
             await this.logRun(projectId, 'image_critic', 'image_critic', 'failed', 'Image URL + Text', systemPrompt, null, e.message);
             return null;
         }
     }
-
-    private async getPrompt(projectId: number, key: string, defaultVal: string): Promise<string> {
+    async getPrompt(projectId, key, defaultVal) {
         try {
             const setting = await this.prisma.projectSettings.findUnique({
                 where: {
@@ -440,96 +380,105 @@ Output JSON Format (Strict):
                     }
                 }
             });
-            if (setting) return setting.value;
-
+            if (setting)
+                return setting.value;
             // Create default if missing for this project
             await this.prisma.projectSettings.create({
                 data: { project_id: projectId, key, value: defaultVal }
             });
             return defaultVal;
-        } catch (e) {
+        }
+        catch (e) {
             console.error(`Failed to fetch prompt for ${key} in project ${projectId} `, e);
             return defaultVal;
         }
     }
-
-    public async getAgentConfig(projectId: number, rolePrefix: string) {
+    async getAgentConfig(projectId, rolePrefix) {
         let apiKeyKey = '';
         let modelKey = '';
         let promptKey = '';
         let defaultPrompt = '';
-
         if (rolePrefix === 'post_creator') {
             apiKeyKey = this.KEY_POST_CREATOR_KEY;
             modelKey = this.KEY_POST_CREATOR_MODEL;
             promptKey = this.KEY_POST_CREATOR_PROMPT;
             defaultPrompt = this.DEFAULT_POST_CREATOR_PROMPT;
-        } else if (rolePrefix === 'post_critic') {
+        }
+        else if (rolePrefix === 'post_critic') {
             apiKeyKey = this.KEY_POST_CRITIC_KEY;
             modelKey = this.KEY_POST_CRITIC_MODEL;
             promptKey = this.KEY_POST_CRITIC_PROMPT;
             defaultPrompt = this.DEFAULT_POST_CRITIC_PROMPT;
-        } else if (rolePrefix === 'post_fixer') {
+        }
+        else if (rolePrefix === 'post_fixer') {
             apiKeyKey = this.KEY_POST_FIXER_KEY;
             modelKey = this.KEY_POST_FIXER_MODEL;
             promptKey = this.KEY_POST_FIXER_PROMPT;
             defaultPrompt = this.DEFAULT_POST_FIXER_PROMPT;
-        } else if (rolePrefix === 'topic_creator') {
+        }
+        else if (rolePrefix === 'topic_creator') {
             apiKeyKey = this.KEY_TOPIC_CREATOR_KEY;
             modelKey = this.KEY_TOPIC_CREATOR_MODEL;
             promptKey = this.KEY_TOPIC_CREATOR_PROMPT;
             defaultPrompt = this.DEFAULT_TOPIC_CREATOR_PROMPT;
-        } else if (rolePrefix === 'topic_critic') {
+        }
+        else if (rolePrefix === 'topic_critic') {
             apiKeyKey = this.KEY_TOPIC_CRITIC_KEY;
             modelKey = this.KEY_TOPIC_CRITIC_MODEL;
             promptKey = this.KEY_TOPIC_CRITIC_PROMPT;
             defaultPrompt = this.DEFAULT_TOPIC_CRITIC_PROMPT;
-        } else if (rolePrefix === 'topic_fixer') {
+        }
+        else if (rolePrefix === 'topic_fixer') {
             apiKeyKey = this.KEY_TOPIC_FIXER_KEY;
             modelKey = this.KEY_TOPIC_FIXER_MODEL;
             promptKey = this.KEY_TOPIC_FIXER_PROMPT;
             defaultPrompt = this.DEFAULT_TOPIC_FIXER_PROMPT;
-        } else if (rolePrefix === 'visual_architect') {
+        }
+        else if (rolePrefix === 'visual_architect') {
             apiKeyKey = this.KEY_VISUAL_ARCHITECT_KEY;
             modelKey = this.KEY_VISUAL_ARCHITECT_MODEL;
             promptKey = this.KEY_VISUAL_ARCHITECT_PROMPT;
             defaultPrompt = this.DEFAULT_VISUAL_ARCHITECT_PROMPT;
-        } else if (rolePrefix === 'structural_critic') {
+        }
+        else if (rolePrefix === 'structural_critic') {
             apiKeyKey = this.KEY_STRUCTURAL_CRITIC_KEY;
             modelKey = this.KEY_STRUCTURAL_CRITIC_MODEL;
             promptKey = this.KEY_STRUCTURAL_CRITIC_PROMPT;
             defaultPrompt = this.DEFAULT_STRUCTURAL_CRITIC_PROMPT;
-        } else if (rolePrefix === 'precision_fixer') {
+        }
+        else if (rolePrefix === 'precision_fixer') {
             apiKeyKey = this.KEY_PRECISION_FIXER_KEY;
             modelKey = this.KEY_PRECISION_FIXER_MODEL;
             promptKey = this.KEY_PRECISION_FIXER_PROMPT;
             defaultPrompt = this.DEFAULT_PRECISION_FIXER_PROMPT;
-        } else if (rolePrefix === 'image_critic') {
+        }
+        else if (rolePrefix === 'image_critic') {
             apiKeyKey = this.KEY_IMAGE_CRITIC_KEY;
             modelKey = this.KEY_IMAGE_CRITIC_MODEL;
             promptKey = this.KEY_IMAGE_CRITIC_PROMPT;
             defaultPrompt = this.DEFAULT_IMAGE_CRITIC_PROMPT;
-        } else if (rolePrefix === 'seq_writer') {
+        }
+        else if (rolePrefix === 'seq_writer') {
             apiKeyKey = ''; // No specific key for now, use default
             modelKey = '';
             promptKey = this.KEY_SEQ_WRITER_PROMPT;
             defaultPrompt = this.DEFAULT_SEQ_WRITER_PROMPT;
-        } else if (rolePrefix === 'seq_critic') {
+        }
+        else if (rolePrefix === 'seq_critic') {
             apiKeyKey = '';
             modelKey = '';
             promptKey = this.KEY_SEQ_CRITIC_PROMPT;
             defaultPrompt = this.DEFAULT_SEQ_CRITIC_PROMPT;
-        } else if (rolePrefix === 'seq_fixer') {
+        }
+        else if (rolePrefix === 'seq_fixer') {
             apiKeyKey = '';
             modelKey = '';
             promptKey = this.KEY_SEQ_FIXER_PROMPT;
             defaultPrompt = this.DEFAULT_SEQ_FIXER_PROMPT;
         }
-
         let apiKey = await this.getPrompt(projectId, apiKeyKey, '');
         const model = await this.getPrompt(projectId, modelKey, 'gpt-4o');
         const prompt = await this.getPrompt(projectId, promptKey, defaultPrompt);
-
         // Resolve Provider Key if it starts with pk_
         if (apiKey && apiKey.startsWith('pk_')) {
             const keyId = parseInt(apiKey.substring(3));
@@ -539,36 +488,32 @@ Output JSON Format (Strict):
                 });
                 if (providerKey) {
                     apiKey = providerKey.key;
-                } else {
+                }
+                else {
                     console.warn(`Provider Key ${keyId} not found for project ${projectId}`);
                     apiKey = ''; // Or keep as is? Better to fail if key is missing.
                 }
             }
         }
-
         return {
             apiKey: apiKey || process.env.OPENAI_API_KEY || '', // Fallback to env
             model,
             prompt
         };
     }
-
     // --- Post Generation Loop (New) ---
-
-    async runPostGeneration(projectId: number, theme: string, topic: string, postId: number, promptOverride?: string, withImage: boolean = false): Promise<MultiAgentResult & { category?: string, tags?: string[] }> {
+    async runPostGeneration(projectId, theme, topic, postId, promptOverride, withImage = false) {
         console.log(`[MultiAgent Post] Starting generation for: "${topic}"(Image: ${withImage})`);
-
         // Fetch comments for context
-        let commentsContext = await commentService.getCommentsForContext(projectId, 'post', postId);
+        let commentsContext = await comment_service_1.default.getCommentsForContext(projectId, 'post', postId);
         if (commentsContext) {
             console.log(`[MultiAgent Post] Found comments: ${commentsContext.length} chars`);
-        } else {
+        }
+        else {
             commentsContext = '';
         }
-
         // Define Strict Constraints
         let lengthConstraint = "";
-
         // With MTProto migration, we can handle longer captions (up to 2048 chars if premium, or just text splitting).
         // However, standard caption limit is 1024 without premium. 
         // Let's set a safe target of ~1000 for single caption or allow up to 2000 if we assume premium account/features.
@@ -576,18 +521,16 @@ Output JSON Format (Strict):
         // OR rely on premium limits. 
         // SAFE BET: Target 1000-1100. If we really want long text, we might need to send image + text as separate messages 
         // or rely on the client splitting logic we implemented (which sends photo then text remainder).
-
         if (withImage) {
             // Unified approach: Always target long, detailed posts (2000+ chars).
             // MTProto will handle splitting if needed, or send as long caption if supported.
             lengthConstraint = "LIMIT: Target length is 2000-2500 characters. Max 4000. Ensure deep coverage of the topic. Do NOT shorten the text just because there is an image.";
-        } else {
+        }
+        else {
             lengthConstraint = "LIMIT: Target length is 2000-2500 characters. Max 4000. Ensure deep coverage of the topic, do not be too brief.";
         }
-
         // Add to creator context
         commentsContext += `\n\n[CONSTRAINT]: ${lengthConstraint} `;
-
         let runLogId = 0;
         try {
             const runLog = await this.prisma.agentRun.create({
@@ -599,67 +542,58 @@ Output JSON Format (Strict):
                 }
             });
             runLogId = runLog.id;
-        } catch (e) { console.error('Failed to create run log', e); }
-
+        }
+        catch (e) {
+            console.error('Failed to create run log', e);
+        }
         let currentText = '';
         let currentScore = 0;
         let iterations = 0;
-        const history: any[] = [];
-        let category: string | undefined;
-        let tags: string[] | undefined;
-
+        const history = [];
+        let category;
+        let tags;
         try {
             const creatorConfig = await this.getAgentConfig(projectId, 'post_creator');
             if (promptOverride) {
                 creatorConfig.prompt = promptOverride;
                 console.log('[MultiAgent Post] Using prompt override');
             }
-
             currentText = await this.postCreator(theme, topic, creatorConfig, runLogId, commentsContext);
-
             const MAX_ITERATIONS = 3;
             const TARGET_SCORE = 80;
-
             while (iterations < MAX_ITERATIONS) {
                 iterations++;
                 console.log(`[MultiAgent Post] Iteration ${iterations} starting...`);
-
                 const criticConfig = await this.getAgentConfig(projectId, 'post_critic');
                 const fixerConfig = await this.getAgentConfig(projectId, 'post_fixer');
-
                 // Pass constraint to Critic
                 const critiqueResult = await this.postCritic(currentText, topic, criticConfig, runLogId, iterations, lengthConstraint);
                 currentScore = critiqueResult.score;
-
                 history.push({
                     iteration: iterations,
                     score: currentScore,
                     critique: critiqueResult.critique
                 });
-
                 console.log(`[MultiAgent Post]Iteration ${iterations} score: ${currentScore} `);
-
                 if (runLogId > 0) {
                     try {
                         await this.prisma.agentRun.update({
                             where: { id: runLogId },
                             data: { final_score: currentScore, total_iterations: iterations }
                         });
-                    } catch (e) { }
+                    }
+                    catch (e) { }
                 }
-
                 if (currentScore >= TARGET_SCORE) {
                     console.log(`[MultiAgent Post] Target score reached!`);
                     break;
                 }
-
                 if (iterations < MAX_ITERATIONS) {
                     console.log(`[MultiAgent Post] Fixing text based on critique...`);
                     // Pass constraint to Fixer
                     currentText = await this.postFixer(currentText, critiqueResult.critique, fixerConfig, runLogId, iterations, lengthConstraint);
                 }
             }
-
             // Run Classifier
             try {
                 console.log('[MultiAgent Post] Running Classifier...');
@@ -667,15 +601,14 @@ Output JSON Format (Strict):
                 if (!classifierConfig.prompt || classifierConfig.prompt === this.DEFAULT_POST_CREATOR_PROMPT) {
                     classifierConfig.prompt = this.DEFAULT_POST_CLASSIFIER_PROMPT;
                 }
-
                 const classification = await this.postClassifier(currentText, classifierConfig);
                 category = classification.category;
                 tags = classification.tags;
                 console.log('[MultiAgent Post] Classification result:', classification);
-            } catch (e) {
+            }
+            catch (e) {
                 console.error('[MultiAgent Post] Classification failed:', e);
             }
-
             if (runLogId > 0) {
                 try {
                     await this.prisma.agentRun.update({
@@ -687,9 +620,13 @@ Output JSON Format (Strict):
                             total_iterations: iterations
                         }
                     });
-                } catch (e) { console.error('Failed to finalize run log', e); }
+                }
+                catch (e) {
+                    console.error('Failed to finalize run log', e);
+                }
             }
-        } catch (error: any) {
+        }
+        catch (error) {
             console.error('[MultiAgent Post] Fatal Error in loop:', error);
             if (runLogId > 0) {
                 try {
@@ -702,11 +639,11 @@ Output JSON Format (Strict):
                             total_iterations: iterations
                         }
                     });
-                } catch (e) { }
+                }
+                catch (e) { }
             }
             throw error;
         }
-
         return {
             finalText: currentText,
             score: currentScore,
@@ -716,12 +653,10 @@ Output JSON Format (Strict):
             tags
         };
     }
-
-    private async postClassifier(text: string, config: any): Promise<{ category: string, tags: string[] }> {
+    async postClassifier(text, config) {
         let output = '{}';
-
-        if (!this.openai) return { category: '', tags: [] };
-
+        if (!this.openai)
+            return { category: '', tags: [] };
         const response = await this.openai.chat.completions.create({
             model: 'gpt-4o', // Force JSON capable model
             messages: [
@@ -731,28 +666,24 @@ Output JSON Format (Strict):
             temperature: 0.3,
             response_format: { type: "json_object" }
         });
-
         output = response.choices[0].message.content || '{}';
-
         try {
             return JSON.parse(output);
-        } catch (e) {
+        }
+        catch (e) {
             console.error('Failed to parse classifier output', output);
             return { category: 'General', tags: [] };
         }
     }
-
-    private async postCreator(theme: string, topic: string, config: any, runId: number, additionalContext: string = ''): Promise<string> {
+    async postCreator(theme, topic, config, runId, additionalContext = '') {
         let output = '';
-
         let userContent = `Theme: ${theme} \nPost Topic: ${topic} `;
         if (additionalContext) {
             userContent += `\n\nUSER COMMENTS / REQUIREMENTS: \n${additionalContext} `;
         }
-
         if (config.apiKey && config.apiKey.startsWith('sk-ant')) {
             // Use Anthropic
-            const anthropic = new Anthropic({ apiKey: config.apiKey });
+            const anthropic = new sdk_1.default({ apiKey: config.apiKey });
             const response = await anthropic.messages.create({
                 model: config.model,
                 max_tokens: 4000,
@@ -763,18 +694,20 @@ Output JSON Format (Strict):
             });
             // @ts-ignore
             output = response.content[0].text || '';
-        } else if (config.apiKey && config.apiKey.startsWith('AIza')) {
+        }
+        else if (config.apiKey && config.apiKey.startsWith('AIza')) {
             // Use Gemini
-            const genAI = new GoogleGenerativeAI(config.apiKey);
+            const genAI = new generative_ai_1.GoogleGenerativeAI(config.apiKey);
             const model = genAI.getGenerativeModel({
                 model: config.model,
                 systemInstruction: config.prompt
             });
             const result = await model.generateContent(userContent);
             output = result.response.text();
-        } else {
+        }
+        else {
             // Use OpenAI (Default)
-            const client = new OpenAI({ apiKey: config.apiKey });
+            const client = new openai_1.default({ apiKey: config.apiKey });
             const response = await client.chat.completions.create({
                 model: config.model,
                 messages: [
@@ -785,7 +718,6 @@ Output JSON Format (Strict):
             });
             output = response.choices[0].message.content || '';
         }
-
         if (runId > 0) {
             await this.prisma.agentIteration.create({
                 data: {
@@ -796,15 +728,12 @@ Output JSON Format (Strict):
         }
         return output;
     }
-
-    private async postCritic(text: string, topic: string, config: any, runId: number, iteration: number, lengthConstraint: string = ''): Promise<CritiqueResult> {
-        let result: CritiqueResult = { score: 50, critique: '' };
+    async postCritic(text, topic, config, runId, iteration, lengthConstraint = '') {
+        let result = { score: 50, critique: '' };
         let content = '{}';
-
         const context = `Topic: ${topic} \n\nPost to evaluate: \n${text} \n\n${lengthConstraint ? `CRITICAL CONSTRAINT TO VERIFY: ${lengthConstraint}. If text exceeds limit, SCORE MUST BE < 50 and critique must demand shortening.` : ''} `;
-
         if (config.apiKey && config.apiKey.startsWith('sk-ant')) {
-            const anthropic = new Anthropic({ apiKey: config.apiKey });
+            const anthropic = new sdk_1.default({ apiKey: config.apiKey });
             // Claude doesn't have JSON mode enforcement like OpenAI, so we ask politely in prompt
             const response = await anthropic.messages.create({
                 model: config.model,
@@ -816,9 +745,10 @@ Output JSON Format (Strict):
             });
             // @ts-ignore
             content = response.content[0].text || '{}';
-        } else if (config.apiKey && config.apiKey.startsWith('AIza')) {
+        }
+        else if (config.apiKey && config.apiKey.startsWith('AIza')) {
             // Use Gemini
-            const genAI = new GoogleGenerativeAI(config.apiKey);
+            const genAI = new generative_ai_1.GoogleGenerativeAI(config.apiKey);
             const model = genAI.getGenerativeModel({
                 model: config.model,
                 systemInstruction: config.prompt + "\nIMPORTANT: You MUST return valid JSON only.",
@@ -826,8 +756,9 @@ Output JSON Format (Strict):
             });
             const result = await model.generateContent(context);
             content = result.response.text();
-        } else {
-            const client = new OpenAI({ apiKey: config.apiKey });
+        }
+        else {
+            const client = new openai_1.default({ apiKey: config.apiKey });
             const response = await client.chat.completions.create({
                 model: config.model,
                 messages: [
@@ -839,29 +770,25 @@ Output JSON Format (Strict):
             });
             content = response.choices[0].message.content || '{}';
         }
-
         try {
             // Attempt to extract JSON object from text (handles text before/after JSON)
             let cleaned = content.trim();
             const firstBrace = cleaned.indexOf('{');
             const lastBrace = cleaned.lastIndexOf('}');
-
             if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
                 cleaned = cleaned.substring(firstBrace, lastBrace + 1);
             }
-
             const parsed = JSON.parse(cleaned);
-
             // Map alternative keys that LLMs sometimes use
             result = {
                 score: typeof parsed.score === 'number' ? parsed.score : (typeof parsed.points === 'number' ? parsed.points : 50),
                 critique: parsed.critique || parsed.comment || parsed.feedback || parsed.reasons || "No specific critique provided."
             };
-        } catch (e) {
+        }
+        catch (e) {
             result = { score: 50, critique: "Failed to parse critique from response." };
             console.error('JSON Parse Error. Full Content:', content);
         }
-
         if (runId > 0) {
             await this.prisma.agentIteration.create({
                 data: {
@@ -874,14 +801,11 @@ Output JSON Format (Strict):
         }
         return result;
     }
-
-    private async postFixer(text: string, critique: string, config: any, runId: number, iteration: number, lengthConstraint: string = ''): Promise<string> {
+    async postFixer(text, critique, config, runId, iteration, lengthConstraint = '') {
         let output = '';
-
         const context = `Original Text: \n${text} \n\nCritique to address: \n${critique} \n\n${lengthConstraint ? `MANDATORY CONSTRAINT: ${lengthConstraint}` : ''} `;
-
         if (config.apiKey && config.apiKey.startsWith('sk-ant')) {
-            const anthropic = new Anthropic({ apiKey: config.apiKey });
+            const anthropic = new sdk_1.default({ apiKey: config.apiKey });
             const response = await anthropic.messages.create({
                 model: config.model,
                 max_tokens: 4000,
@@ -892,17 +816,19 @@ Output JSON Format (Strict):
             });
             // @ts-ignore
             output = response.content[0].text || '';
-        } else if (config.apiKey && config.apiKey.startsWith('AIza')) {
+        }
+        else if (config.apiKey && config.apiKey.startsWith('AIza')) {
             // Use Gemini
-            const genAI = new GoogleGenerativeAI(config.apiKey);
+            const genAI = new generative_ai_1.GoogleGenerativeAI(config.apiKey);
             const model = genAI.getGenerativeModel({
                 model: config.model,
                 systemInstruction: config.prompt
             });
             const result = await model.generateContent(context);
             output = result.response.text();
-        } else {
-            const client = new OpenAI({ apiKey: config.apiKey });
+        }
+        else {
+            const client = new openai_1.default({ apiKey: config.apiKey });
             const response = await client.chat.completions.create({
                 model: config.model,
                 messages: [
@@ -914,25 +840,19 @@ Output JSON Format (Strict):
             });
             output = response.choices[0].message.content || text;
         }
-
         let finalPostText = output;
         let metadata = {};
-
         try {
             // Attempt to parse JSON output from Fixer
             let cleaned = output.trim();
-
             // Remove markdown code blocks if present
             cleaned = cleaned.replace(/^```json\s * /, '').replace(/ ^ ```\s*/, '').replace(/\s*```$ /, '');
-
             const firstBrace = cleaned.indexOf('{');
             const lastBrace = cleaned.lastIndexOf('}');
-
             if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
                 cleaned = cleaned.substring(firstBrace, lastBrace + 1);
                 // Attempt to fix common JSON issues (newlines in strings?) - Risky, rely on valid JSON first
                 const parsed = JSON.parse(cleaned);
-
                 if (parsed.updated_text) {
                     finalPostText = parsed.updated_text;
                     metadata = {
@@ -942,10 +862,10 @@ Output JSON Format (Strict):
                     };
                 }
             }
-        } catch (e) {
+        }
+        catch (e) {
             console.warn('[PostFixer] Failed to parse JSON, returning raw output.', e);
         }
-
         if (runId > 0) {
             await this.prisma.agentIteration.create({
                 data: {
@@ -958,40 +878,22 @@ Output JSON Format (Strict):
         }
         return finalPostText;
     }
-
-    // --- Legacy / Topic Generation ---
-
-    // Keys for prompt settings (Topics)
-    public readonly KEY_TOPIC_CREATOR = 'multi_agent_topic_creator';
-    public readonly KEY_TOPIC_CRITIC = 'multi_agent_topic_critic';
-    public readonly KEY_TOPIC_FIXER = 'multi_agent_topic_fixer';
-
-    // Legacy Single Post (Keeping for backward compatibility if needed, but confusingly named 'run')
-    public readonly KEY_CREATOR = 'multi_agent_creator';
-    public readonly KEY_CRITIC = 'multi_agent_critic';
-    public readonly KEY_FIXER = 'multi_agent_fixer';
-
     // ... rest of the file ...
-
     // --- Topic List Generation ---
-
-    async refineTopics(projectId: number, theme: string, weekId: number, promptOverride?: string, count: number = 2, existingTopics: string[] = []): Promise<{ topics: { topic: string, category: string, tags: string[] }[], score: number }> {
+    async refineTopics(projectId, theme, weekId, promptOverride, count = 2, existingTopics = []) {
         const fs = require('fs');
         fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Starting topic generation for theme: "${theme}", count: ${count}\n`);
         console.log(`[MultiAgent] Starting topic generation for theme: "${theme}", count: ${count}`);
-
         fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Fetching comments...\n`);
         // Fetch comments
-        const commentsContext = await commentService.getCommentsForContext(projectId, 'week', weekId);
+        const commentsContext = await comment_service_1.default.getCommentsForContext(projectId, 'week', weekId);
         fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Comments fetched. Context length: ${commentsContext.length}\n`);
-
         // Context construction
         let fullContext = commentsContext;
         if (existingTopics.length > 0) {
             fullContext += `\n\nALREADY GENERATED TOPICS (DO NOT DUPLICATE):\n${existingTopics.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
         }
         fullContext += `\n\nREQUIRED OUTPUT QUANTITY: ${count} topics.`;
-
         // 1. Create Run Log (Topics)
         let runLogId = 0;
         try {
@@ -1006,31 +908,28 @@ Output JSON Format (Strict):
             });
             runLogId = runLog.id;
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Run Log Created: ${runLogId}\n`);
-        } catch (e) {
+        }
+        catch (e) {
             console.error('Failed to create run log', e);
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Run Log Creation Failed: ${e}\n`);
         }
-
         // Initialize Agents
-        if (!this.openai) throw new Error('OpenAI client not initialized (Missing API Key)');
-
+        if (!this.openai)
+            throw new Error('OpenAI client not initialized (Missing API Key)');
         let currentTopicsJSON = '{}';
         let currentScore = 0;
         let iterations = 0;
         const MAX_ITERATIONS = 3;
         const TARGET_SCORE = 80; // Changed from 90 to 80
-
         try {
             // Creator
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Fetching Creator Prompt...\n`);
             let creatorPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CREATOR, this.DEFAULT_TOPIC_CREATOR_PROMPT);
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Creator Prompt fetched.\n`);
-
-            if (promptOverride) creatorPrompt = promptOverride;
-
+            if (promptOverride)
+                creatorPrompt = promptOverride;
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent] Calling Validated Topic Creator...\n`);
             currentTopicsJSON = await this.topicCreator(theme, creatorPrompt, runLogId, fullContext);
-
             // Ensure it's valid JSON structure from the start
             try {
                 const parsed = JSON.parse(currentTopicsJSON);
@@ -1038,21 +937,18 @@ Output JSON Format (Strict):
                     // Handle raw array return by wrapping it
                     currentTopicsJSON = JSON.stringify({ topics: parsed });
                 }
-            } catch (e) { }
-
+            }
+            catch (e) { }
             while (iterations < MAX_ITERATIONS) {
                 iterations++;
                 fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [MultiAgent Topics] Iteration ${iterations} starting...\n`);
                 console.log(`[MultiAgent Topics] Iteration ${iterations} starting...`);
-
                 const criticPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_CRITIC, this.DEFAULT_TOPIC_CRITIC_PROMPT);
                 const fixerPrompt = await this.getPrompt(projectId, this.KEY_TOPIC_FIXER, this.DEFAULT_TOPIC_FIXER_PROMPT);
-
                 // Critic
                 const critiqueResult = await this.topicCritic(currentTopicsJSON, theme, criticPrompt, runLogId, iterations);
                 currentScore = critiqueResult.score;
                 console.log(`[MultiAgent Topics] Iteration ${iterations} score: ${currentScore}`);
-
                 // Update Log
                 if (runLogId > 0) {
                     try {
@@ -1060,21 +956,19 @@ Output JSON Format (Strict):
                             where: { id: runLogId },
                             data: { final_score: currentScore, total_iterations: iterations }
                         });
-                    } catch (e) { }
+                    }
+                    catch (e) { }
                 }
-
                 if (currentScore >= TARGET_SCORE) {
                     console.log(`[MultiAgent Topics] Target score (${TARGET_SCORE}) reached! Stopping early.`);
                     break;
                 }
-
                 if (iterations < MAX_ITERATIONS) {
                     // Fixer
                     console.log(`[MultiAgent Topics] Fixing based on critique...`);
                     currentTopicsJSON = await this.topicFixer(currentTopicsJSON, critiqueResult.critique, theme, fixerPrompt, runLogId, iterations);
                 }
             }
-
             if (runLogId > 0) {
                 try {
                     await this.prisma.agentRun.update({
@@ -1086,9 +980,13 @@ Output JSON Format (Strict):
                             total_iterations: iterations
                         }
                     });
-                } catch (e) { console.error('Failed to finalize run log', e); }
+                }
+                catch (e) {
+                    console.error('Failed to finalize run log', e);
+                }
             }
-        } catch (error: any) {
+        }
+        catch (error) {
             console.error('[MultiAgent Topics] Fatal Error in loop:', error);
             if (runLogId > 0) {
                 try {
@@ -1101,36 +999,34 @@ Output JSON Format (Strict):
                             total_iterations: iterations
                         }
                     });
-                } catch (e) { }
+                }
+                catch (e) { }
             }
             throw error;
         }
-
         // Parse final JSON
-        let topics: any[] = [];
+        let topics = [];
         try {
             const parsed = JSON.parse(currentTopicsJSON);
             topics = parsed.topics || parsed;
-            if (!Array.isArray(topics)) topics = [];
-        } catch (e) {
+            if (!Array.isArray(topics))
+                topics = [];
+        }
+        catch (e) {
             console.error('Failed to parse final topics JSON', e);
             topics = [];
         }
-
         return { topics, score: currentScore };
     }
-
-    private async topicCreator(theme: string, systemPrompt: string, runId: number, additionalContext: string = ''): Promise<string> {
+    async topicCreator(theme, systemPrompt, runId, additionalContext = '') {
         const fs = require('fs');
         fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCreator] Starting... Theme: ${theme}\n`);
-
-        if (!this.openai) throw new Error('OpenAI client not initialized (Missing API Key)');
-
+        if (!this.openai)
+            throw new Error('OpenAI client not initialized (Missing API Key)');
         let userContent = `Theme: ${theme}`;
         if (additionalContext) {
             userContent += `\n\nUSER COMMENTS / REQUIREMENTS:\n${additionalContext}`;
         }
-
         try {
             const response = await this.openai.chat.completions.create({
                 model: 'gpt-4o',
@@ -1142,9 +1038,7 @@ Output JSON Format (Strict):
                 response_format: { type: "json_object" }
             });
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCreator] OpenAI response received.\n`);
-
             const output = response.choices[0].message.content || '{}';
-
             if (runId > 0) {
                 try {
                     await this.prisma.agentIteration.create({
@@ -1156,21 +1050,24 @@ Output JSON Format (Strict):
                             output: output
                         }
                     });
-                } catch (e) { console.error('Log error', e); fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCreator] DB Log Error: ${e}\n`); }
+                }
+                catch (e) {
+                    console.error('Log error', e);
+                    fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCreator] DB Log Error: ${e}\n`);
+                }
             }
             return output;
-        } catch (error: any) {
+        }
+        catch (error) {
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCreator] ERROR: ${error.message}\n`);
             throw error;
         }
     }
-
-    private async topicCritic(topicsJSON: string, theme: string, systemPrompt: string, runId: number, iteration: number): Promise<CritiqueResult> {
+    async topicCritic(topicsJSON, theme, systemPrompt, runId, iteration) {
         const fs = require('fs');
         fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCritic] Starting Iteration ${iteration}...\n`);
-
-        if (!this.openai) throw new Error('OpenAI client not initialized (Missing API Key)');
-
+        if (!this.openai)
+            throw new Error('OpenAI client not initialized (Missing API Key)');
         try {
             const response = await this.openai.chat.completions.create({
                 model: 'gpt-4o',
@@ -1182,16 +1079,16 @@ Output JSON Format (Strict):
                 temperature: 0.3
             });
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCritic] OpenAI response received.\n`);
-
-            let result: CritiqueResult;
+            let result;
             try {
                 const content = response.choices[0].message.content || '{}';
-                result = JSON.parse(content) as CritiqueResult;
-                if (!result.critique) result.critique = "No critique provided.";
-            } catch (e) {
+                result = JSON.parse(content);
+                if (!result.critique)
+                    result.critique = "No critique provided.";
+            }
+            catch (e) {
                 result = { score: 50, critique: "Failed to parse critique." };
             }
-
             if (runId > 0) {
                 try {
                     await this.prisma.agentIteration.create({
@@ -1205,21 +1102,24 @@ Output JSON Format (Strict):
                             critique: result.critique
                         }
                     });
-                } catch (e) { console.error('Log error', e); fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCritic] DB Log Error: ${e}\n`); }
+                }
+                catch (e) {
+                    console.error('Log error', e);
+                    fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCritic] DB Log Error: ${e}\n`);
+                }
             }
             return result;
-        } catch (error: any) {
+        }
+        catch (error) {
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicCritic] CRITICAL ERROR: ${error.message}\n`);
             throw error;
         }
     }
-
-    private async topicFixer(topicsJSON: string, critique: string, theme: string, systemPrompt: string, runId: number, iteration: number): Promise<string> {
+    async topicFixer(topicsJSON, critique, theme, systemPrompt, runId, iteration) {
         const fs = require('fs');
         fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicFixer] Starting Iteration ${iteration}...\n`);
-
-        if (!this.openai) throw new Error('OpenAI client not initialized (Missing API Key)');
-
+        if (!this.openai)
+            throw new Error('OpenAI client not initialized (Missing API Key)');
         try {
             const response = await this.openai.chat.completions.create({
                 model: 'gpt-4o',
@@ -1231,9 +1131,7 @@ Output JSON Format (Strict):
                 temperature: 0.7
             });
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicFixer] OpenAI response received.\n`);
-
             const output = response.choices[0].message.content || topicsJSON;
-
             if (runId > 0) {
                 try {
                     await this.prisma.agentIteration.create({
@@ -1245,17 +1143,18 @@ Output JSON Format (Strict):
                             output: output
                         }
                     });
-                } catch (e) { console.error('Log error', e); fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicFixer] DB Log Error: ${e}\n`); }
+                }
+                catch (e) {
+                    console.error('Log error', e);
+                    fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicFixer] DB Log Error: ${e}\n`);
+                }
             }
             return output;
-        } catch (error: any) {
+        }
+        catch (error) {
             fs.appendFileSync('debug.log', `[${new Date().toISOString()}] [TopicFixer] CRITICAL ERROR: ${error.message}\n`);
             throw error;
         }
     }
-
-
-
 }
-
-export default new MultiAgentService();
+exports.default = new MultiAgentService();

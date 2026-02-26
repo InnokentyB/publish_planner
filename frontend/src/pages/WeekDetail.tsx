@@ -104,7 +104,8 @@ export default function WeekDetail() {
     })
 
     const generateImage = useMutation({
-        mutationFn: (postId: number) => api.post(`/api/posts/${postId}/generate-image`, { provider: 'dalle' }),
+        mutationFn: ({ postId, provider }: { postId: number, provider: 'dalle' | 'nano' | 'full' }) =>
+            api.post(`/api/posts/${postId}/generate-image`, { provider }),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['week', id] }),
         onError: (err: any) => alert('Failed to generate image: ' + (err.response?.data?.error || err.message))
     });
@@ -293,10 +294,23 @@ export default function WeekDetail() {
                                             className="btn-secondary small"
                                             onClick={(e) => {
                                                 e.stopPropagation();
-                                                generateImage.mutate(post.id);
+                                                generateImage.mutate({ postId: post.id, provider: 'dalle' });
                                             }}
+                                            title="Generate DALL-E Image"
                                         >
-                                            {post.image_url ? 'Regen Img' : 'Add Img'}
+                                            🎨
+                                        </button>
+                                        <button
+                                            className="btn-secondary small"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (window.confirm("Run full pipeline: DALL-E -> Critic -> Nano?")) {
+                                                    generateImage.mutate({ postId: post.id, provider: 'full' });
+                                                }
+                                            }}
+                                            title="Full Pipeline: DALL-E -> Critic -> Nano Banana"
+                                        >
+                                            🧠
                                         </button>
                                     </div>
                                 </div>
