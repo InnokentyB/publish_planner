@@ -138,12 +138,20 @@ class TelegramClientService {
             console.error(`[TelegramClient] Failed to resolve entity ${target}:`, e);
             throw new Error(`Could not access channel: ${target}`);
         }
+        let tempFilePath;
         try {
             let result;
             if (imageUrl) {
                 // Determine file source
                 let fileSource;
-                if (imageUrl.startsWith('http')) {
+                if (imageUrl.startsWith('data:')) {
+                    const base64Data = imageUrl.split(',')[1];
+                    const buffer = Buffer.from(base64Data, 'base64');
+                    tempFilePath = path.join(__dirname, '../../uploads', `temp_${Date.now()}.jpg`);
+                    fs.writeFileSync(tempFilePath, buffer);
+                    fileSource = tempFilePath;
+                }
+                else if (imageUrl.startsWith('http')) {
                     fileSource = imageUrl; // GramJS can sometimes handle URLs, but often better to download buffer
                     // For now let implementation handle URL if library supports, else we might need to download
                 }
@@ -197,6 +205,16 @@ class TelegramClientService {
                 throw new Error(`FLOOD_WAIT_${e.seconds}`); // Throw specific error to be caught by caller
             }
             throw e;
+        }
+        finally {
+            if (tempFilePath && fs.existsSync(tempFilePath)) {
+                try {
+                    fs.unlinkSync(tempFilePath);
+                }
+                catch (cleanupErr) {
+                    console.error(`[TelegramClient] Failed to cleanup temp file:`, cleanupErr);
+                }
+            }
         }
     }
     // Helper to generate session string (login flow)
