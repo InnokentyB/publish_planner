@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import telegramService from './telegram.service';
+import vkService from './vk.service';
 import storageService from './storage.service';
 import { config } from 'dotenv';
 
@@ -51,121 +52,152 @@ class PublisherService {
                     });
                 }
 
-                if (!channel || channel.type !== 'telegram' || !(channel.config as any).telegram_channel_id) {
-                    console.error(`Channel not found or telegram config missing for post ${post.id}`);
+                if (!channel || !channel.config) {
+                    console.error(`Channel not found or config missing for post ${post.id}`);
                     continue;
                 }
 
-                const targetChannelId = (channel.config as any).telegram_channel_id.toString();
                 const text = post.final_text || post.generated_text || '';
-
                 let sentMessageId: number | undefined;
+                let publishedLink: string | null = null;
                 let isPublishedViaClient = false;
 
-                // Try MTProto Client First
-                try {
-                    const importedClient = require('./telegram_client.service').default;
-                    // Initialize (connect) if not already
-                    await importedClient.init(post.project_id);
+                if (channel.type === 'vk') {
+                    // VK Publishing Logic
+                    console.log(`[Publisher] Publishing to VK for post ${post.id}`);
+                    const vkConfig = channel.config as any;
+                    const vkId = vkConfig.vk_id;
+                    const apiKey = vkConfig.api_key;
 
-                    // We need to resolve image path here to pass string
-                    let imagePathOrUrl: string | undefined;
-                    if (post.image_url) imagePathOrUrl = post.image_url;
-
-                    const result = await importedClient.publishPost(post.project_id, targetChannelId, text, imagePathOrUrl);
-                    if (result) {
-                        sentMessageId = result.id; // gramjs message object has .id
-                        isPublishedViaClient = true;
-                        console.log(`[Publisher] Published via MTProto Client: Message ID ${sentMessageId}`);
-                    }
-                } catch (clientErr: any) {
-                    if (clientErr.message && clientErr.message.includes('FLOOD_WAIT')) {
-                        console.warn(`[Publisher] FLOOD_WAIT detected: ${clientErr.message}. Skipping this run for post ${post.id}.`);
-                        // Ideally schedule retry in X seconds. For now, we skip and let next scheduler run pick it up (if we don't change status)
-                        // But wait, scheduler runs every 60s. If flood wait is LONG, we should update post time?
-                        // For now, simple error log and fallback or abort.
-                        // Let's abort this post attempt so we don't spam.
+                    if (!vkId || !apiKey) {
+                        console.error(`VK config missing id/key for post ${post.id}`);
                         continue;
                     }
-                    console.warn(`[Publisher] MTProto Client failed (fallback to Bot API):`, clientErr);
-                }
 
-                if (!isPublishedViaClient) {
-                    // Fallback to Bot API Logic
-                    console.log(`[Publisher] Falling back to Bot API for post ${post.id}`);
+                    try {
+                        publishedLink = await vkService.publishPost(
+                            vkId,
+                            apiKey,
+                            text,
+                            post.image_url || undefined
+                        );
+                        console.log(`[Publisher] Successfully published post ${post.id} to VK: ${publishedLink}`);
+                    } catch (vkErr) {
+                        console.error(`[Publisher] Failed to publish post ${post.id} to VK:`, vkErr);
+                        continue; // Skip the rest if VK fails
+                    }
+                } else if (channel.type === 'telegram') {
+                    // Telegram Publishing Logic
+                    const targetChannelId = (channel.config as any).telegram_channel_id?.toString();
+                    if (!targetChannelId) {
+                        console.error(`Telegram channel config missing ID for post ${post.id}`);
+                        continue;
+                    }
 
-                    let sentMessage: any;
-                    // ... (Existing Bot API Logic) ...
+                    // Try MTProto Client First
+                    try {
+                        const importedClient = require('./telegram_client.service').default;
+                        // Initialize (connect) if not already
+                        await importedClient.init(post.project_id);
 
-                    if (post.image_url) {
-                        let photoSource: any = post.image_url;
-                        if (post.image_url.startsWith('data:')) {
-                            const base64Data = post.image_url.split(',')[1];
-                            photoSource = { source: Buffer.from(base64Data, 'base64') };
-                        } else if (post.image_url.startsWith('/uploads/')) {
-                            const fs = require('fs');
-                            const path = require('path');
-                            const filename = post.image_url.split('/').pop();
-                            const localPath = path.join(__dirname, '../../uploads', filename);
+                        // We need to resolve image path here to pass string
+                        let imagePathOrUrl: string | undefined;
+                        if (post.image_url) imagePathOrUrl = post.image_url;
 
-                            if (fs.existsSync(localPath)) {
-                                photoSource = { source: fs.createReadStream(localPath) };
-                            } else {
-                                console.error(`Local image file not found: ${localPath}`);
-                                photoSource = null;
-                            }
-                        } else {
-                            // Assume it's a remote URL (Supabase or other)
-                            photoSource = post.image_url;
+                        const result = await importedClient.publishPost(post.project_id, targetChannelId, text, imagePathOrUrl);
+                        if (result) {
+                            sentMessageId = result.id; // gramjs message object has .id
+                            isPublishedViaClient = true;
+                            console.log(`[Publisher] Published via MTProto Client: Message ID ${sentMessageId}`);
                         }
+                    } catch (clientErr: any) {
+                        if (clientErr.message && clientErr.message.includes('FLOOD_WAIT')) {
+                            console.warn(`[Publisher] FLOOD_WAIT detected: ${clientErr.message}. Skipping this run for post ${post.id}.`);
+                            // Ideally schedule retry in X seconds. For now, we skip and let next scheduler run pick it up (if we don't change status)
+                            // But wait, scheduler runs every 60s. If flood wait is LONG, we should update post time?
+                            // For now, simple error log and fallback or abort.
+                            // Let's abort this post attempt so we don't spam.
+                            continue;
+                        }
+                        console.warn(`[Publisher] MTProto Client failed (fallback to Bot API):`, clientErr);
+                    }
 
-                        if (photoSource) {
-                            const CAPTION_LIMIT = 1024;
-                            if (text.length > CAPTION_LIMIT) {
-                                // Split logic for Bot API
-                                let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
-                                if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
-                                    splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
-                                }
-                                if (splitIndex === -1) splitIndex = CAPTION_LIMIT;
+                    if (!isPublishedViaClient) {
+                        // Fallback to Bot API Logic
+                        console.log(`[Publisher] Falling back to Bot API for post ${post.id}`);
 
-                                const caption = text.substring(0, splitIndex);
-                                const remainder = text.substring(splitIndex).trim();
+                        let sentMessage: any;
+                        // ... (Existing Bot API Logic) ...
 
-                                await telegramService.sendPhoto(targetChannelId, photoSource, {
-                                    caption: caption,
-                                    parse_mode: 'Markdown'
-                                });
+                        if (post.image_url) {
+                            let photoSource: any = post.image_url;
+                            if (post.image_url.startsWith('data:')) {
+                                const base64Data = post.image_url.split(',')[1];
+                                photoSource = { source: Buffer.from(base64Data, 'base64') };
+                            } else if (post.image_url.startsWith('/uploads/')) {
+                                const fs = require('fs');
+                                const path = require('path');
+                                const filename = post.image_url.split('/').pop();
+                                const localPath = path.join(__dirname, '../../uploads', filename);
 
-                                if (remainder.length > 0) {
-                                    sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                                if (fs.existsSync(localPath)) {
+                                    photoSource = { source: fs.createReadStream(localPath) };
                                 } else {
-                                    sentMessage = { message_id: 0 };
+                                    console.error(`Local image file not found: ${localPath}`);
+                                    photoSource = null;
                                 }
                             } else {
-                                sentMessage = await telegramService.sendPhoto(targetChannelId, photoSource, {
-                                    caption: text,
-                                    parse_mode: 'Markdown'
-                                });
+                                // Assume it's a remote URL (Supabase or other)
+                                photoSource = post.image_url;
+                            }
+
+                            if (photoSource) {
+                                const CAPTION_LIMIT = 1024;
+                                if (text.length > CAPTION_LIMIT) {
+                                    // Split logic for Bot API
+                                    let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
+                                    if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
+                                        splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                                    }
+                                    if (splitIndex === -1) splitIndex = CAPTION_LIMIT;
+
+                                    const caption = text.substring(0, splitIndex);
+                                    const remainder = text.substring(splitIndex).trim();
+
+                                    await telegramService.sendPhoto(targetChannelId, photoSource, {
+                                        caption: caption,
+                                        parse_mode: 'Markdown'
+                                    });
+
+                                    if (remainder.length > 0) {
+                                        sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                                    } else {
+                                        sentMessage = { message_id: 0 };
+                                    }
+                                } else {
+                                    sentMessage = await telegramService.sendPhoto(targetChannelId, photoSource, {
+                                        caption: text,
+                                        parse_mode: 'Markdown'
+                                    });
+                                }
+                            } else {
+                                sentMessage = await this.sendTextSplitting(targetChannelId, text);
                             }
                         } else {
                             sentMessage = await this.sendTextSplitting(targetChannelId, text);
                         }
-                    } else {
-                        sentMessage = await this.sendTextSplitting(targetChannelId, text);
+                        sentMessageId = sentMessage?.message_id;
                     }
-                    sentMessageId = sentMessage?.message_id;
-                }
 
-                // Construct link
-                let publishedLink = null;
-                const channelUsername = (channel.config as any).channel_username;
-
-                if (channelUsername) {
-                    publishedLink = `https://t.me/${channelUsername}/${sentMessageId}`;
-                } else if (targetChannelId.startsWith('-100')) {
-                    const cleanId = targetChannelId.substring(4);
-                    publishedLink = `https://t.me/c/${cleanId}/${sentMessageId}`;
+                    // Construct link
+                    const channelUsername = (channel.config as any).channel_username;
+                    if (channelUsername) {
+                        publishedLink = `https://t.me/${channelUsername}/${sentMessageId}`;
+                    } else if (targetChannelId.startsWith('-100')) {
+                        const cleanId = targetChannelId.substring(4);
+                        publishedLink = `https://t.me/c/${cleanId}/${sentMessageId}`;
+                    }
+                    console.log(`[Publisher] Successfully published post ${post.id} to Telegram: ${targetChannelId}`);
                 }
 
                 // Update status to published
@@ -188,7 +220,7 @@ class PublisherService {
                     }
                 }
 
-                console.log(`Successfully published post ${post.id} to channel ${targetChannelId}`);
+                console.log(`Successfully published post ${post.id} to channel ${channel.name}`);
             } catch (err) {
                 console.error(`Failed to publish post ${post.id}:`, err);
             }
@@ -220,114 +252,135 @@ class PublisherService {
             });
         }
 
-        if (!channel || channel.type !== 'telegram' || !(channel.config as any).telegram_channel_id) {
-            throw new Error(`Telegram channel config not found for post ${postId}`);
+        if (!channel || !channel.config) {
+            throw new Error(`Channel config not found for post ${postId}`);
         }
-        const targetChannelId = (channel.config as any).telegram_channel_id.toString();
 
         // 3. Send Immediately
         const text = post.final_text || post.generated_text || '';
         let sentMessageId: number | undefined;
+        let publishedLink: string | null = null;
         let isPublishedViaClient = false;
 
-        // Try MTProto Client First
-        try {
-            const importedClient = require('./telegram_client.service').default;
-            // Initialize (connect) if not already
-            await importedClient.init(post.project_id);
+        if (channel.type === 'vk') {
+            const vkConfig = channel.config as any;
+            const vkId = vkConfig.vk_id;
+            const apiKey = vkConfig.api_key;
 
-            // We need to resolve image path here to pass string
-            let imagePathOrUrl: string | undefined;
-            if (post.image_url) imagePathOrUrl = post.image_url;
-
-            const result = await importedClient.publishPost(post.project_id, targetChannelId, text, imagePathOrUrl);
-            if (result) {
-                sentMessageId = result.id; // gramjs message object has .id
-                isPublishedViaClient = true;
-                console.log(`[Publisher] Published via MTProto Client: Message ID ${sentMessageId}`);
+            if (!vkId || !apiKey) {
+                throw new Error(`VK config missing id/key for post ${postId}`);
             }
-        } catch (clientErr: any) {
-            console.warn(`[Publisher] MTProto Client failed (fallback to Bot API):`, clientErr);
-        }
 
-        if (!isPublishedViaClient) {
-            // Fallback to Bot API Logic
-            let sentMessage: any;
+            publishedLink = await vkService.publishPost(
+                vkId,
+                apiKey,
+                text,
+                post.image_url || undefined
+            );
+        } else if (channel.type === 'telegram') {
+            const targetChannelId = (channel.config as any).telegram_channel_id?.toString();
+            if (!targetChannelId) {
+                throw new Error(`Telegram channel config missing ID for post ${postId}`);
+            }
 
-            if (post.image_url) {
-                let photoSource: any = post.image_url;
-                if (post.image_url.startsWith('data:')) {
-                    const base64Data = post.image_url.split(',')[1];
-                    photoSource = { source: Buffer.from(base64Data, 'base64') };
-                } else if (post.image_url.startsWith('/uploads/')) {
-                    const fs = require('fs');
-                    const path = require('path');
-                    const filename = post.image_url.split('/').pop();
-                    const localPath = path.join(__dirname, '../../uploads', filename);
+            // Try MTProto Client First
+            try {
+                const importedClient = require('./telegram_client.service').default;
+                // Initialize (connect) if not already
+                await importedClient.init(post.project_id);
 
-                    if (fs.existsSync(localPath)) {
-                        photoSource = { source: fs.createReadStream(localPath) };
-                    } else {
-                        console.error(`Local image file not found: ${localPath}`);
-                        photoSource = null;
-                    }
-                } else {
-                    // Remote URL
-                    photoSource = post.image_url;
+                // We need to resolve image path here to pass string
+                let imagePathOrUrl: string | undefined;
+                if (post.image_url) imagePathOrUrl = post.image_url;
+
+                const result = await importedClient.publishPost(post.project_id, targetChannelId, text, imagePathOrUrl);
+                if (result) {
+                    sentMessageId = result.id; // gramjs message object has .id
+                    isPublishedViaClient = true;
+                    console.log(`[Publisher] Published via MTProto Client: Message ID ${sentMessageId}`);
                 }
+            } catch (clientErr: any) {
+                console.warn(`[Publisher] MTProto Client failed (fallback to Bot API):`, clientErr);
+            }
 
-                if (photoSource) {
-                    const CAPTION_LIMIT = 1024;
-                    if (text.length > CAPTION_LIMIT) {
-                        // Split: Fill caption, then rest as text
-                        // Simple split logic: find last newline before limit
-                        let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
-                        if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
-                            // If no newline or it's too early, split by space
-                            splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
-                        }
-                        if (splitIndex === -1) {
-                            // Force split
-                            splitIndex = CAPTION_LIMIT;
-                        }
+            if (!isPublishedViaClient) {
+                // Fallback to Bot API Logic
+                let sentMessage: any;
 
-                        const caption = text.substring(0, splitIndex);
-                        const remainder = text.substring(splitIndex).trim();
+                if (post.image_url) {
+                    let photoSource: any = post.image_url;
+                    if (post.image_url.startsWith('data:')) {
+                        const base64Data = post.image_url.split(',')[1];
+                        photoSource = { source: Buffer.from(base64Data, 'base64') };
+                    } else if (post.image_url.startsWith('/uploads/')) {
+                        const fs = require('fs');
+                        const path = require('path');
+                        const filename = post.image_url.split('/').pop();
+                        const localPath = path.join(__dirname, '../../uploads', filename);
 
-                        await telegramService.sendPhoto(targetChannelId, photoSource, {
-                            caption: caption,
-                            parse_mode: 'Markdown'
-                        });
-
-                        if (remainder.length > 0) {
-                            sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                        if (fs.existsSync(localPath)) {
+                            photoSource = { source: fs.createReadStream(localPath) };
                         } else {
-                            // Should unlikely happen given checks, but just in case
-                            sentMessage = { message_id: 0 }; // Placeholder
+                            console.error(`Local image file not found: ${localPath}`);
+                            photoSource = null;
                         }
                     } else {
-                        sentMessage = await telegramService.sendPhoto(targetChannelId, photoSource, {
-                            caption: text,
-                            parse_mode: 'Markdown'
-                        });
+                        // Remote URL
+                        photoSource = post.image_url;
+                    }
+
+                    if (photoSource) {
+                        const CAPTION_LIMIT = 1024;
+                        if (text.length > CAPTION_LIMIT) {
+                            // Split: Fill caption, then rest as text
+                            // Simple split logic: find last newline before limit
+                            let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
+                            if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
+                                // If no newline or it's too early, split by space
+                                splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                            }
+                            if (splitIndex === -1) {
+                                // Force split
+                                splitIndex = CAPTION_LIMIT;
+                            }
+
+                            const caption = text.substring(0, splitIndex);
+                            const remainder = text.substring(splitIndex).trim();
+
+                            await telegramService.sendPhoto(targetChannelId, photoSource, {
+                                caption: caption,
+                                parse_mode: 'Markdown'
+                            });
+
+                            if (remainder.length > 0) {
+                                sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                            } else {
+                                // Should unlikely happen given checks, but just in case
+                                sentMessage = { message_id: 0 }; // Placeholder
+                            }
+                        } else {
+                            sentMessage = await telegramService.sendPhoto(targetChannelId, photoSource, {
+                                caption: text,
+                                parse_mode: 'Markdown'
+                            });
+                        }
+                    } else {
+                        sentMessage = await this.sendTextSplitting(targetChannelId, text);
                     }
                 } else {
                     sentMessage = await this.sendTextSplitting(targetChannelId, text);
                 }
-            } else {
-                sentMessage = await this.sendTextSplitting(targetChannelId, text);
+                sentMessageId = sentMessage?.message_id;
             }
-            sentMessageId = sentMessage?.message_id;
-        }
 
-        // Construct link
-        let publishedLink = null;
-        const channelUsername = (channel.config as any).channel_username;
-        if (channelUsername) {
-            publishedLink = `https://t.me/${channelUsername}/${sentMessageId}`;
-        } else if (targetChannelId.startsWith('-100')) {
-            const cleanId = targetChannelId.substring(4);
-            publishedLink = `https://t.me/c/${cleanId}/${sentMessageId}`;
+            // Construct link for Telegram
+            const channelUsername = (channel.config as any).channel_username;
+            if (channelUsername) {
+                publishedLink = `https://t.me/${channelUsername}/${sentMessageId}`;
+            } else if (targetChannelId.startsWith('-100')) {
+                const cleanId = targetChannelId.substring(4);
+                publishedLink = `https://t.me/c/${cleanId}/${sentMessageId}`;
+            }
         }
 
         // 4. Update DB Status to published

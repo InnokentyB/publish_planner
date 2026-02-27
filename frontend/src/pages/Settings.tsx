@@ -44,9 +44,11 @@ export default function Settings() {
     const [nativeScheduling, setNativeScheduling] = useState(false)
 
     // Channel State
+    const [newChannelType, setNewChannelType] = useState<'telegram' | 'vk'>('telegram')
     const [newChannelName, setNewChannelName] = useState('')
     const [newChannelId, setNewChannelId] = useState('')
     const [newChannelUsername, setNewChannelUsername] = useState('')
+    const [newChannelApiKey, setNewChannelApiKey] = useState('')
 
     // Agent State
     const [selectedRole, setSelectedRole] = useState<string>('post_creator')
@@ -117,6 +119,7 @@ export default function Settings() {
             setNewChannelName('')
             setNewChannelId('')
             setNewChannelUsername('')
+            setNewChannelApiKey('')
             queryClient.invalidateQueries({ queryKey: ['project'] })
             alert('Channel added')
         },
@@ -271,11 +274,19 @@ export default function Settings() {
 
     const handleAddChannel = () => {
         if (!newChannelName || !newChannelId) return;
-        const config: any = { telegram_channel_id: newChannelId };
-        if (newChannelUsername) config.channel_username = newChannelUsername;
+
+        const config: any = {};
+        if (newChannelType === 'telegram') {
+            config.telegram_channel_id = newChannelId;
+            if (newChannelUsername) config.channel_username = newChannelUsername;
+        } else if (newChannelType === 'vk') {
+            if (!newChannelApiKey) return alert('VK requires an API key');
+            config.vk_id = newChannelId;
+            config.api_key = newChannelApiKey;
+        }
 
         addChannel.mutate({
-            type: 'telegram',
+            type: newChannelType,
             name: newChannelName,
             config
         });
@@ -412,10 +423,17 @@ export default function Settings() {
             {activeTab === 'channels' && (
                 <div className="card">
                     <h2>Social Channels</h2>
-                    <p className="text-muted mb-2">Connect Telegram channels to publish posts directly.</p>
+                    <p className="text-muted mb-2">Connect Telegram or VK channels to publish posts directly.</p>
 
                     <div className="mb-3 p-2" style={{ border: '1px solid var(--border)', borderRadius: '8px' }}>
-                        <h3>Add Telegram Channel</h3>
+                        <div className="flex-between mb-3">
+                            <h3 style={{ margin: 0 }}>Add Channel</h3>
+                            <select value={newChannelType} onChange={(e: any) => setNewChannelType(e.target.value)}>
+                                <option value="telegram">Telegram</option>
+                                <option value="vk">VKontakte (VK)</option>
+                            </select>
+                        </div>
+
                         <div className="grid-2" style={{ gap: '1rem' }}>
                             <div>
                                 <label>Channel Name (Internal)</label>
@@ -425,27 +443,53 @@ export default function Settings() {
                                     onChange={e => setNewChannelName(e.target.value)}
                                 />
                             </div>
-                            <div>
-                                <label>Channel ID (starts with -100) or Chat ID</label>
-                                <input
-                                    placeholder="-100..."
-                                    value={newChannelId}
-                                    onChange={e => setNewChannelId(e.target.value)}
-                                />
-                            </div>
-                            <div>
-                                <label>Username (Optional, for links)</label>
-                                <input
-                                    placeholder="my_channel"
-                                    value={newChannelUsername}
-                                    onChange={e => setNewChannelUsername(e.target.value)}
-                                />
-                            </div>
+
+                            {newChannelType === 'telegram' ? (
+                                <>
+                                    <div>
+                                        <label>Channel ID (starts with -100) or Chat ID</label>
+                                        <input
+                                            placeholder="-100..."
+                                            value={newChannelId}
+                                            onChange={e => setNewChannelId(e.target.value)}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label>Username (Optional, for links)</label>
+                                        <input
+                                            placeholder="my_channel"
+                                            value={newChannelUsername}
+                                            onChange={e => setNewChannelUsername(e.target.value)}
+                                        />
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <div>
+                                        <label>VK Group/Community ID</label>
+                                        <input
+                                            placeholder="-123456789"
+                                            value={newChannelId}
+                                            onChange={e => setNewChannelId(e.target.value)}
+                                            title="Use negative number for communities. Find it in group URL or settings."
+                                        />
+                                    </div>
+                                    <div>
+                                        <label>Community Access Token</label>
+                                        <input
+                                            type="password"
+                                            placeholder="vk1.a.xxxx..."
+                                            value={newChannelApiKey}
+                                            onChange={e => setNewChannelApiKey(e.target.value)}
+                                        />
+                                    </div>
+                                </>
+                            )}
                             <div style={{ display: 'flex', alignItems: 'flex-end' }}>
                                 <button
                                     className="btn-primary"
                                     onClick={handleAddChannel}
-                                    disabled={!newChannelName || !newChannelId || addChannel.isPending}
+                                    disabled={!newChannelName || !newChannelId || (newChannelType === 'vk' && !newChannelApiKey) || addChannel.isPending}
                                     style={{ width: '100%' }}
                                 >
                                     {addChannel.isPending ? 'Adding...' : 'Add Channel'}
@@ -463,7 +507,7 @@ export default function Settings() {
                                         <span className="badge" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>{channel.type}</span>
                                     </div>
                                     <div className="text-muted" style={{ fontSize: '0.8rem' }}>
-                                        ID: {channel.config?.telegram_channel_id}
+                                        ID: {channel.config?.telegram_channel_id || channel.config?.vk_id}
                                         {channel.config?.channel_username && ` • @${channel.config.channel_username}`}
                                     </div>
                                 </div>
