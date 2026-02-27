@@ -120,7 +120,10 @@ export class TelegramClientService {
             if (imageUrl) {
                 // Determine file source
                 let fileSource: any;
-                if (imageUrl.startsWith('http')) {
+                if (imageUrl.startsWith('data:')) {
+                    const base64Data = imageUrl.split(',')[1];
+                    fileSource = Buffer.from(base64Data, 'base64');
+                } else if (imageUrl.startsWith('http')) {
                     fileSource = imageUrl; // GramJS can sometimes handle URLs, but often better to download buffer
                     // For now let implementation handle URL if library supports, else we might need to download
                 } else if (imageUrl.startsWith('/uploads/')) {
