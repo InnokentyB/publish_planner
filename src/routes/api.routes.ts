@@ -330,12 +330,29 @@ export default async function apiRoutes(fastify: FastifyInstance) {
                         tags: genResult.tags || [],
                         status: 'generated'
                     });
-                } catch (err) {
+                } catch (err: any) {
                     console.error(`Error generating post ${post.id}:`, err);
+                    const errMsg = err?.message || err?.toString() || '';
+                    if (errMsg.toLowerCase().includes('quota') || errMsg.includes('429')) {
+                        console.error(`[API Quota Exceeded] on post ${post.id}`);
+                    }
+
+                    await prisma.post.update({
+                        where: { id: post.id },
+                        data: {
+                            status: 'failed',
+                            generated_text: `[Generation Failed]\nError: ${errMsg}`
+                        }
+                    });
                 }
             }
 
-            await plannerService.updateWeekStatus(week.id, 'generated');
+            // Do not blindly set the whole week to 'generated' because some might have failed
+            // Let the frontend handle individual status
+            const remaining = await prisma.post.count({ where: { week_id: week.id, status: 'generating' } });
+            if (remaining === 0) {
+                await plannerService.updateWeekStatus(week.id, 'generated');
+            }
         })();
 
         return { success: true, message: 'Generation started' };
@@ -432,9 +449,24 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             return { success: true, imageUrl, imagePrompt: safePrompt };
         } catch (error: any) {
             const fs = require('fs');
-            fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Image Gen Error (Post ${id}): ${error.message}\n${error.stack}\n\n`);
+            const errMsg = error?.message || error?.toString() || '';
+            fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Image Gen Error (Post ${id}): ${errMsg}\n${error.stack}\n\n`);
             request.log.error(error);
-            return reply.code(500).send({ error: `Upload failed: ${error.message}` });
+
+            if (errMsg.toLowerCase().includes('quota') || errMsg.includes('429')) {
+                console.error(`[API Quota Exceeded] on image gen for post ${id}`);
+            }
+
+            // Mark post as failed for image generation visibility
+            await prisma.post.update({
+                where: { id: parseInt(id) },
+                data: {
+                    status: 'failed',
+                    image_prompt: `[Image Gen Failed]\nError: ${errMsg}`
+                }
+            });
+
+            return reply.code(500).send({ error: `Upload/Gen failed: ${errMsg}` });
         }
     });
 
@@ -588,10 +620,18 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             } catch (err: any) {
                 console.error(`Error generating post ${post.id}:`, err);
                 const fs = require('fs');
-                fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Post Gen Error (Post ${post.id}): ${err.message}\n${err.stack}\n\n`);
+                const errMsg = err?.message || err?.toString() || '';
+                if (errMsg.toLowerCase().includes('quota') || errMsg.includes('429')) {
+                    console.error(`[API Quota Exceeded] on post ${post.id}`);
+                }
+
+                fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Post Gen Error (Post ${post.id}): ${errMsg}\n${err.stack}\n\n`);
                 await prisma.post.update({
                     where: { id: post.id },
-                    data: { status: 'planned' }
+                    data: {
+                        status: 'failed',
+                        generated_text: `[Generation Failed]\nError: ${errMsg}`
+                    }
                 });
             }
         })();

@@ -111,8 +111,9 @@ export default function WeekDetail() {
     });
 
     // Filtering Helper
+    // Filtering Helper
     const unapprovedPosts = week?.posts?.filter(p => p.status === 'topics_generated') || []
-    const approvedPosts = week?.posts?.filter(p => p.status === 'topics_approved') || []
+    const approvedPosts = week?.posts?.filter(p => p.status === 'topics_approved' || p.status === 'failed' || p.status === 'planned') || []
     const completedPosts = week?.posts?.filter(p => ['generated', 'scheduled', 'published'].includes(p.status)) || []
 
     if (!currentProject) return <div className="p-4">Please select a project.</div>
@@ -245,9 +246,15 @@ export default function WeekDetail() {
                                             onClick={() => generatePost.mutate({ postId: post.id, withImage: true })}
                                             disabled={generatingPostId === post.id}
                                         >
-                                            {generatingPostId === post.id ? 'Generating...' : 'Generate Post'}
+                                            {generatingPostId === post.id ? 'Generating...' : (post.status === 'failed' ? 'Retry Generation' : 'Generate Post')}
                                         </button>
                                     </div>
+
+                                    {post.status === 'failed' && post.generated_text && (
+                                        <div className="mt-2 text-small" style={{ color: 'var(--error)', whiteSpace: 'pre-wrap', background: '#3a2020', padding: '10px', borderRadius: '4px' }}>
+                                            {post.generated_text}
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                         </div>

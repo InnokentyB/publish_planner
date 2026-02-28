@@ -204,9 +204,18 @@ export default function PostEditor() {
             <div className="flex-between mb-3">
                 <h1>Edit Post</h1>
                 <span className={`badge badge-${post.status}`}>
-                    {post.status}
+                    {post.status.toUpperCase()}
                 </span>
             </div>
+
+            {post.status === 'failed' && post.generated_text && (
+                <div className="mb-4 p-3" style={{ background: '#3a2020', borderLeft: '4px solid var(--error)', borderRadius: '4px' }}>
+                    <h3 style={{ color: 'var(--error)', margin: '0 0 0.5rem 0' }}>Generation Failed</h3>
+                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.9rem', color: 'var(--text-color)' }}>
+                        {post.generated_text}
+                    </pre>
+                </div>
+            )}
 
             <div className="mb-3">
                 <CommentSection entityType="post" entityId={post.id} />
@@ -296,13 +305,15 @@ export default function PostEditor() {
                         >
                             {updatePost.isPending ? 'Saving...' : 'Save Changes'}
                         </button>
-                        <button
-                            className="btn-success"
-                            onClick={handleApprove}
-                            disabled={updatePost.isPending || approvePost.isPending || post.status === 'scheduled' || post.status === 'published'}
-                        >
-                            {updatePost.isPending || approvePost.isPending ? 'Saving & Approving...' : 'Approve & Schedule'}
-                        </button>
+                        {post.status !== 'failed' && (
+                            <button
+                                className="btn-success"
+                                onClick={handleApprove}
+                                disabled={updatePost.isPending || approvePost.isPending || post.status === 'scheduled' || post.status === 'published'}
+                            >
+                                {updatePost.isPending || approvePost.isPending ? 'Saving & Approving...' : 'Approve & Schedule'}
+                            </button>
+                        )}
 
 
                         <div style={{ position: 'relative' }}>
@@ -311,7 +322,7 @@ export default function PostEditor() {
                                 onClick={() => setShowPresetSelect(!showPresetSelect)}
                                 disabled={regenerate.isPending || !currentProject}
                             >
-                                {regenerate.isPending ? 'Regenerating...' : '🔄 Regenerate'}
+                                {regenerate.isPending ? 'Regenerating...' : (post.status === 'failed' ? '🔄 Retry Generation' : '🔄 Regenerate')}
                             </button>
                             {showPresetSelect && (
                                 <div style={{
