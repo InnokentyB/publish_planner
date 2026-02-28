@@ -44,6 +44,13 @@ model Project {
   invitations ProjectInvitation[]
   runs        AgentRun[]
 
+  // v2 Media Orchestrator Relations
+  quarter_plans   QuarterPlan[]
+  month_arcs      MonthArc[]
+  week_packages   WeekPackage[]
+  content_items   ContentItem[]
+  feedbacks       FeedbackPackage[]
+
   @@map("projects")
   
   prompt_presets PromptPreset[]
@@ -111,8 +118,9 @@ model SocialChannel {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
-  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
-  posts   Post[]
+  project       Project       @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  posts         Post[]
+  content_items ContentItem[]
 
   @@map("social_channels")
 }
@@ -329,3 +337,119 @@ model TelegramAccount {
   @@map("telegram_accounts")
 }
 
+// ============================================
+// v2 Media Orchestrator Models
+// ============================================
+
+model QuarterPlan {
+  id                 Int      @id @default(autoincrement())
+  project_id         Int
+  quarter_start      DateTime @db.Date
+  quarter_end        DateTime @db.Date
+  strategic_goal     String?  // Awareness/Authority/Conversion mix
+  primary_pillar     String?
+  monetization_focus String?  // none / mini-products / intensive / flagship / club
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  project    Project    @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  month_arcs MonthArc[]
+
+  @@map("quarter_plans")
+}
+
+model MonthArc {
+  id                Int      @id @default(autoincrement())
+  project_id        Int
+  quarter_plan_id   Int?
+  month             DateTime @db.Date // Representing the month
+  arc_theme         String?
+  arc_thesis        String?
+  key_concepts      Json?    // Array of strings
+  planned_longreads Json?    // Habr/VC/Zen plan
+  planned_video     Json?    // Video scripts count/plan
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  project       Project       @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  quarter_plan  QuarterPlan?  @relation(fields: [quarter_plan_id], references: [id], onDelete: SetNull)
+  week_packages WeekPackage[]
+
+  @@map("month_arcs")
+}
+
+model WeekPackage {
+  id               Int      @id @default(autoincrement())
+  project_id       Int
+  month_arc_id     Int?
+  week_start       DateTime @db.Date
+  week_end         DateTime @db.Date
+  week_theme       String?
+  core_thesis      String?
+  audience_focus   String?  // Beginner/Developing/Expert mix
+  intent_tag       String?  // Awareness/Authority/Warmup/Launch/Maintenance
+  monetization_tie String?  // none / hint / launch etc.
+  narrative_arc    Json?    // day1->day7 logic
+  cross_links      Json?    // cross link planning
+  risks            Json?    // oversimplify, too_deep, repetition
+  approval_status  String   @default("draft") // draft/needs_review/approved/rejected
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  project       Project       @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  month_arc     MonthArc?     @relation(fields: [month_arc_id], references: [id], onDelete: SetNull)
+  content_items ContentItem[]
+
+  @@map("week_packages")
+}
+
+model ContentItem {
+  id                  Int      @id @default(autoincrement())
+  project_id          Int
+  week_package_id     Int?
+  channel_id          Int?     // Target channel
+  type                String   // tg_post, vk_post, habr_article, vc_article, zen_article, video_script
+  layer               String?  // azbuka, analyst, pro, community
+  title               String?
+  brief               String?
+  key_points          Json?    // Array of strings
+  cta                 String?
+  cross_link_to       Json?    // Array of target IDs
+  assets              Json?    // Images or diagrams
+  draft_text          String?
+  status              String   @default("planned") // planned, drafted, revised, approved, scheduled, published, failed
+  schedule_at         DateTime? @db.Timestamptz(6)
+  quality_report      Json?
+  metrics             Json?
+  telegram_message_id Int?     // Fallback UI tracking
+  published_link      String?  
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  project      Project       @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  week_package WeekPackage?  @relation(fields: [week_package_id], references: [id], onDelete: SetNull)
+  channel      SocialChannel? @relation(fields: [channel_id], references: [id], onDelete: SetNull)
+
+  @@index([project_id])
+  @@index([week_package_id])
+  @@index([status])
+  @@map("content_items")
+}
+
+model FeedbackPackage {
+  id                  Int      @id @default(autoincrement())
+  project_id          Int
+  period              String   // 'week' or 'month'
+  period_start        DateTime @db.Date
+  period_end          DateTime @db.Date
+  per_channel_metrics Json?
+  owner_scores        Json?    // accuracy, style, depth, usefulness
+  notes               String?
+  recommendations     String?
+  applied_changes     String?
+  created_at          DateTime @default(now())
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@map("feedback_packages")
+}

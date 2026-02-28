@@ -1,0 +1,101 @@
+import { PrismaClient } from '@prisma/client';
+import * as readline from 'readline';
+import { config } from 'dotenv';
+import { Pool } from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
+
+config();
+const connectionString = process.env.DATABASE_URL;
+const pool = new Pool({ connectionString });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
+
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+});
+
+async function main() {
+    const wpId = parseInt(process.argv[2], 10);
+
+    if (!wpId) {
+        console.error("Usage: npx ts-node src/cli/v2-approve-week.ts <weekPackageId>");
+        process.exit(1);
+    }
+
+    try {
+        const wp = await prisma.weekPackage.findUnique({
+            where: { id: wpId },
+            include: { content_items: { orderBy: { schedule_at: 'asc' } } }
+        });
+
+        if (!wp) {
+            console.error(`WeekPackage ${wpId} not found.`);
+            process.exit(1);
+        }
+
+        console.log(`\n======================================================`);
+        console.log(`                 APPROVAL PACK v2`);
+        console.log(`======================================================`);
+        console.log(`Week: ${wp.week_start.toISOString().split('T')[0]} to ${wp.week_end.toISOString().split('T')[0]}`);
+        console.log(`Status: ${wp.approval_status.toUpperCase()}`);
+        console.log(`\n-- Strategy --`);
+        console.log(`Theme: ${wp.week_theme}`);
+        console.log(`Thesis: ${wp.core_thesis}`);
+        console.log(`Focus: ${wp.audience_focus}`);
+        console.log(`Intent: ${wp.intent_tag}`);
+        console.log(`Monetization Tie: ${wp.monetization_tie}`);
+        console.log(`\n-- Narrative Flow --`);
+        const arcs = wp.narrative_arc as string[];
+        if (arcs) arcs.forEach((a, i) => console.log(`  Day ${i + 1}: ${a}`));
+
+        console.log(`\n-- Content Items (${wp.content_items.length}) --`);
+        wp.content_items.forEach(ci => {
+            const dateStr = ci.schedule_at ? ci.schedule_at.toISOString().split('T')[0] : 'No Date';
+            console.log(`[${dateStr}] [${ci.type.padEnd(12)}] (Layer: ${String(ci.layer).padEnd(8)}) ${ci.title}`);
+            console.log(`      Brief: ${ci.brief?.substring(0, 80)}...`);
+        });
+
+        console.log(`\n-- Risks / NCC Warnings --`);
+        const risks = wp.risks as string[];
+        if (risks && risks.length > 0) {
+            risks.forEach(r => console.log(`! ${r}`));
+        } else {
+            console.log("No critical risks flagged.");
+        }
+        console.log(`======================================================\n`);
+
+        if (wp.approval_status === 'approved') {
+            console.log("This week is already approved.");
+            process.exit(0);
+        }
+
+        rl.question("Do you approve this plan? (yes/no/edit): ", async (answer) => {
+            if (answer.toLowerCase() === 'yes' || answer.toLowerCase() === 'y') {
+                await prisma.weekPackage.update({
+                    where: { id: wp.id },
+                    data: { approval_status: 'approved' }
+                });
+                console.log(`✅ WeekPackage ${wp.id} APPRoved.`);
+                console.log(`Content Factory will now pick up these items during generation sweeps.`);
+            } else if (answer.toLowerCase() === 'edit' || answer.toLowerCase() === 'e') {
+                console.log("Edit mode is not fully interactive yet. Please manually edit the database or re-generate.");
+            } else {
+                await prisma.weekPackage.update({
+                    where: { id: wp.id },
+                    data: { approval_status: 'rejected' }
+                });
+                console.log(`❌ WeekPackage ${wp.id} REJECTED.`);
+            }
+            rl.close();
+            await prisma.$disconnect();
+        });
+
+    } catch (e) {
+        console.error(e);
+        rl.close();
+        await prisma.$disconnect();
+    }
+}
+
+main();

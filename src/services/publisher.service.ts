@@ -4,6 +4,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import telegramService from './telegram.service';
 import vkService from './vk.service';
 import storageService from './storage.service';
+import exporterService from './exporter.service';
 import { config } from 'dotenv';
 
 config();
