@@ -11,12 +11,15 @@ const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-    console.log(`[Factory Sweep] Starting generation sweep for APPROVED v2 plans...`);
+    const retryFailed = process.argv.includes('--retry-failed');
+    const targetStatus = retryFailed ? 'failed' : 'planned';
+
+    console.log(`[Factory Sweep] Starting generation sweep for APPROVED v2 plans (target status: ${targetStatus})...`);
 
     try {
         const itemsToProcess = await prisma.contentItem.findMany({
             where: {
-                status: 'planned',
+                status: targetStatus,
                 week_package: {
                     approval_status: 'approved'
                 }
@@ -25,7 +28,7 @@ async function main() {
         });
 
         if (itemsToProcess.length === 0) {
-            console.log(`[Factory Sweep] No approved 'planned' items found. Exiting.`);
+            console.log(`[Factory Sweep] No approved '${targetStatus}' items found. Exiting.`);
             return;
         }
 
@@ -36,8 +39,15 @@ async function main() {
             try {
                 await generatorService.generateContentItemText(item.id);
                 console.log(`    ✅ Success: Item ${item.id} moved to 'drafted'.`);
-            } catch (err) {
-                console.error(`    ❌ Error on item ${item.id}:`, err);
+            } catch (err: any) {
+                const errMsg = err?.message || err?.toString() || '';
+
+                if (errMsg.toLowerCase().includes('quota') || errMsg.includes('429')) {
+                    console.error(`    ❌ [API Quota Exceeded] on item ${item.id}. Please check your OpenAI billing.`);
+                } else {
+                    console.error(`    ❌ Error on item ${item.id}:`, errMsg);
+                }
+
                 // Mark failed
                 await prisma.contentItem.update({
                     where: { id: item.id },
