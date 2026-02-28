@@ -154,25 +154,37 @@ class PublisherService {
                             if (photoSource) {
                                 const CAPTION_LIMIT = 1024;
                                 if (text.length > CAPTION_LIMIT) {
-                                    // Split logic for Bot API
-                                    let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
-                                    if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
-                                        splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
-                                    }
-                                    if (splitIndex === -1) splitIndex = CAPTION_LIMIT;
-
-                                    const caption = text.substring(0, splitIndex);
-                                    const remainder = text.substring(splitIndex).trim();
-
-                                    await telegramService.sendPhoto(targetChannelId, photoSource, {
-                                        caption: caption,
-                                        parse_mode: 'Markdown'
-                                    });
-
-                                    if (remainder.length > 0) {
-                                        sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                                    if (typeof photoSource === 'string' && photoSource.startsWith('http')) {
+                                        // Send as single text with large media preview instead of splitting
+                                        sentMessage = await this.sendTextSplitting(targetChannelId, text, {
+                                            link_preview_options: {
+                                                url: photoSource,
+                                                prefer_large_media: true,
+                                                show_above_text: true,
+                                                is_disabled: false
+                                            }
+                                        });
                                     } else {
-                                        sentMessage = { message_id: 0 };
+                                        // Split logic for Bot API (Local files or buffers)
+                                        let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
+                                        if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
+                                            splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                                        }
+                                        if (splitIndex === -1) splitIndex = CAPTION_LIMIT;
+
+                                        const caption = text.substring(0, splitIndex);
+                                        const remainder = text.substring(splitIndex).trim();
+
+                                        await telegramService.sendPhoto(targetChannelId, photoSource, {
+                                            caption: caption,
+                                            parse_mode: 'Markdown'
+                                        });
+
+                                        if (remainder.length > 0) {
+                                            sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                                        } else {
+                                            sentMessage = { message_id: 0 };
+                                        }
                                     }
                                 } else {
                                     sentMessage = await telegramService.sendPhoto(targetChannelId, photoSource, {
@@ -332,31 +344,39 @@ class PublisherService {
                     if (photoSource) {
                         const CAPTION_LIMIT = 1024;
                         if (text.length > CAPTION_LIMIT) {
-                            // Split: Fill caption, then rest as text
-                            // Simple split logic: find last newline before limit
-                            let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
-                            if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
-                                // If no newline or it's too early, split by space
-                                splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
-                            }
-                            if (splitIndex === -1) {
-                                // Force split
-                                splitIndex = CAPTION_LIMIT;
-                            }
-
-                            const caption = text.substring(0, splitIndex);
-                            const remainder = text.substring(splitIndex).trim();
-
-                            await telegramService.sendPhoto(targetChannelId, photoSource, {
-                                caption: caption,
-                                parse_mode: 'Markdown'
-                            });
-
-                            if (remainder.length > 0) {
-                                sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                            if (typeof photoSource === 'string' && photoSource.startsWith('http')) {
+                                // Send as single text with large media preview instead of splitting
+                                sentMessage = await this.sendTextSplitting(targetChannelId, text, {
+                                    link_preview_options: {
+                                        url: photoSource,
+                                        prefer_large_media: true,
+                                        show_above_text: true,
+                                        is_disabled: false
+                                    }
+                                });
                             } else {
-                                // Should unlikely happen given checks, but just in case
-                                sentMessage = { message_id: 0 }; // Placeholder
+                                // Split: Fill caption, then rest as text
+                                let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
+                                if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
+                                    splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                                }
+                                if (splitIndex === -1) {
+                                    splitIndex = CAPTION_LIMIT;
+                                }
+
+                                const caption = text.substring(0, splitIndex);
+                                const remainder = text.substring(splitIndex).trim();
+
+                                await telegramService.sendPhoto(targetChannelId, photoSource, {
+                                    caption: caption,
+                                    parse_mode: 'Markdown'
+                                });
+
+                                if (remainder.length > 0) {
+                                    sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                                } else {
+                                    sentMessage = { message_id: 0 }; // Placeholder
+                                }
                             }
                         } else {
                             sentMessage = await telegramService.sendPhoto(targetChannelId, photoSource, {
@@ -486,11 +506,12 @@ class PublisherService {
         }
     }
 
-    private async sendTextSplitting(chatId: string, text: string) {
+    private async sendTextSplitting(chatId: string, text: string, extraOptions: any = {}) {
         const MAX_LENGTH = 4090; // Leave room for markdown safety
         if (text.length <= MAX_LENGTH) {
             return await telegramService.sendMessage(chatId, text, {
-                parse_mode: 'Markdown'
+                parse_mode: 'Markdown',
+                ...extraOptions
             });
         } else {
             // Split logic
@@ -508,10 +529,13 @@ class PublisherService {
             }
 
             let lastMessage;
+            let isFirst = true;
             for (const chunk of chunks) {
                 lastMessage = await telegramService.sendMessage(chatId, chunk, {
-                    parse_mode: 'Markdown'
+                    parse_mode: 'Markdown',
+                    ...(isFirst ? extraOptions : {})
                 });
+                isFirst = false;
             }
             return lastMessage;
         }
