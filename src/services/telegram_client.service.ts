@@ -152,13 +152,60 @@ export class TelegramClientService {
                         schedule: scheduleTime
                     });
                 } else {
-                    // Send message with media
-                    result = await client.sendMessage(entity, {
-                        message: text,
-                        file: fileSource,
-                        parseMode: "markdown",
-                        schedule: scheduleTime
-                    });
+                    const CAPTION_LIMIT = 1024;
+                    if (text.length > CAPTION_LIMIT) {
+                        if (imageUrl.startsWith('http')) {
+                            // Use invisible markdown link trick to generate web preview for large images
+                            const invisibleLink = `[\u200B](${imageUrl})`;
+                            result = await client.sendMessage(entity, {
+                                message: invisibleLink + text,
+                                parseMode: "markdown",
+                                schedule: scheduleTime
+                            });
+                        } else {
+                            // Need to split for local files
+                            let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
+                            if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
+                                splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                            }
+                            if (splitIndex === -1) splitIndex = CAPTION_LIMIT;
+
+                            const caption = text.substring(0, splitIndex);
+                            let remainder = text.substring(splitIndex).trim();
+
+                            const firstMsg = await client.sendMessage(entity, {
+                                message: caption,
+                                file: fileSource,
+                                parseMode: "markdown",
+                                schedule: scheduleTime
+                            });
+
+                            // Send remaining chunks
+                            const MAX_LENGTH = 4090;
+                            while (remainder.length > 0) {
+                                let chunk = remainder.substring(0, MAX_LENGTH);
+                                const lastNewline = chunk.lastIndexOf('\n');
+                                if (lastNewline > MAX_LENGTH * 0.8) {
+                                    chunk = remainder.substring(0, lastNewline);
+                                }
+                                result = await client.sendMessage(entity, {
+                                    message: chunk,
+                                    parseMode: "markdown",
+                                    schedule: scheduleTime,
+                                    replyTo: firstMsg ? firstMsg.id : undefined
+                                });
+                                remainder = remainder.substring(chunk.length).trim();
+                            }
+                        }
+                    } else {
+                        // Regular message with media
+                        result = await client.sendMessage(entity, {
+                            message: text,
+                            file: fileSource,
+                            parseMode: "markdown",
+                            schedule: scheduleTime
+                        });
+                    }
                 }
 
             } else {
