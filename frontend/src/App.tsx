@@ -8,6 +8,8 @@ import Settings from './pages/Settings'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import ProjectSelector from './components/ProjectSelector'
+import V2Dashboard from './pages/V2Dashboard'
+import V2WeekDetail from './pages/V2WeekDetail'
 import './index.css'
 
 const queryClient = new QueryClient()
@@ -39,7 +41,8 @@ function Navbar() {
         <div className="flex-center" style={{ gap: '2rem' }}>
           {isAuthenticated ? (
             <>
-              <Link to="/">Weeks</Link>
+              <Link to="/orchestrator" style={{ color: 'var(--primary)', fontWeight: 'bold' }}>V2 Orchestrator</Link>
+              <Link to="/">V1 Weeks</Link>
               <Link to="/settings">Settings</Link>
               <div className="flex-center" style={{ gap: '1rem' }}>
                 <span className="text-muted" style={{ fontSize: '0.9rem' }}>{user?.email}</span>
@@ -65,9 +68,16 @@ function AppContent() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+
+        {/* V2 Orchestrator Routes */}
+        <Route path="/orchestrator" element={<ProtectedRoute><V2Dashboard /></ProtectedRoute>} />
+        <Route path="/v2/weeks/:id" element={<ProtectedRoute><V2WeekDetail /></ProtectedRoute>} />
+
+        {/* V1 Routes */}
         <Route path="/" element={<ProtectedRoute><WeeksList /></ProtectedRoute>} />
         <Route path="/weeks/:id" element={<ProtectedRoute><WeekDetail /></ProtectedRoute>} />
         <Route path="/posts/:id" element={<ProtectedRoute><PostEditor /></ProtectedRoute>} />
+
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       </Routes>
     </div>
