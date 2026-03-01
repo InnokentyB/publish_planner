@@ -1,6 +1,7 @@
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions";
 import { Api } from "telegram/tl";
+import { MarkdownParser } from "telegram/extensions/markdown";
 import { PrismaClient } from "@prisma/client";
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -155,11 +156,20 @@ export class TelegramClientService {
                     const CAPTION_LIMIT = 1024;
                     if (text.length > CAPTION_LIMIT) {
                         if (imageUrl.startsWith('http')) {
-                            // Use invisible markdown link trick to generate web preview for large images
-                            const invisibleLink = `[\u200B](${imageUrl})`;
+                            // Use invisible markdown link trick to generate web preview for large images.
+                            // GramJS's markdown parser doesn't detect [text](url) properly, so we parse manually
+                            // and inject the URL entity at offset 0.
+                            const invisibleChar = '\u200B';
+                            const [parsedText, entities] = MarkdownParser.parse(invisibleChar + text);
+                            entities.unshift(new Api.MessageEntityTextUrl({
+                                offset: 0,
+                                length: 1,
+                                url: imageUrl
+                            }));
+
                             result = await client.sendMessage(entity, {
-                                message: invisibleLink + text,
-                                parseMode: "markdown",
+                                message: parsedText,
+                                formattingEntities: entities,
                                 schedule: scheduleTime
                             });
                         } else {
