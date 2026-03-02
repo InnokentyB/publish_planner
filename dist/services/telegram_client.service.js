@@ -36,6 +36,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TelegramClientService = void 0;
 const telegram_1 = require("telegram");
 const sessions_1 = require("telegram/sessions");
+const tl_1 = require("telegram/tl");
+const markdown_1 = require("telegram/extensions/markdown");
 const client_1 = require("@prisma/client");
 const pg_1 = require("pg");
 const adapter_pg_1 = require("@prisma/adapter-pg");
@@ -175,13 +177,68 @@ class TelegramClientService {
                     });
                 }
                 else {
-                    // Send message with media
-                    result = await client.sendMessage(entity, {
-                        message: text,
-                        file: fileSource,
-                        parseMode: "markdown",
-                        schedule: scheduleTime
-                    });
+                    const CAPTION_LIMIT = 1024;
+                    if (text.length > CAPTION_LIMIT) {
+                        if (imageUrl.startsWith('http')) {
+                            // Use invisible markdown link trick to generate web preview for large images.
+                            // GramJS's markdown parser doesn't detect [text](url) properly, so we parse manually
+                            // and inject the URL entity at offset 0.
+                            const invisibleChar = '\u200B';
+                            const [parsedText, entities] = markdown_1.MarkdownParser.parse(invisibleChar + text);
+                            entities.unshift(new tl_1.Api.MessageEntityTextUrl({
+                                offset: 0,
+                                length: 1,
+                                url: imageUrl
+                            }));
+                            result = await client.sendMessage(entity, {
+                                message: parsedText,
+                                formattingEntities: entities,
+                                schedule: scheduleTime
+                            });
+                        }
+                        else {
+                            // Need to split for local files
+                            let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
+                            if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
+                                splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                            }
+                            if (splitIndex === -1)
+                                splitIndex = CAPTION_LIMIT;
+                            const caption = text.substring(0, splitIndex);
+                            let remainder = text.substring(splitIndex).trim();
+                            const firstMsg = await client.sendMessage(entity, {
+                                message: caption,
+                                file: fileSource,
+                                parseMode: "markdown",
+                                schedule: scheduleTime
+                            });
+                            // Send remaining chunks
+                            const MAX_LENGTH = 4090;
+                            while (remainder.length > 0) {
+                                let chunk = remainder.substring(0, MAX_LENGTH);
+                                const lastNewline = chunk.lastIndexOf('\n');
+                                if (lastNewline > MAX_LENGTH * 0.8) {
+                                    chunk = remainder.substring(0, lastNewline);
+                                }
+                                result = await client.sendMessage(entity, {
+                                    message: chunk,
+                                    parseMode: "markdown",
+                                    schedule: scheduleTime,
+                                    replyTo: firstMsg ? firstMsg.id : undefined
+                                });
+                                remainder = remainder.substring(chunk.length).trim();
+                            }
+                        }
+                    }
+                    else {
+                        // Regular message with media
+                        result = await client.sendMessage(entity, {
+                            message: text,
+                            file: fileSource,
+                            parseMode: "markdown",
+                            schedule: scheduleTime
+                        });
+                    }
                 }
             }
             else {

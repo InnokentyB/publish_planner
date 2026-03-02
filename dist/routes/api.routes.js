@@ -9,6 +9,7 @@ const generator_service_1 = __importDefault(require("../services/generator.servi
 const multi_agent_service_1 = __importDefault(require("../services/multi_agent.service"));
 const publisher_service_1 = __importDefault(require("../services/publisher.service"));
 const model_service_1 = __importDefault(require("../services/model.service"));
+const v2_orchestrator_service_1 = __importDefault(require("../services/v2_orchestrator.service"));
 const client_1 = require("@prisma/client");
 const pg_1 = require("pg");
 const adapter_pg_1 = require("@prisma/adapter-pg");
@@ -300,9 +301,25 @@ async function apiRoutes(fastify) {
                 }
                 catch (err) {
                     console.error(`Error generating post ${post.id}:`, err);
+                    const errMsg = err?.message || err?.toString() || '';
+                    if (errMsg.toLowerCase().includes('quota') || errMsg.includes('429')) {
+                        console.error(`[API Quota Exceeded] on post ${post.id}`);
+                    }
+                    await prisma.post.update({
+                        where: { id: post.id },
+                        data: {
+                            status: 'failed',
+                            generated_text: `[Generation Failed]\nError: ${errMsg}`
+                        }
+                    });
                 }
             }
-            await planner_service_1.default.updateWeekStatus(week.id, 'generated');
+            // Do not blindly set the whole week to 'generated' because some might have failed
+            // Let the frontend handle individual status
+            const remaining = await prisma.post.count({ where: { week_id: week.id, status: 'generating' } });
+            if (remaining === 0) {
+                await planner_service_1.default.updateWeekStatus(week.id, 'generated');
+            }
         })();
         return { success: true, message: 'Generation started' };
     });
@@ -387,9 +404,21 @@ async function apiRoutes(fastify) {
         }
         catch (error) {
             const fs = require('fs');
-            fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Image Gen Error (Post ${id}): ${error.message}\n${error.stack}\n\n`);
+            const errMsg = error?.message || error?.toString() || '';
+            fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Image Gen Error (Post ${id}): ${errMsg}\n${error.stack}\n\n`);
             request.log.error(error);
-            return reply.code(500).send({ error: `Upload failed: ${error.message}` });
+            if (errMsg.toLowerCase().includes('quota') || errMsg.includes('429')) {
+                console.error(`[API Quota Exceeded] on image gen for post ${id}`);
+            }
+            // Mark post as failed for image generation visibility
+            await prisma.post.update({
+                where: { id: parseInt(id) },
+                data: {
+                    status: 'failed',
+                    image_prompt: `[Image Gen Failed]\nError: ${errMsg}`
+                }
+            });
+            return reply.code(500).send({ error: `Upload/Gen failed: ${errMsg}` });
         }
     });
     fastify.post('/api/posts/:id/upload-image', async (request, reply) => {
@@ -523,10 +552,17 @@ async function apiRoutes(fastify) {
             catch (err) {
                 console.error(`Error generating post ${post.id}:`, err);
                 const fs = require('fs');
-                fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Post Gen Error (Post ${post.id}): ${err.message}\n${err.stack}\n\n`);
+                const errMsg = err?.message || err?.toString() || '';
+                if (errMsg.toLowerCase().includes('quota') || errMsg.includes('429')) {
+                    console.error(`[API Quota Exceeded] on post ${post.id}`);
+                }
+                fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Post Gen Error (Post ${post.id}): ${errMsg}\n${err.stack}\n\n`);
                 await prisma.post.update({
                     where: { id: post.id },
-                    data: { status: 'planned' }
+                    data: {
+                        status: 'failed',
+                        generated_text: `[Generation Failed]\nError: ${errMsg}`
+                    }
                 });
             }
         })();
@@ -860,5 +896,128 @@ async function apiRoutes(fastify) {
         }
         const models = await model_service_1.default.fetchModels(detectedProvider, apiKey);
         return { models };
+    });
+    // ==========================================
+    // V2 Orchestrator Routes
+    // ==========================================
+    fastify.get('/api/v2/weeks', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const weeks = await prisma.weekPackage.findMany({
+            where: { project_id: projectId },
+            orderBy: { week_start: 'desc' },
+            include: { _count: { select: { content_items: true } } }
+        });
+        return weeks;
+    });
+    fastify.get('/api/v2/weeks/:id', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const { id } = request.params;
+        const week = await prisma.weekPackage.findUnique({
+            where: { id: parseInt(id), project_id: projectId },
+            include: {
+                content_items: {
+                    orderBy: { schedule_at: 'asc' }
+                }
+            }
+        });
+        if (!week)
+            return reply.code(404).send({ error: 'V2 WeekPackage not found' });
+        return week;
+    });
+    fastify.post('/api/v2/plan-week', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const { themeHint, startDate } = request.body;
+        // Determine next Monday if not provided
+        let weekStart = new Date();
+        if (startDate) {
+            weekStart = new Date(startDate);
+        }
+        else {
+            const dayOfWeek = weekStart.getDay();
+            const daysUntilNextMonday = (8 - dayOfWeek) % 7 || 7;
+            weekStart.setDate(weekStart.getDate() + daysUntilNextMonday);
+        }
+        weekStart.setUTCHours(0, 0, 0, 0);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekStart.getDate() + 6);
+        weekEnd.setUTCHours(23, 59, 59, 999);
+        try {
+            // 1. SMO
+            const wp = await v2_orchestrator_service_1.default.planWeek(projectId, weekStart, weekEnd, themeHint || '');
+            // 2. DA (MVP static split)
+            const channelsSpec = {
+                "channels": [
+                    { "type": "tg_post", "count": 3 },
+                    { "type": "vk_post", "count": 1 },
+                    { "type": "habr_article", "count": 1 },
+                    { "type": "video_script", "count": 1 }
+                ]
+            };
+            await v2_orchestrator_service_1.default.architectDistribution(wp.id, channelsSpec);
+            // 3. NCC
+            const validation = await v2_orchestrator_service_1.default.validateContinuity(wp.id);
+            if (!validation.valid) {
+                console.warn(`[NCC] Validation failed for WP ${wp.id}: ${validation.critique}`);
+                // Save risks back or handle
+            }
+            return { success: true, weekPackageId: wp.id, validation };
+        }
+        catch (e) {
+            console.error('[API] Error in V2 plan-week:', e);
+            reply.code(500).send({ error: 'Failed to complete V2 planning', details: e.message });
+        }
+    });
+    fastify.post('/api/v2/approve-week/:id', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const { id } = request.params;
+        const wp = await prisma.weekPackage.findUnique({ where: { id: parseInt(id), project_id: projectId } });
+        if (!wp)
+            return reply.code(404).send({ error: 'WeekPackage not found' });
+        const updated = await prisma.weekPackage.update({
+            where: { id: wp.id },
+            data: { approval_status: 'approved' }
+        });
+        return { success: true, status: updated.approval_status };
+    });
+    fastify.post('/api/v2/factory-sweep', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        try {
+            // Trigger the generator service script Logic asynchronously or await it here.
+            // For MVP API, we do it inline and block or trigger child process.
+            // Let's do a lightweight inline sweep for just 2 items to prevent timeout
+            const itemsToProcess = await prisma.contentItem.findMany({
+                where: {
+                    project_id: projectId,
+                    status: 'planned',
+                    week_package: { approval_status: 'approved' }
+                },
+                take: 2 // Max 2 per api ping to avoid 504 timeouts
+            });
+            const results = [];
+            for (const item of itemsToProcess) {
+                try {
+                    await generator_service_1.default.generateContentItemText(item.id);
+                    results.push({ id: item.id, status: 'drafted' });
+                }
+                catch (e) {
+                    await prisma.contentItem.update({ where: { id: item.id }, data: { status: 'failed' } });
+                    results.push({ id: item.id, status: 'failed', error: e.message });
+                }
+            }
+            return { processed: results.length, results };
+        }
+        catch (e) {
+            reply.code(500).send({ error: 'Failed during factory sweep', details: e.message });
+        }
     });
 }

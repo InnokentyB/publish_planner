@@ -93,6 +93,35 @@ class GeneratorService {
             tags: result.tags
         };
     }
+    async generateContentItemText(contentItemId) {
+        const item = await prisma.contentItem.findUnique({
+            where: { id: contentItemId },
+            include: { week_package: true }
+        });
+        if (!item || !item.week_package)
+            throw new Error("ContentItem or WeekPackage not found");
+        const theme = item.week_package.week_theme || '';
+        const topic = item.title || item.brief || 'Unknown topic';
+        // For MVP, reuse the existing runPostGeneration logic but point it to this ContentItem's topic
+        // A more advanced integration would pass the ContentItem's specific requirements (layer, CTA) 
+        // to a dedicated v2 prompt.
+        const promptOverride = `Ты — Автор контента. Тема недели: ${theme}. Тезис: ${item.week_package.core_thesis}.
+Твоя задача — написать черновик:
+Формат: ${item.type} (Слой: ${item.layer || 'общий'})
+Заголовок: ${item.title}
+Детали: ${item.brief}
+Ключевые пункты: ${(item.key_points || []).join(', ')}
+CTA: ${item.cta || 'Нет'}
+
+Пиши сразу текст, без мета-комментариев.`;
+        // Mocking postId as 0 since we capture the output directly and will save it to ContentItem manually
+        const result = await multi_agent_service_1.default.runPostGeneration(item.project_id, theme, topic, 0, promptOverride, false);
+        await prisma.contentItem.update({
+            where: { id: item.id },
+            data: { draft_text: result.finalText, status: 'drafted', quality_report: result.history }
+        });
+        return result.finalText;
+    }
     async generateImagePrompt(projectId, topic, text, provider = 'dalle') {
         let template = await this.getImagePromptTemplate(projectId, provider);
         // Replace placeholders safely
