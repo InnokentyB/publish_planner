@@ -1093,6 +1093,45 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         return { success: true, status: updated.approval_status };
     });
 
+    fastify.post('/api/v2/plan-quarter', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { goalHint, startDate } = request.body as { goalHint?: string; startDate?: string };
+        const dStart = startDate ? new Date(startDate) : new Date();
+
+        try {
+            const result = await v2Orchestrator.planQuarter(projectId, dStart, goalHint);
+
+            // For MVP, immediately kick off Monthly Tactical Agents (MTA) for all 3 generated months
+            for (const month of result.monthArcs) {
+                await v2Orchestrator.planMonth(month.id);
+            }
+
+            return { success: true, quarterId: result.quarterPlan.id };
+        } catch (e: any) {
+            reply.code(500).send({ error: e.message || 'Failed to plan quarter' });
+        }
+    });
+
+    fastify.get('/api/v2/quarters', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const quarters = await prisma.quarterPlan.findMany({
+            where: { project_id: projectId },
+            orderBy: { quarter_start: 'desc' },
+            include: {
+                month_arcs: {
+                    include: {
+                        week_packages: true
+                    }
+                }
+            }
+        });
+        return quarters;
+    });
+
     fastify.post('/api/v2/factory-sweep', async (request, reply) => {
         const projectId = (request as any).projectId;
         if (!projectId) return reply.code(400).send({ error: 'Project ID required' });

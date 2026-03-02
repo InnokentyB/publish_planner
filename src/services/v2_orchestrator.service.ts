@@ -34,10 +34,168 @@ export class V2OrchestratorService {
     }
 
     /**
+     * Quarter Strategic Planner (QSP)
+     * Generates a QuarterPlan and 3 MonthArcs
+     */
+    async planQuarter(projectId: number, quarterStart: Date, goalHint: string = "") {
+        console.log(`[QSP] Planning quarter for project ${projectId} starting ${quarterStart.toISOString()}`);
+
+        // Fetch known FAE preferences
+        const prefs = await prisma.projectSettings.findUnique({
+            where: { project_id_key: { project_id: projectId, key: 'fae_strategy_preferences' } }
+        });
+        const strategyShifts = prefs ? prefs.value : 'Предпочтений от автора пока нет.';
+
+        const systemPrompt = `Ты — Quarter Strategic Planner (QSP). Контент-директор IT-канала.
+Твоя задача: Разработать макро-стратегию на 90 дней (Квартал) и разбить её на 3 логичных месяца (MonthArcs).
+
+Внимание, стратегические корректировки от автора:
+${strategyShifts}
+
+Заполни и верни строго JSON объект:
+{
+  "strategic_goal": "строка (Awareness / Authority / Conversion / Launch)",
+  "primary_pillar": "строка (основная сквозная тема квартала)",
+  "months": [
+    {
+      "arc_theme": "строка (тема месяца 1)",
+      "arc_thesis": "строка (главная мысль / тема месяца: Awareness / Cases / Presale)"
+    },
+    {
+      "arc_theme": "строка (тема месяца 2)",
+      "arc_thesis": "строка (главная мысль / тема месяца: Authority / Education / Soft Launch)"
+    },
+    {
+      "arc_theme": "строка (тема месяца 3)",
+      "arc_thesis": "строка (главная мысль / тема месяца: Conversion / Hard Launch / Sales)"
+    }
+  ]
+}`;
+
+        const quarterEnd = new Date(quarterStart);
+        quarterEnd.setMonth(quarterEnd.getMonth() + 3);
+
+        const userPrompt = `Создай план на квартал с ${quarterStart.toISOString().split('T')[0]} по ${quarterEnd.toISOString().split('T')[0]}.
+Глобальная цель владельца: ${goalHint ? goalHint : 'Плавный прогрев аудитории и развитие экспертности.'}`;
+
+        const resultStr = await this.callLLM(systemPrompt, userPrompt);
+        let parsed;
+        try {
+            parsed = JSON.parse(resultStr);
+        } catch (e) {
+            console.error("Failed to parse QSP output", resultStr);
+            throw new Error("QSP output invalid JSON");
+        }
+
+        const qp = await prisma.quarterPlan.create({
+            data: {
+                project_id: projectId,
+                quarter_start: quarterStart,
+                quarter_end: quarterEnd,
+                strategic_goal: parsed.strategic_goal,
+                primary_pillar: parsed.primary_pillar,
+                monetization_focus: 'systemic step-by-step'
+            }
+        });
+
+        // Create 3 Month Arcs and automatically spawn MTA for each
+        const monthArcs = [];
+        let currentMonthStart = new Date(quarterStart);
+
+        for (let i = 0; i < 3; i++) {
+            const mEnd = new Date(currentMonthStart);
+            mEnd.setMonth(mEnd.getMonth() + 1);
+
+            const monthData = parsed.months[i];
+
+            const arc = await prisma.monthArc.create({
+                data: {
+                    project_id: projectId,
+                    quarter_plan_id: qp.id,
+                    month: new Date(currentMonthStart),
+                    arc_theme: monthData.arc_theme,
+                    arc_thesis: monthData.arc_thesis
+                }
+            });
+            monthArcs.push(arc);
+
+            // Advance to next month
+            currentMonthStart = new Date(mEnd);
+        }
+
+        return { quarterPlan: qp, monthArcs };
+    }
+
+    /**
+     * Monthly Tactical Agent (MTA)
+     * Takes a MonthArc and automatically drafts exactly 4 WeekPackages for it.
+     */
+    async planMonth(monthArcId: number) {
+        console.log(`[MTA] Planning month arc ${monthArcId}`);
+
+        const arc = await prisma.monthArc.findUnique({
+            where: { id: monthArcId },
+            include: { quarter_plan: true }
+        });
+
+        if (!arc) throw new Error("MonthArc not found");
+
+        const systemPrompt = `Ты — Monthly Tactical Agent (MTA).
+Твоя задача — разбить фокус-тему месяца '${arc.arc_theme}' на 4 логичные недели.
+Каждая неделя должна иметь свою тему (theme) и главный тезис (thesis), которые поэтапно ведут аудиторию к главной мысли месяца '${arc.arc_thesis}'.
+Учитывай, что общая цель квартала: '${arc.quarter_plan?.strategic_goal}'.
+
+Верни JSON:
+{
+  "weeks": [
+    {
+      "week_theme": "строка",
+      "core_thesis": "строка (1-2 предложения)",
+      "intent_tag": "Awareness | Education | Proof | Sell"
+    },
+    ... (ровно 4 недели)
+  ]
+}`;
+        const userPrompt = `Разбей месяц на 4 недели.`;
+
+        const resultStr = await this.callLLM(systemPrompt, userPrompt);
+        const parsed = JSON.parse(resultStr);
+
+        const weekPackages = [];
+        let wStart = new Date(arc.month);
+
+        // Snap to next Monday if not already
+        const day = wStart.getDay();
+        const diff = wStart.getDate() - day + (day === 0 ? -6 : 1);
+        wStart = new Date(wStart.setDate(diff));
+
+        for (let i = 0; i < 4; i++) {
+            const wEnd = new Date(wStart);
+            wEnd.setDate(wEnd.getDate() + 6);
+
+            const weekData = parsed.weeks[i] || parsed.weeks[0]; // fallback if LLM misses
+
+            // Note: MTA creates DRAFT week packages. SMO handles the actual narrative arc generation later.
+            // But we can directly call SMO here OR just create shallow drafts for SMO to pick up.
+            // To provide immediate value, we will directly call SMO logic (planWeek helper) using the MTA generated theme.
+
+            const smoothHint = `Стратегический фокус недели: ${weekData.week_theme}. Тезис: ${weekData.core_thesis}. Интент: ${weekData.intent_tag}. Месяц: ${arc.arc_theme}`;
+
+            const newlyPlannedWeek = await this.planWeek(arc.project_id, new Date(wStart), new Date(wEnd), smoothHint, arc.id);
+            weekPackages.push(newlyPlannedWeek);
+
+            // Advance next week
+            wStart.setDate(wStart.getDate() + 7);
+        }
+
+        return weekPackages;
+    }
+
+    /**
      * Strategic Media Orchestrator (SMO)
      * Generates a WeekPackage strategy
      */
-    async planWeek(projectId: number, weekStart: Date, weekEnd: Date, themeHint: string = "") {
+    async planWeek(projectId: number, weekStart: Date, weekEnd: Date, themeHint: string = "", monthArcId?: number) {
         console.log(`[SMO] Planning week for project ${projectId}`);
 
         // Fetch known FAE preferences
@@ -72,6 +230,7 @@ ${strategyShifts}
         return await prisma.weekPackage.create({
             data: {
                 project_id: projectId,
+                month_arc_id: monthArcId || null,
                 week_start: weekStart,
                 week_end: weekEnd,
                 week_theme: parsed.week_theme,
