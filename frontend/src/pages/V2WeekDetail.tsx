@@ -39,7 +39,7 @@ export default function V2WeekDetail() {
     })
 
     const approveWeek = useMutation({
-        mutationFn: () => api.post(`/api/v2/approve-week/${id}`),
+        mutationFn: () => api.post(`/api/v2/approve-week/${id}`, {}),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['v2_week', id] })
             queryClient.invalidateQueries({ queryKey: ['v2_weeks'] })

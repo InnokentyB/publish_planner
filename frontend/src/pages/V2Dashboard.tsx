@@ -43,7 +43,7 @@ export default function V2Dashboard() {
     })
 
     const runSweep = useMutation({
-        mutationFn: () => api.post('/api/v2/factory-sweep'),
+        mutationFn: () => api.post('/api/v2/factory-sweep', {}),
         onSuccess: (data: any) => {
             alert(`Sweep completed! Processed: ${data.processed} items.`)
         },
