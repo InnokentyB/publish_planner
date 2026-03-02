@@ -41,8 +41,9 @@ export default function Login() {
                 {error && <div className="badge badge-error mb-2" style={{ width: '100%', display: 'block', textAlign: 'center' }}>{error}</div>}
                 <form onSubmit={handleSubmit} className="flex-column" style={{ gap: '1rem' }}>
                     <div>
-                        <label>Email</label>
+                        <label htmlFor="email">Email</label>
                         <input
+                            id="email"
                             type="email"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
@@ -50,8 +51,9 @@ export default function Login() {
                         />
                     </div>
                     <div>
-                        <label>Password</label>
+                        <label htmlFor="password">Password</label>
                         <input
+                            id="password"
                             type="password"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
