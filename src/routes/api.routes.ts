@@ -1168,4 +1168,94 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             reply.code(500).send({ error: 'Failed during factory sweep', details: e.message });
         }
     });
+
+    // ─── Strategy Assistant Chat ─────────────────────────────────────────────
+
+    const DEFAULT_STRATEGY_PROMPT = `Ты — Стратегический Ассистент по контенту.
+Твоя задача: помогать автору выстроить эффективную контентную стратегию для его каналов.
+Ты учитываешь:
+- Разные платформы (Telegram, VK, YouTube и т.д.) и их специфику аудитории
+- Принципы стабильного контентного потока (контент-план, ритм публикаций)
+- Воронку прогрева: Awareness → Authority → Conversion
+- Текущий квартальный план и месячные арки
+Ты задаёшь уточняющие вопросы, предлагаешь конкретные решения и форматы постов.
+Отвечай на русском языке. Будь кратким, конкретным и полезным.`;
+
+    /**
+     * GET the current system prompt for the strategy assistant.
+     */
+    fastify.get('/api/v2/strategy-chat/settings', async (request, _reply) => {
+        const projectId = (request as any).projectId;
+        const setting = await prisma.projectSettings.findUnique({
+            where: { project_id_key: { project_id: projectId, key: 'strategy_assistant_prompt' } }
+        });
+        return {
+            systemPrompt: setting?.value || DEFAULT_STRATEGY_PROMPT
+        };
+    });
+
+    /**
+     * PUT updated system prompt for the strategy assistant.
+     */
+    fastify.put('/api/v2/strategy-chat/settings', async (request, _reply) => {
+        const projectId = (request as any).projectId;
+        const { systemPrompt } = request.body as { systemPrompt: string };
+        await prisma.projectSettings.upsert({
+            where: { project_id_key: { project_id: projectId, key: 'strategy_assistant_prompt' } },
+            update: { value: systemPrompt },
+            create: { project_id: projectId, key: 'strategy_assistant_prompt', value: systemPrompt }
+        });
+        return { success: true };
+    });
+
+    /**
+     * POST a message to the strategy assistant. Accepts conversation history.
+     * Body: { message: string; history: { role: 'user'|'assistant'; content: string }[] }
+     */
+    fastify.post('/api/v2/strategy-chat', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        const { message, history = [] } = request.body as {
+            message: string;
+            history: { role: 'user' | 'assistant'; content: string }[];
+        };
+
+        if (!message?.trim()) return reply.code(400).send({ error: 'Message is required' });
+
+        // Load custom system prompt (or use default)
+        const setting = await prisma.projectSettings.findUnique({
+            where: { project_id_key: { project_id: projectId, key: 'strategy_assistant_prompt' } }
+        });
+        const systemPrompt = setting?.value || DEFAULT_STRATEGY_PROMPT;
+
+        // Load current quarters for context
+        const quarters = await prisma.quarterPlan.findMany({
+            where: { project_id: projectId },
+            orderBy: { quarter_start: 'desc' },
+            take: 1,
+            include: { month_arcs: true }
+        });
+        const contextStr = quarters.length > 0
+            ? `\n\nТекущий квартальный план:\nЦель: ${quarters[0].strategic_goal}\nПилар: ${quarters[0].primary_pillar}\nМесяцы: ${quarters[0].month_arcs.map(m => m.arc_theme).join(', ')}`
+            : '';
+
+        const openai = new (require('openai').default)({ apiKey: process.env.OPENAI_API_KEY });
+
+        const messages = [
+            { role: 'system' as const, content: systemPrompt + contextStr },
+            ...history.slice(-10), // keep last 10 turns for context
+            { role: 'user' as const, content: message }
+        ];
+
+        try {
+            const completion = await openai.chat.completions.create({
+                model: 'gpt-4o',
+                messages,
+                max_tokens: 1000
+            });
+            const reply_text = completion.choices[0]?.message.content || '';
+            return { reply: reply_text };
+        } catch (e: any) {
+            reply.code(500).send({ error: e.message || 'AI request failed' });
+        }
+    });
 }
