@@ -156,7 +156,7 @@ class PublisherService {
                                 const CAPTION_LIMIT = 1024;
                                 if (text.length > CAPTION_LIMIT) {
                                     if (typeof photoSource === 'string' && photoSource.startsWith('http')) {
-                                        // Send as single text with large media preview instead of splitting
+                                        // HTTP URL: send as text with large media preview (no split, 1 message)
                                         sentMessage = await this.sendTextSplitting(targetChannelId, text, {
                                             link_preview_options: {
                                                 url: photoSource,
@@ -166,7 +166,9 @@ class PublisherService {
                                             }
                                         });
                                     } else {
-                                        // Split logic for Bot API (Local files or buffers)
+                                        // Local file / Buffer: send photo with up to 1024-char caption,
+                                        // then send the overflow as a follow-up text reply.
+                                        // This avoids publishing 2 completely separate, unrelated messages.
                                         let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
                                         if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
                                             splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
@@ -176,15 +178,19 @@ class PublisherService {
                                         const caption = text.substring(0, splitIndex);
                                         const remainder = text.substring(splitIndex).trim();
 
-                                        await telegramService.sendPhoto(targetChannelId, photoSource, {
+                                        const photoMsg = await telegramService.sendPhoto(targetChannelId, photoSource, {
                                             caption: caption,
                                             parse_mode: 'Markdown'
                                         });
 
                                         if (remainder.length > 0) {
-                                            sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                                            // Send remainder as a reply to the photo — keeps it in one thread
+                                            sentMessage = await telegramService.sendMessage(targetChannelId, remainder, {
+                                                parse_mode: 'Markdown',
+                                                reply_to_message_id: photoMsg?.message_id
+                                            });
                                         } else {
-                                            sentMessage = { message_id: 0 };
+                                            sentMessage = photoMsg;
                                         }
                                     }
                                 } else {
@@ -356,7 +362,8 @@ class PublisherService {
                                     }
                                 });
                             } else {
-                                // Split: Fill caption, then rest as text
+                                // Local file / Buffer: send photo with truncated caption,
+                                // then send overflow as a reply to keep it in one visual unit.
                                 let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
                                 if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
                                     splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
@@ -368,15 +375,19 @@ class PublisherService {
                                 const caption = text.substring(0, splitIndex);
                                 const remainder = text.substring(splitIndex).trim();
 
-                                await telegramService.sendPhoto(targetChannelId, photoSource, {
+                                const photoMsg = await telegramService.sendPhoto(targetChannelId, photoSource, {
                                     caption: caption,
                                     parse_mode: 'Markdown'
                                 });
 
                                 if (remainder.length > 0) {
-                                    sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
+                                    // Send overflow as reply to the photo — keeps visual unit intact
+                                    sentMessage = await telegramService.sendMessage(targetChannelId, remainder, {
+                                        parse_mode: 'Markdown',
+                                        reply_to_message_id: photoMsg?.message_id
+                                    });
                                 } else {
-                                    sentMessage = { message_id: 0 }; // Placeholder
+                                    sentMessage = photoMsg;
                                 }
                             }
                         } else {
