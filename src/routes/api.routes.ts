@@ -554,8 +554,12 @@ export default async function apiRoutes(fastify: FastifyInstance) {
     fastify.post('/api/posts/:id/publish-now', async (request, reply) => {
         const { id } = request.params as { id: string };
         try {
-            await publisherService.publishPostNow(parseInt(id));
-            return { success: true };
+            const result = await publisherService.publishPostNow(parseInt(id));
+            return {
+                success: true,
+                publishMethod: result.publishMethod,
+                warning: result.warning || null
+            };
         } catch (e: any) {
             console.error('Publish now failed', e);
             reply.code(500).send({ error: e.message });

@@ -96,11 +96,18 @@ export default function WeekDetail() {
 
     const publishNow = useMutation({
         mutationFn: (postId: number) => api.post(`/api/posts/${postId}/publish-now`, {}),
-        onSuccess: () => {
-            alert('Post published to Telegram!');
+        onSuccess: (response) => {
+            const data = response.data;
+            if (data?.warning) {
+                // MTProto unavailable — show warning about Bot API fallback
+                alert(`⚠️ Пост опубликован, но есть предупреждение:\n\n${data.warning}\n\nЧтобы вернуть MTProto, проверьте Telegram Account в настройках.`);
+            } else {
+                const method = data?.publishMethod === 'mtproto' ? '✅ MTProto' : '🤖 Bot API';
+                alert(`Пост опубликован через ${method}`);
+            }
             queryClient.invalidateQueries({ queryKey: ['week', id] })
         },
-        onError: (err: any) => alert('Failed to publish: ' + (err.response?.data?.error || err.message))
+        onError: (err: any) => alert('Не удалось опубликовать: ' + (err.response?.data?.error || err.message))
     })
 
     const generateImage = useMutation({

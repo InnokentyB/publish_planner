@@ -89,10 +89,19 @@ class PublisherService {
                     }
                 } else if (channel.type === 'telegram') {
                     // Telegram Publishing Logic
-                    const targetChannelId = (channel.config as any).telegram_channel_id?.toString();
-                    if (!targetChannelId) {
+                    const rawChannelId = (channel.config as any).telegram_channel_id?.toString();
+                    if (!rawChannelId) {
                         console.error(`Telegram channel config missing ID for post ${post.id}`);
                         continue;
+                    }
+
+                    // ⚠️ LOCAL DEV OVERRIDE: redirect all messages to the test channel
+                    const localTestChannel = process.env.LOCAL_TEST_CHANNEL;
+                    const targetChannelId = (process.env.NODE_ENV !== 'production' && localTestChannel)
+                        ? localTestChannel
+                        : rawChannelId;
+                    if (targetChannelId !== rawChannelId) {
+                        console.warn(`[Publisher] 🚧 LOCAL DEV: redirecting post ${post.id} from ${rawChannelId} → ${targetChannelId}`);
                     }
 
                     // Try MTProto Client First
@@ -248,7 +257,24 @@ class PublisherService {
         return duePosts.length;
     }
 
-    async publishPostNow(postId: number) {
+    /**
+     * Checks whether the MTProto (GramJS) client can connect for a given project.
+     * Returns true if the session is active and the connection was successful.
+     */
+    async checkMTProto(projectId: number): Promise<{ available: boolean; reason?: string }> {
+        try {
+            const importedClient = require('./telegram_client.service').default;
+            const success = await importedClient.init(projectId);
+            if (success) {
+                return { available: true };
+            }
+            return { available: false, reason: 'No active Telegram account session found for this project' };
+        } catch (e: any) {
+            return { available: false, reason: e.message || 'MTProto connection failed' };
+        }
+    }
+
+    async publishPostNow(postId: number): Promise<{ success: boolean; publishMethod: 'mtproto' | 'bot_api' | 'vk'; warning?: string }> {
         // 1. Fetch Post with Channel info
         const post = await prisma.post.findUnique({
             where: { id: postId },
@@ -280,46 +306,55 @@ class PublisherService {
         let sentMessageId: number | undefined;
         let publishedLink: string | null = null;
         let isPublishedViaClient = false;
+        let publishWarning: string | undefined;
 
         if (channel.type === 'vk') {
             const vkConfig = channel.config as any;
             const vkId = vkConfig.vk_id;
             const apiKey = vkConfig.api_key;
-
             if (!vkId || !apiKey) {
                 throw new Error(`VK config missing id/key for post ${postId}`);
             }
-
-            publishedLink = await vkService.publishPost(
-                vkId,
-                apiKey,
-                text,
-                post.image_url || undefined
-            );
+            publishedLink = await vkService.publishPost(vkId, apiKey, text, post.image_url || undefined);
         } else if (channel.type === 'telegram') {
-            const targetChannelId = (channel.config as any).telegram_channel_id?.toString();
-            if (!targetChannelId) {
+            const rawChannelId = (channel.config as any).telegram_channel_id?.toString();
+            if (!rawChannelId) {
                 throw new Error(`Telegram channel config missing ID for post ${postId}`);
             }
 
-            // Try MTProto Client First
-            try {
-                const importedClient = require('./telegram_client.service').default;
-                // Initialize (connect) if not already
-                await importedClient.init(post.project_id);
+            // ⚠️ LOCAL DEV OVERRIDE: redirect all messages to the test channel
+            const localTestChannel = process.env.LOCAL_TEST_CHANNEL;
+            const targetChannelId = (process.env.NODE_ENV !== 'production' && localTestChannel)
+                ? localTestChannel
+                : rawChannelId;
+            if (targetChannelId !== rawChannelId) {
+                console.warn(`[Publisher] 🚧 LOCAL DEV: redirecting post ${postId} from ${rawChannelId} → ${targetChannelId}`);
+            }
 
-                // We need to resolve image path here to pass string
-                let imagePathOrUrl: string | undefined;
-                if (post.image_url) imagePathOrUrl = post.image_url;
+            // --- Step 1: Check MTProto availability first ---
+            const mtprotoCheck = await this.checkMTProto(post.project_id);
+            if (!mtprotoCheck.available) {
+                publishWarning = `MTProto недоступен (${mtprotoCheck.reason}). Публикация через Bot API.`;
+                console.warn(`[Publisher] ${publishWarning}`);
+            }
 
-                const result = await importedClient.publishPost(post.project_id, targetChannelId, text, imagePathOrUrl);
-                if (result) {
-                    sentMessageId = result.id; // gramjs message object has .id
-                    isPublishedViaClient = true;
-                    console.log(`[Publisher] Published via MTProto Client: Message ID ${sentMessageId}`);
+            // --- Step 2: Try MTProto Client ---
+            if (mtprotoCheck.available) {
+                try {
+                    const importedClient = require('./telegram_client.service').default;
+                    let imagePathOrUrl: string | undefined;
+                    if (post.image_url) imagePathOrUrl = post.image_url;
+
+                    const result = await importedClient.publishPost(post.project_id, targetChannelId, text, imagePathOrUrl);
+                    if (result) {
+                        sentMessageId = result.id;
+                        isPublishedViaClient = true;
+                        console.log(`[Publisher] Published via MTProto Client: Message ID ${sentMessageId}`);
+                    }
+                } catch (clientErr: any) {
+                    publishWarning = `MTProto отказал: ${clientErr.message || clientErr}. Публикация через Bot API.`;
+                    console.warn(`[Publisher] ${publishWarning}`);
                 }
-            } catch (clientErr: any) {
-                console.warn(`[Publisher] MTProto Client failed (fallback to Bot API):`, clientErr);
             }
 
             if (!isPublishedViaClient) {
@@ -415,7 +450,7 @@ class PublisherService {
             }
         }
 
-        // 4. Update DB Status to published
+        // Update post status
         await prisma.post.update({
             where: { id: postId },
             data: {
@@ -425,14 +460,17 @@ class PublisherService {
             }
         });
 
-        // Cleanup Image if it's from Supabase
+        // Cleanup Supabase image after publishing (non-blocking)
         if (post.image_url && post.image_url.includes('supabase.co')) {
             console.log(`[Publisher] Cleaning up Supabase image for post ${postId}...`);
-            // Run in background to not block response
             storageService.deleteFile(post.image_url).catch(err => console.error(`[Publisher] Failed to cleanup image:`, err));
         }
 
-        return true;
+        return {
+            success: true,
+            publishMethod: isPublishedViaClient ? 'mtproto' as const : (channel.type === 'vk' ? 'vk' as const : 'bot_api' as const),
+            warning: publishWarning
+        };
     }
 
     async scheduleNativePosts() {
