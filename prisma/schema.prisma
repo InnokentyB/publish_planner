@@ -392,6 +392,7 @@ model WeekPackage {
   narrative_arc    Json?    // day1->day7 logic
   cross_links      Json?    // cross link planning
   risks            Json?    // oversimplify, too_deep, repetition
+  channel_mix      Json?    // Channel quota selected by MTA (e.g. { tg_post: 3, habr: 1 })
   approval_status  String   @default("draft") // draft/needs_review/approved/rejected
   created_at       DateTime @default(now())
   updated_at       DateTime @updatedAt

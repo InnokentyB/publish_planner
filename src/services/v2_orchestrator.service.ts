@@ -151,7 +151,13 @@ ${strategyShifts}
     {
       "week_theme": "строка",
       "core_thesis": "строка (1-2 предложения)",
-      "intent_tag": "Awareness | Education | Proof | Sell"
+      "intent_tag": "Awareness | Education | Proof | Sell",
+      "channel_mix": {
+        "tg_post": "number (0-10)",
+        "vk_post": "number (0-10)",
+        "habr_article": "number (0-2)",
+        "video_script": "number (0-2)"
+      }
     },
     ... (ровно 4 недели)
   ]
@@ -181,7 +187,7 @@ ${strategyShifts}
 
             const smoothHint = `Стратегический фокус недели: ${weekData.week_theme}. Тезис: ${weekData.core_thesis}. Интент: ${weekData.intent_tag}. Месяц: ${arc.arc_theme}`;
 
-            const newlyPlannedWeek = await this.planWeek(arc.project_id, new Date(wStart), new Date(wEnd), smoothHint, arc.id);
+            const newlyPlannedWeek = await this.planWeek(arc.project_id, new Date(wStart), new Date(wEnd), smoothHint, arc.id, weekData.channel_mix);
             weekPackages.push(newlyPlannedWeek);
 
             // Advance next week
@@ -195,7 +201,7 @@ ${strategyShifts}
      * Strategic Media Orchestrator (SMO)
      * Generates a WeekPackage strategy
      */
-    async planWeek(projectId: number, weekStart: Date, weekEnd: Date, themeHint: string = "", monthArcId?: number) {
+    async planWeek(projectId: number, weekStart: Date, weekEnd: Date, themeHint: string = "", monthArcId?: number, channelMix?: any) {
         console.log(`[SMO] Planning week for project ${projectId}`);
 
         // Fetch known FAE preferences
@@ -240,6 +246,7 @@ ${strategyShifts}
                 monetization_tie: parsed.monetization_tie,
                 narrative_arc: parsed.narrative_arc,
                 risks: parsed.risks,
+                channel_mix: channelMix || null,
                 approval_status: 'draft'
             }
         });
@@ -249,7 +256,7 @@ ${strategyShifts}
      * Distribution Architect (DA)
      * Breaks down the WeekPackage into ContentItems across channels and layers
      */
-    async architectDistribution(weekPackageId: number, channelsSpec: any) {
+    async architectDistribution(weekPackageId: number, overrideChannelsSpec?: any) {
         console.log(`[DA] Architecting distribution for week package ${weekPackageId}`);
 
         const wp = await prisma.weekPackage.findUnique({ where: { id: weekPackageId } });
@@ -276,14 +283,21 @@ ${strategyShifts}
   "cross_links_strategy": ["string", "string"]
 }`;
 
+        const activeChannelsSpec = overrideChannelsSpec || wp.channel_mix || {
+            "tg_post": 3,
+            "vk_post": 1,
+            "habr_article": 0,
+            "video_script": 0
+        };
+
         const userPrompt = `Week Strategy:
 Theme: ${wp.week_theme}
 Thesis: ${wp.core_thesis}
 Intent: ${wp.intent_tag}
 Narrative Arc: ${JSON.stringify(wp.narrative_arc)}
 
-Requirements (Channels/Specs):
-${JSON.stringify(channelsSpec, null, 2)}
+Requirements (Target Channel Mix Quotas):
+${JSON.stringify(activeChannelsSpec, null, 2)}
 
 Распредели контент логично по дням недели (day_offset 0-6), чтобы поддержать Narrative Arc.`;
 

@@ -43,18 +43,9 @@ async function main() {
         console.log(`Thesis: ${wp.core_thesis}`);
 
         // Step 2: Architecture components (DA)
-        // Hardcoded generic spec for MVP
-        const channelsSpec = {
-            "channels": [
-                { "type": "tg_post", "count": 3 },
-                { "type": "vk_post", "count": 1 },
-                { "type": "habr_article", "count": 1 },
-                { "type": "video_script", "count": 1 }
-            ]
-        };
-
+        // DA will now read the requested channel_mix dynamically from the WeekPackage (set by SMO/MTA).
         console.log(`[DA] Generating ContentItems layout...`);
-        const items = await v2Orchestrator.architectDistribution(wp.id, channelsSpec);
+        const items = await v2Orchestrator.architectDistribution(wp.id);
         console.log(`[DA] Created ${items.length} draft ContentItems.`);
 
         // Step 3: Continuity Check (NCC)

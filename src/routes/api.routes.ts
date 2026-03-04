@@ -1055,16 +1055,8 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             // 1. SMO
             const wp = await v2Orchestrator.planWeek(projectId, weekStart, weekEnd, themeHint || '');
 
-            // 2. DA (MVP static split)
-            const channelsSpec = {
-                "channels": [
-                    { "type": "tg_post", "count": 3 },
-                    { "type": "vk_post", "count": 1 },
-                    { "type": "habr_article", "count": 1 },
-                    { "type": "video_script", "count": 1 }
-                ]
-            };
-            await v2Orchestrator.architectDistribution(wp.id, channelsSpec);
+            // 2. DA (Dynamic split from MTA/SMO)
+            await v2Orchestrator.architectDistribution(wp.id);
 
             // 3. NCC
             const validation = await v2Orchestrator.validateContinuity(wp.id);
