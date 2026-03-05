@@ -154,8 +154,13 @@ export class TelegramClientService {
                     });
                 } else {
                     const CAPTION_LIMIT = 1024;
+                    console.log(`[TelegramClient] Text length: ${text.length}, CAPTION_LIMIT: ${CAPTION_LIMIT}, hasImageUrl: ${!!imageUrl}`);
+                    
                     if (text.length > CAPTION_LIMIT) {
+                        console.log(`[TelegramClient] Text exceeds CAPTION_LIMIT (${text.length} > ${CAPTION_LIMIT}). Splitting logic triggered.`);
+                        
                         if (imageUrl.startsWith('http')) {
+                            console.log(`[TelegramClient] imageUrl is HTTP URL. Attempting invisible char trick for web preview instead of file upload.`);
                             // Use invisible markdown link trick to generate web preview for large images.
                             // GramJS's markdown parser doesn't detect [text](url) properly, so we parse manually
                             // and inject the URL entity at offset 0.
@@ -172,7 +177,9 @@ export class TelegramClientService {
                                 formattingEntities: entities,
                                 schedule: scheduleTime
                             });
+                            console.log(`[TelegramClient] Message sent via invisible URL trick. Sent length: ${parsedText.length}`);
                         } else {
+                            console.log(`[TelegramClient] imageUrl is local file or data URI, cannot use URL preview trick. Triggering manual chunk splitting.`);
                             // Need to split for local files
                             let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
                             if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
@@ -180,9 +187,11 @@ export class TelegramClientService {
                             }
                             if (splitIndex === -1) splitIndex = CAPTION_LIMIT;
 
+                            console.log(`[TelegramClient] First chunk splitIndex selected at: ${splitIndex}`);
                             const caption = text.substring(0, splitIndex);
                             let remainder = text.substring(splitIndex).trim();
 
+                            console.log(`[TelegramClient] Sending first chunk with media. Caption length: ${caption.length}`);
                             const firstMsg = await client.sendMessage(entity, {
                                 message: caption,
                                 file: fileSource,
@@ -192,22 +201,27 @@ export class TelegramClientService {
 
                             // Send remaining chunks
                             const MAX_LENGTH = 4090;
+                            let chunkCounter = 1;
                             while (remainder.length > 0) {
                                 let chunk = remainder.substring(0, MAX_LENGTH);
                                 const lastNewline = chunk.lastIndexOf('\n');
                                 if (lastNewline > MAX_LENGTH * 0.8) {
                                     chunk = remainder.substring(0, lastNewline);
                                 }
+                                console.log(`[TelegramClient] Sending remainder chunk ${chunkCounter}. Chunk length: ${chunk.length}`);
                                 result = await client.sendMessage(entity, {
                                     message: chunk,
                                     parseMode: "markdown",
                                     schedule: scheduleTime,
                                     replyTo: firstMsg ? firstMsg.id : undefined
                                 });
+                                chunkCounter++;
                                 remainder = remainder.substring(chunk.length).trim();
                             }
+                            console.log(`[TelegramClient] Completed manual chunking. Total remainder chunks sent: ${chunkCounter - 1}`);
                         }
                     } else {
+                        console.log(`[TelegramClient] Text length within CAPTION_LIMIT (${text.length} <= ${CAPTION_LIMIT}). Sending one single message with media.`);
                         // Regular message with media
                         result = await client.sendMessage(entity, {
                             message: text,
@@ -219,6 +233,7 @@ export class TelegramClientService {
                 }
 
             } else {
+                console.log(`[TelegramClient] No image provided. Target text length: ${text.length}. Sending text-only message.`);
                 // Text only
                 let scheduleTime: number | undefined;
                 if (scheduleDate) {
@@ -230,6 +245,7 @@ export class TelegramClientService {
                     parseMode: "markdown",
                     schedule: scheduleTime
                 });
+                console.log(`[TelegramClient] Text-only message sent successfully.`);
             }
 
             return result;
