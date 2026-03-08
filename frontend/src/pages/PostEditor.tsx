@@ -88,7 +88,7 @@ export default function PostEditor() {
     })
 
     const approvePost = useMutation({
-        mutationFn: () => api.post(`/api/posts/${id}/approve`, {}),
+        mutationFn: (data: Partial<Post>) => api.post(`/api/posts/${id}/approve`, data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['post', id] })
         }
@@ -181,8 +181,7 @@ export default function PostEditor() {
     }
 
     const handleApprove = async () => {
-        // Save first
-        await updatePost.mutateAsync({
+        approvePost.mutate({
             topic,
             category: category || null,
             tags: tags.split(',').map(t => t.trim()).filter(Boolean),
@@ -190,9 +189,6 @@ export default function PostEditor() {
             publish_at: new Date(publishAt).toISOString(),
             channel_id: channelId ? Number(channelId) : null
         });
-
-        // Then approve
-        approvePost.mutate();
     }
 
     return (

@@ -533,9 +533,14 @@ export default async function apiRoutes(fastify: FastifyInstance) {
 
     fastify.post('/api/posts/:id/approve', async (request, reply) => {
         const { id } = request.params as { id: string };
+        const data = (request.body as any) || {};
+
         const post = await prisma.post.update({
             where: { id: parseInt(id) },
-            data: { status: 'scheduled' }
+            data: {
+                ...data, // Allow updating publish_at, text, channel_id etc during approval
+                status: 'scheduled'
+            }
         });
 
         return post;

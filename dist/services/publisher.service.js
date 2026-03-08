@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -10,15 +43,39 @@ const telegram_service_1 = __importDefault(require("./telegram.service"));
 const vk_service_1 = __importDefault(require("./vk.service"));
 const storage_service_1 = __importDefault(require("./storage.service"));
 const dotenv_1 = require("dotenv");
+const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
 (0, dotenv_1.config)();
 const connectionString = process.env.DATABASE_URL;
 const pool = new pg_1.Pool({ connectionString });
 const adapter = new adapter_pg_1.PrismaPg(pool);
 const prisma = new client_1.PrismaClient({ adapter });
+// --- Simple File Logger ---
+const LOGS_DIR = path.join(__dirname, '../../logs');
+if (!fs.existsSync(LOGS_DIR)) {
+    fs.mkdirSync(LOGS_DIR, { recursive: true });
+}
+const PUBLISHER_LOG_FILE = path.join(LOGS_DIR, 'publisher.log');
+function logToFile(level, message, data) {
+    const timestamp = new Date().toISOString();
+    let logLine = `[${timestamp}] [${level}] ${message}`;
+    if (data) {
+        logLine += ` | ${typeof data === 'object' ? JSON.stringify(data) : data}`;
+    }
+    logLine += '\n';
+    // Write to file
+    fs.appendFileSync(PUBLISHER_LOG_FILE, logLine);
+    // Also log to console
+    if (level === 'ERROR')
+        console.error(message, data || '');
+    else if (level === 'WARN')
+        console.warn(message, data || '');
+    else
+        console.log(message, data || '');
+}
 class PublisherService {
     async publishDuePosts() {
         const now = new Date();
-        // Find all scheduled posts that are due
         const duePosts = await prisma.post.findMany({
             where: {
                 status: {
@@ -30,7 +87,16 @@ class PublisherService {
                 week: true
             }
         });
-        console.log(`Found ${duePosts.length} posts due (or past due) for publishing.`);
+        if (duePosts.length === 0) {
+            return 0;
+        }
+        logToFile('INFO', `[Publisher] Found ${duePosts.length} posts due (or past due) for publishing.`);
+        // 🔒 LOCK POSTS immediately to prevent concurrent `setInterval` or `/jobs/publish-due` calls
+        // from fetching and publishing the exact same posts simultaneously.
+        await prisma.post.updateMany({
+            where: { id: { in: duePosts.map(p => p.id) } },
+            data: { status: 'publishing' }
+        });
         for (const post of duePosts) {
             if (post.status === 'scheduled_native')
                 continue;
@@ -44,13 +110,13 @@ class PublisherService {
                 }
                 // Fallback: Find first Telegram channel for project
                 if (!channel) {
-                    console.log(`[Publisher] Post ${post.id} has no channel_id or channel not found. Trying default...`);
+                    logToFile('INFO', `[Publisher] Post ${post.id} has no channel_id or channel not found. Trying default...`);
                     channel = await prisma.socialChannel.findFirst({
                         where: { project_id: post.project_id, type: 'telegram' }
                     });
                 }
                 if (!channel || !channel.config) {
-                    console.error(`Channel not found or config missing for post ${post.id}`);
+                    logToFile('ERROR', `Channel not found or config missing for post ${post.id}`);
                     continue;
                 }
                 const text = post.final_text || post.generated_text || '';
@@ -59,29 +125,37 @@ class PublisherService {
                 let isPublishedViaClient = false;
                 if (channel.type === 'vk') {
                     // VK Publishing Logic
-                    console.log(`[Publisher] Publishing to VK for post ${post.id}`);
+                    logToFile('INFO', `[Publisher] Publishing to VK for post ${post.id}`);
                     const vkConfig = channel.config;
                     const vkId = vkConfig.vk_id;
                     const apiKey = vkConfig.api_key;
                     if (!vkId || !apiKey) {
-                        console.error(`VK config missing id/key for post ${post.id}`);
+                        logToFile('ERROR', `VK config missing id/key for post ${post.id}`);
                         continue;
                     }
                     try {
                         publishedLink = await vk_service_1.default.publishPost(vkId, apiKey, text, post.image_url || undefined);
-                        console.log(`[Publisher] Successfully published post ${post.id} to VK: ${publishedLink}`);
+                        logToFile('INFO', `[Publisher] Successfully published post ${post.id} to VK: ${publishedLink}`);
                     }
                     catch (vkErr) {
-                        console.error(`[Publisher] Failed to publish post ${post.id} to VK:`, vkErr);
+                        logToFile('ERROR', `[Publisher] Failed to publish post ${post.id} to VK:`, vkErr);
                         continue; // Skip the rest if VK fails
                     }
                 }
                 else if (channel.type === 'telegram') {
                     // Telegram Publishing Logic
-                    const targetChannelId = channel.config.telegram_channel_id?.toString();
-                    if (!targetChannelId) {
-                        console.error(`Telegram channel config missing ID for post ${post.id}`);
+                    const rawChannelId = channel.config.telegram_channel_id?.toString();
+                    if (!rawChannelId) {
+                        logToFile('ERROR', `Telegram channel config missing ID for post ${post.id}`);
                         continue;
+                    }
+                    // ⚠️ LOCAL DEV OVERRIDE: redirect all messages to the test channel
+                    const localTestChannel = process.env.LOCAL_TEST_CHANNEL;
+                    const targetChannelId = (process.env.NODE_ENV !== 'production' && localTestChannel)
+                        ? localTestChannel
+                        : rawChannelId;
+                    if (targetChannelId !== rawChannelId) {
+                        logToFile('WARN', `[Publisher] 🚧 LOCAL DEV: redirecting post ${post.id} from ${rawChannelId} → ${targetChannelId}`);
                     }
                     // Try MTProto Client First
                     try {
@@ -92,23 +166,29 @@ class PublisherService {
                         let imagePathOrUrl;
                         if (post.image_url)
                             imagePathOrUrl = post.image_url;
+                        console.log(`[Publisher] Calling MTProto publishPost for post ${post.id}`);
                         const result = await importedClient.publishPost(post.project_id, targetChannelId, text, imagePathOrUrl);
+                        console.log(`[Publisher] MTProto publishPost result for post ${post.id}:`, result ? `Success (ID: ${result.id})` : 'Falsy Result');
                         if (result) {
                             sentMessageId = result.id; // gramjs message object has .id
                             isPublishedViaClient = true;
                             console.log(`[Publisher] Published via MTProto Client: Message ID ${sentMessageId}`);
                         }
+                        else {
+                            console.log(`[Publisher] MTProto publishPost returned falsy for post ${post.id}. Will fallback to Bot API!`);
+                        }
                     }
                     catch (clientErr) {
                         if (clientErr.message && clientErr.message.includes('FLOOD_WAIT')) {
                             console.warn(`[Publisher] FLOOD_WAIT detected: ${clientErr.message}. Skipping this run for post ${post.id}.`);
-                            // Ideally schedule retry in X seconds. For now, we skip and let next scheduler run pick it up (if we don't change status)
-                            // But wait, scheduler runs every 60s. If flood wait is LONG, we should update post time?
-                            // For now, simple error log and fallback or abort.
-                            // Let's abort this post attempt so we don't spam.
+                            // ⚠️ ROLLBACK status since we skipped it
+                            await prisma.post.update({
+                                where: { id: post.id },
+                                data: { status: 'scheduled' }
+                            });
                             continue;
                         }
-                        console.warn(`[Publisher] MTProto Client failed (fallback to Bot API):`, clientErr);
+                        console.warn(`[Publisher] MTProto Client failed (fallback to Bot API):`, clientErr.message || clientErr);
                     }
                     if (!isPublishedViaClient) {
                         // Fallback to Bot API Logic
@@ -142,7 +222,7 @@ class PublisherService {
                                 const CAPTION_LIMIT = 1024;
                                 if (text.length > CAPTION_LIMIT) {
                                     if (typeof photoSource === 'string' && photoSource.startsWith('http')) {
-                                        // Send as single text with large media preview instead of splitting
+                                        // HTTP URL: send as text with large media preview (no split, 1 message)
                                         sentMessage = await this.sendTextSplitting(targetChannelId, text, {
                                             link_preview_options: {
                                                 url: photoSource,
@@ -153,24 +233,47 @@ class PublisherService {
                                         });
                                     }
                                     else {
-                                        // Split logic for Bot API (Local files or buffers)
-                                        let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
-                                        if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
-                                            splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                                        // Local file / Buffer: For Bot API, if it exceeds 1024, the only way to send
+                                        // it as ONE message is to send the text with a hidden link preview to the image (if it's hosted).
+                                        // Since it's a local file/buffer, we HAVE to send a photo. If it exceeds 1024, the Bot API WILL fail.
+                                        // However, Telegram Premium bots can have 4096. We should just try sending it as a single caption first.
+                                        // If it fails with "MEDIA_CAPTION_TOO_LONG", that's when we should split.
+                                        // But to prevent the user from seeing "two messages", we should log it.
+                                        // Actually, let's just attempt to send it as a single photo message first.
+                                        try {
+                                            sentMessage = await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
+                                                caption: text,
+                                                parse_mode: 'Markdown'
+                                            });
                                         }
-                                        if (splitIndex === -1)
-                                            splitIndex = CAPTION_LIMIT;
-                                        const caption = text.substring(0, splitIndex);
-                                        const remainder = text.substring(splitIndex).trim();
-                                        await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
-                                            caption: caption,
-                                            parse_mode: 'Markdown'
-                                        });
-                                        if (remainder.length > 0) {
-                                            sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
-                                        }
-                                        else {
-                                            sentMessage = { message_id: 0 };
+                                        catch (sendErr) {
+                                            if (sendErr.response?.body?.description?.includes('MEDIA_CAPTION_TOO_LONG')) {
+                                                console.warn(`[Publisher] Caption too long for Bot API (${text.length} chars). Splitting into photo + reply.`);
+                                                let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
+                                                if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
+                                                    splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                                                }
+                                                if (splitIndex === -1)
+                                                    splitIndex = CAPTION_LIMIT;
+                                                const caption = text.substring(0, splitIndex);
+                                                const remainder = text.substring(splitIndex).trim();
+                                                const photoMsg = await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
+                                                    caption: caption,
+                                                    parse_mode: 'Markdown'
+                                                });
+                                                if (remainder.length > 0) {
+                                                    sentMessage = await telegram_service_1.default.sendMessage(targetChannelId, remainder, {
+                                                        parse_mode: 'Markdown',
+                                                        reply_to_message_id: photoMsg?.message_id
+                                                    });
+                                                }
+                                                else {
+                                                    sentMessage = photoMsg;
+                                                }
+                                            }
+                                            else {
+                                                throw sendErr;
+                                            }
                                         }
                                     }
                                 }
@@ -220,13 +323,35 @@ class PublisherService {
                         console.error(`[Publisher] Failed to cleanup image:`, cleanupErr);
                     }
                 }
-                console.log(`Successfully published post ${post.id} to channel ${channel.name}`);
+                console.log(`[Publisher] Successfully published post ${post.id} to channel ${channel.name}`);
             }
             catch (err) {
-                console.error(`Failed to publish post ${post.id}:`, err);
+                console.error(`[Publisher] Failed to publish post ${post.id}:`, err);
+                // ⚠️ ROLLBACK status in case of an unexpected error
+                await prisma.post.update({
+                    where: { id: post.id },
+                    data: { status: 'scheduled' }
+                }).catch(e => console.error(`[Publisher] Failed to rollback status for post ${post.id}`, e));
             }
         }
         return duePosts.length;
+    }
+    /**
+     * Checks whether the MTProto (GramJS) client can connect for a given project.
+     * Returns true if the session is active and the connection was successful.
+     */
+    async checkMTProto(projectId) {
+        try {
+            const importedClient = require('./telegram_client.service').default;
+            const success = await importedClient.init(projectId);
+            if (success) {
+                return { available: true };
+            }
+            return { available: false, reason: 'No active Telegram account session found for this project' };
+        }
+        catch (e) {
+            return { available: false, reason: e.message || 'MTProto connection failed' };
+        }
     }
     async publishPostNow(postId) {
         // 1. Fetch Post with Channel info
@@ -250,11 +375,19 @@ class PublisherService {
         if (!channel || !channel.config) {
             throw new Error(`Channel config not found for post ${postId}`);
         }
+        // 🔒 LOCK POST to prevent concurrent running
+        if (post.status === 'scheduled') {
+            await prisma.post.update({
+                where: { id: postId },
+                data: { status: 'publishing' }
+            });
+        }
         // 3. Send Immediately
         const text = post.final_text || post.generated_text || '';
         let sentMessageId;
         let publishedLink = null;
         let isPublishedViaClient = false;
+        let publishWarning;
         if (channel.type === 'vk') {
             const vkConfig = channel.config;
             const vkId = vkConfig.vk_id;
@@ -265,28 +398,43 @@ class PublisherService {
             publishedLink = await vk_service_1.default.publishPost(vkId, apiKey, text, post.image_url || undefined);
         }
         else if (channel.type === 'telegram') {
-            const targetChannelId = channel.config.telegram_channel_id?.toString();
-            if (!targetChannelId) {
+            const rawChannelId = channel.config.telegram_channel_id?.toString();
+            if (!rawChannelId) {
                 throw new Error(`Telegram channel config missing ID for post ${postId}`);
             }
-            // Try MTProto Client First
-            try {
-                const importedClient = require('./telegram_client.service').default;
-                // Initialize (connect) if not already
-                await importedClient.init(post.project_id);
-                // We need to resolve image path here to pass string
-                let imagePathOrUrl;
-                if (post.image_url)
-                    imagePathOrUrl = post.image_url;
-                const result = await importedClient.publishPost(post.project_id, targetChannelId, text, imagePathOrUrl);
-                if (result) {
-                    sentMessageId = result.id; // gramjs message object has .id
-                    isPublishedViaClient = true;
-                    console.log(`[Publisher] Published via MTProto Client: Message ID ${sentMessageId}`);
-                }
+            // ⚠️ LOCAL DEV OVERRIDE: redirect all messages to the test channel
+            const localTestChannel = process.env.LOCAL_TEST_CHANNEL;
+            const targetChannelId = (process.env.NODE_ENV !== 'production' && localTestChannel)
+                ? localTestChannel
+                : rawChannelId;
+            if (targetChannelId !== rawChannelId) {
+                logToFile('WARN', `[Publisher] 🚧 LOCAL DEV: redirecting post ${postId} from ${rawChannelId} → ${targetChannelId}`);
             }
-            catch (clientErr) {
-                console.warn(`[Publisher] MTProto Client failed (fallback to Bot API):`, clientErr);
+            // --- Step 1: Check MTProto availability first ---
+            const mtprotoCheck = await this.checkMTProto(post.project_id);
+            if (!mtprotoCheck.available) {
+                publishWarning = `MTProto недоступен (${mtprotoCheck.reason}). Публикация через Bot API.`;
+                logToFile('WARN', `[Publisher] ${publishWarning}`);
+            }
+            // --- Step 2: Try MTProto Client ---
+            if (mtprotoCheck.available) {
+                try {
+                    const importedClient = require('./telegram_client.service').default;
+                    let imagePathOrUrl;
+                    if (post.image_url)
+                        imagePathOrUrl = post.image_url;
+                    logToFile('INFO', `[Publisher] publishPostNow: calling MTProto for post ${post.id}`);
+                    const result = await importedClient.publishPost(post.project_id, targetChannelId, text, imagePathOrUrl);
+                    if (result) {
+                        sentMessageId = result.id;
+                        isPublishedViaClient = true;
+                        logToFile('INFO', `[Publisher] Published via MTProto Client: Message ID ${sentMessageId}`);
+                    }
+                }
+                catch (clientErr) {
+                    publishWarning = `MTProto отказал: ${clientErr.message || clientErr}. Публикация через Bot API.`;
+                    logToFile('WARN', `[Publisher] ${publishWarning}`);
+                }
             }
             if (!isPublishedViaClient) {
                 // Fallback to Bot API Logic
@@ -329,25 +477,43 @@ class PublisherService {
                                 });
                             }
                             else {
-                                // Split: Fill caption, then rest as text
-                                let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
-                                if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
-                                    splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                                // Local file / Buffer: try sending as single photo (Premium users/bots have 4096 limit)
+                                try {
+                                    sentMessage = await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
+                                        caption: text,
+                                        parse_mode: 'Markdown'
+                                    });
                                 }
-                                if (splitIndex === -1) {
-                                    splitIndex = CAPTION_LIMIT;
-                                }
-                                const caption = text.substring(0, splitIndex);
-                                const remainder = text.substring(splitIndex).trim();
-                                await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
-                                    caption: caption,
-                                    parse_mode: 'Markdown'
-                                });
-                                if (remainder.length > 0) {
-                                    sentMessage = await this.sendTextSplitting(targetChannelId, remainder);
-                                }
-                                else {
-                                    sentMessage = { message_id: 0 }; // Placeholder
+                                catch (sendErr) {
+                                    if (sendErr.response?.body?.description?.includes('MEDIA_CAPTION_TOO_LONG')) {
+                                        console.warn(`[Publisher] Caption too long for Bot API (${text.length} chars). Splitting into photo + reply.`);
+                                        let splitIndex = text.lastIndexOf('\n', CAPTION_LIMIT);
+                                        if (splitIndex === -1 || splitIndex < CAPTION_LIMIT * 0.5) {
+                                            splitIndex = text.lastIndexOf(' ', CAPTION_LIMIT);
+                                        }
+                                        if (splitIndex === -1) {
+                                            splitIndex = CAPTION_LIMIT;
+                                        }
+                                        const caption = text.substring(0, splitIndex);
+                                        const remainder = text.substring(splitIndex).trim();
+                                        const photoMsg = await telegram_service_1.default.sendPhoto(targetChannelId, photoSource, {
+                                            caption: caption,
+                                            parse_mode: 'Markdown'
+                                        });
+                                        if (remainder.length > 0) {
+                                            // Send overflow as reply to the photo — keeps visual unit intact
+                                            sentMessage = await telegram_service_1.default.sendMessage(targetChannelId, remainder, {
+                                                parse_mode: 'Markdown',
+                                                reply_to_message_id: photoMsg?.message_id
+                                            });
+                                        }
+                                        else {
+                                            sentMessage = photoMsg;
+                                        }
+                                    }
+                                    else {
+                                        throw sendErr;
+                                    }
                                 }
                             }
                         }
@@ -377,7 +543,7 @@ class PublisherService {
                 publishedLink = `https://t.me/c/${cleanId}/${sentMessageId}`;
             }
         }
-        // 4. Update DB Status to published
+        // Update post status
         await prisma.post.update({
             where: { id: postId },
             data: {
@@ -386,13 +552,16 @@ class PublisherService {
                 published_link: publishedLink
             }
         });
-        // Cleanup Image if it's from Supabase
+        // Cleanup Supabase image after publishing (non-blocking)
         if (post.image_url && post.image_url.includes('supabase.co')) {
-            console.log(`[Publisher] Cleaning up Supabase image for post ${postId}...`);
-            // Run in background to not block response
-            storage_service_1.default.deleteFile(post.image_url).catch(err => console.error(`[Publisher] Failed to cleanup image:`, err));
+            logToFile('INFO', `[Publisher] Cleaning up Supabase image for post ${postId}...`);
+            storage_service_1.default.deleteFile(post.image_url).catch(err => logToFile('ERROR', `[Publisher] Failed to cleanup image:`, err));
         }
-        return true;
+        return {
+            success: true,
+            publishMethod: isPublishedViaClient ? 'mtproto' : (channel.type === 'vk' ? 'vk' : 'bot_api'),
+            warning: publishWarning
+        };
     }
     async scheduleNativePosts() {
         const now = new Date();
@@ -412,7 +581,9 @@ class PublisherService {
                 }
             }
         });
-        console.log(`[Publisher] Checking ${futurePosts.length} future posts for native scheduling...`);
+        if (futurePosts.length > 0) {
+            logToFile('INFO', `[Publisher] Checking ${futurePosts.length} future posts for native scheduling...`);
+        }
         for (const post of futurePosts) {
             // Check if Native Scheduling is enabled for this project
             const settings = post.project.settings;
@@ -450,7 +621,7 @@ class PublisherService {
                 // I will assume I update TelegramClientService to accept a 5th arg 'scheduleDate'.
                 const result = await importedClient.publishPost(post.project_id, targetChannelId, text, imagePathOrUrl, post.publish_at);
                 if (result) {
-                    console.log(`[Publisher] Scheduled natively via MTProto: Message ID ${result.id}`);
+                    logToFile('INFO', `[Publisher] Scheduled natively via MTProto: Message ID ${result.id}`);
                     // Update Status
                     await prisma.post.update({
                         where: { id: post.id },
@@ -462,7 +633,7 @@ class PublisherService {
                 }
             }
             catch (err) {
-                console.error(`[Publisher] Failed to natively schedule post ${post.id}:`, err);
+                logToFile('ERROR', `[Publisher] Failed to natively schedule post ${post.id}:`, err);
             }
         }
     }

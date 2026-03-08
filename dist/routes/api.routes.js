@@ -472,9 +472,13 @@ async function apiRoutes(fastify) {
     });
     fastify.post('/api/posts/:id/approve', async (request, reply) => {
         const { id } = request.params;
+        const data = request.body || {};
         const post = await prisma.post.update({
             where: { id: parseInt(id) },
-            data: { status: 'scheduled' }
+            data: {
+                ...data, // Allow updating publish_at, text, channel_id etc during approval
+                status: 'scheduled'
+            }
         });
         return post;
     });
@@ -489,8 +493,12 @@ async function apiRoutes(fastify) {
     fastify.post('/api/posts/:id/publish-now', async (request, reply) => {
         const { id } = request.params;
         try {
-            await publisher_service_1.default.publishPostNow(parseInt(id));
-            return { success: true };
+            const result = await publisher_service_1.default.publishPostNow(parseInt(id));
+            return {
+                success: true,
+                publishMethod: result.publishMethod,
+                warning: result.warning || null
+            };
         }
         catch (e) {
             console.error('Publish now failed', e);
@@ -950,16 +958,8 @@ async function apiRoutes(fastify) {
         try {
             // 1. SMO
             const wp = await v2_orchestrator_service_1.default.planWeek(projectId, weekStart, weekEnd, themeHint || '');
-            // 2. DA (MVP static split)
-            const channelsSpec = {
-                "channels": [
-                    { "type": "tg_post", "count": 3 },
-                    { "type": "vk_post", "count": 1 },
-                    { "type": "habr_article", "count": 1 },
-                    { "type": "video_script", "count": 1 }
-                ]
-            };
-            await v2_orchestrator_service_1.default.architectDistribution(wp.id, channelsSpec);
+            // 2. DA (Dynamic split from MTA/SMO)
+            await v2_orchestrator_service_1.default.architectDistribution(wp.id);
             // 3. NCC
             const validation = await v2_orchestrator_service_1.default.validateContinuity(wp.id);
             if (!validation.valid) {
@@ -986,6 +986,41 @@ async function apiRoutes(fastify) {
             data: { approval_status: 'approved' }
         });
         return { success: true, status: updated.approval_status };
+    });
+    fastify.post('/api/v2/plan-quarter', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const { goalHint, startDate } = request.body;
+        const dStart = startDate ? new Date(startDate) : new Date();
+        try {
+            const result = await v2_orchestrator_service_1.default.planQuarter(projectId, dStart, goalHint);
+            // For MVP, immediately kick off Monthly Tactical Agents (MTA) for all 3 generated months
+            for (const month of result.monthArcs) {
+                await v2_orchestrator_service_1.default.planMonth(month.id);
+            }
+            return { success: true, quarterId: result.quarterPlan.id };
+        }
+        catch (e) {
+            reply.code(500).send({ error: e.message || 'Failed to plan quarter' });
+        }
+    });
+    fastify.get('/api/v2/quarters', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const quarters = await prisma.quarterPlan.findMany({
+            where: { project_id: projectId },
+            orderBy: { quarter_start: 'desc' },
+            include: {
+                month_arcs: {
+                    include: {
+                        week_packages: true
+                    }
+                }
+            }
+        });
+        return quarters;
     });
     fastify.post('/api/v2/factory-sweep', async (request, reply) => {
         const projectId = request.projectId;
@@ -1018,6 +1053,84 @@ async function apiRoutes(fastify) {
         }
         catch (e) {
             reply.code(500).send({ error: 'Failed during factory sweep', details: e.message });
+        }
+    });
+    // ─── Strategy Assistant Chat ─────────────────────────────────────────────
+    const DEFAULT_STRATEGY_PROMPT = `Ты — Стратегический Ассистент по контенту.
+Твоя задача: помогать автору выстроить эффективную контентную стратегию для его каналов.
+Ты учитываешь:
+- Разные платформы (Telegram, VK, YouTube и т.д.) и их специфику аудитории
+- Принципы стабильного контентного потока (контент-план, ритм публикаций)
+- Воронку прогрева: Awareness → Authority → Conversion
+- Текущий квартальный план и месячные арки
+Ты задаёшь уточняющие вопросы, предлагаешь конкретные решения и форматы постов.
+Отвечай на русском языке. Будь кратким, конкретным и полезным.`;
+    /**
+     * GET the current system prompt for the strategy assistant.
+     */
+    fastify.get('/api/v2/strategy-chat/settings', async (request, _reply) => {
+        const projectId = request.projectId;
+        const setting = await prisma.projectSettings.findUnique({
+            where: { project_id_key: { project_id: projectId, key: 'strategy_assistant_prompt' } }
+        });
+        return {
+            systemPrompt: setting?.value || DEFAULT_STRATEGY_PROMPT
+        };
+    });
+    /**
+     * PUT updated system prompt for the strategy assistant.
+     */
+    fastify.put('/api/v2/strategy-chat/settings', async (request, _reply) => {
+        const projectId = request.projectId;
+        const { systemPrompt } = request.body;
+        await prisma.projectSettings.upsert({
+            where: { project_id_key: { project_id: projectId, key: 'strategy_assistant_prompt' } },
+            update: { value: systemPrompt },
+            create: { project_id: projectId, key: 'strategy_assistant_prompt', value: systemPrompt }
+        });
+        return { success: true };
+    });
+    /**
+     * POST a message to the strategy assistant. Accepts conversation history.
+     * Body: { message: string; history: { role: 'user'|'assistant'; content: string }[] }
+     */
+    fastify.post('/api/v2/strategy-chat', async (request, reply) => {
+        const projectId = request.projectId;
+        const { message, history = [] } = request.body;
+        if (!message?.trim())
+            return reply.code(400).send({ error: 'Message is required' });
+        // Load custom system prompt (or use default)
+        const setting = await prisma.projectSettings.findUnique({
+            where: { project_id_key: { project_id: projectId, key: 'strategy_assistant_prompt' } }
+        });
+        const systemPrompt = setting?.value || DEFAULT_STRATEGY_PROMPT;
+        // Load current quarters for context
+        const quarters = await prisma.quarterPlan.findMany({
+            where: { project_id: projectId },
+            orderBy: { quarter_start: 'desc' },
+            take: 1,
+            include: { month_arcs: true }
+        });
+        const contextStr = quarters.length > 0
+            ? `\n\nТекущий квартальный план:\nЦель: ${quarters[0].strategic_goal}\nПилар: ${quarters[0].primary_pillar}\nМесяцы: ${quarters[0].month_arcs.map(m => m.arc_theme).join(', ')}`
+            : '';
+        const openai = new (require('openai').default)({ apiKey: process.env.OPENAI_API_KEY });
+        const messages = [
+            { role: 'system', content: systemPrompt + contextStr },
+            ...history.slice(-10), // keep last 10 turns for context
+            { role: 'user', content: message }
+        ];
+        try {
+            const completion = await openai.chat.completions.create({
+                model: 'gpt-4o',
+                messages,
+                max_tokens: 1000
+            });
+            const reply_text = completion.choices[0]?.message.content || '';
+            return { reply: reply_text };
+        }
+        catch (e) {
+            reply.code(500).send({ error: e.message || 'AI request failed' });
         }
     });
 }

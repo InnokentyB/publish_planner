@@ -55,6 +55,10 @@ server.register(require('@fastify/static'), {
     root: path_1.default.join(__dirname, '../frontend/dist'),
     prefix: '/',
 });
+// Public health-check endpoint – used by Playwright webServer to probe readiness
+server.get('/api/health', async (_request, _reply) => {
+    return { status: 'ok', ts: new Date().toISOString() };
+});
 server.register(require('@fastify/static'), {
     root: path_1.default.join(__dirname, '../uploads'),
     prefix: '/uploads/',
