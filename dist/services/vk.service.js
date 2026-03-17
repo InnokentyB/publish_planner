@@ -87,5 +87,37 @@ class VKService {
         // Construct the post URL
         return `https://vk.com/wall${ownerId}_${response.post_id}`;
     }
+    /**
+     * Fetches metrics (likes, views, comments, reposts) for a given post.
+     * @param vkId The community/page ID.
+     * @param apiKey The community access token.
+     * @param postId The ID of the post.
+     */
+    async getMetrics(vkId, apiKey, postId) {
+        const vk = new vk_io_1.VK({ token: apiKey });
+        let ownerId = parseInt(vkId, 10);
+        if (ownerId > 0)
+            ownerId = -ownerId;
+        try {
+            const response = await vk.api.wall.getById({
+                posts: `${ownerId}_${postId}`
+            });
+            if (!response || response.length === 0) {
+                return null;
+            }
+            const post = response[0];
+            return {
+                views: post.views?.count || 0,
+                likes: post.likes?.count || 0,
+                comments: post.comments?.count || 0,
+                reposts: post.reposts?.count || 0,
+                retrieved_at: new Date().toISOString()
+            };
+        }
+        catch (err) {
+            console.error(`[VKService] Failed to get metrics for post ${postId}:`, err);
+            return null;
+        }
+    }
 }
 exports.default = new VKService();

@@ -322,6 +322,71 @@ class TelegramClientService {
         await client.disconnect();
         return session;
     }
+    /**
+     * Fetches metrics (views, forwards/reposts, reactions) for a specific Telegram message via MTProto.
+     * Note: This requires the client to be a member of the channel or chat.
+     * @param projectId The project ID (to get correct session)
+     * @param target The channel ID or username
+     * @param messageId The telegram message ID
+     */
+    async getMetrics(projectId, target, messageId) {
+        const client = await this.getClient(projectId);
+        if (!client) {
+            console.warn(`[TelegramClient] Cannot fetch metrics. Client not initialized for project: ${projectId}`);
+            return null;
+        }
+        try {
+            // First resolve entity
+            let entity = target;
+            if (typeof target === 'string' && (target.startsWith('-100') || !isNaN(Number(target)))) {
+                try {
+                    entity = await client.getEntity(target);
+                }
+                catch (e) {
+                    if (/^-?\d+$/.test(target)) {
+                        // @ts-ignore
+                        entity = await client.getEntity(BigInt(target));
+                    }
+                }
+            }
+            else {
+                entity = await client.getEntity(target);
+            }
+            // Fetch the specific message
+            // getMessages returns an array of messages
+            const messages = await client.getMessages(entity, {
+                ids: [messageId]
+            });
+            if (!messages || messages.length === 0 || !messages[0]) {
+                console.log(`[TelegramClient] Message ${messageId} not found in ${target}`);
+                return null;
+            }
+            const message = messages[0];
+            // Parse Views and Forwards 
+            const views = typeof message.views === 'number' ? message.views : 0;
+            const forwards = typeof message.forwards === 'number' ? message.forwards : 0;
+            // Parse Reactions (Likes, Comments equivalent)
+            let reactionsCount = 0;
+            if (message.reactions && message.reactions.results) {
+                for (const reaction of message.reactions.results) {
+                    reactionsCount += reaction.count || 0;
+                }
+            }
+            // Telegram Channels can have discussion groups (comments) - message.replies
+            const commentsCount = message.replies?.replies || 0;
+            return {
+                views: views,
+                likes: reactionsCount, // Grouping all reactions under "likes" or "reactions"
+                comments: commentsCount,
+                reposts: forwards,
+                retrieved_at: new Date().toISOString()
+            };
+        }
+        catch (err) {
+            console.error(`[TelegramClient] Failed to get metrics for message ${messageId}:`, err);
+            return null;
+        }
+    }
 }
 exports.TelegramClientService = TelegramClientService;
 exports.default = new TelegramClientService();

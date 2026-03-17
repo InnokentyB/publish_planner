@@ -1,4 +1,4 @@
-import { topicsQueue, postsQueue, imageQueue } from './queue';
+import { topicsQueue, postsQueue, imageQueue } from '../queue';
 import * as dotenv from 'dotenv';
 dotenv.config();
 

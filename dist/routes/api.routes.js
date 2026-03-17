@@ -220,16 +220,25 @@ async function apiRoutes(fastify) {
             // Assuming slots are 1-based index. 
             // Actually, we should check if slots already exist for these indices.
             // But simplify: just generate slots starting from current count.
-            await planner_service_1.default.generateSlots(week.id, projectId, week.week_start, countToGenerate, existingCount);
-            const result = await generator_service_1.default.generateTopics(projectId, week.theme, week.id, promptOverride, countToGenerate, existingTopics);
-            // Save topics starting at the correct offset
-            await planner_service_1.default.saveTopics(week.id, result.topics, existingCount);
-            return { success: true, topics: result.topics };
+            // Push to queue instead of running inline
+            const { topicsQueue } = require('../queue');
+            await topicsQueue.add('generate-topics', {
+                projectId,
+                weekId: week.id,
+                promptOverride,
+                countToGenerate,
+                existingCount,
+                existingTopics
+            }, {
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 5000 }
+            });
+            return reply.code(202).send({ success: true, message: 'Topics generation queued in background' });
         }
         catch (error) {
-            console.error('[API Error] Generate Topics Failed:', error);
+            console.error('[API Error] Generate Topics Failed API setup:', error);
             const fs = require('fs');
-            const logEntry = `[${new Date().toISOString()}] Error in /generate-topics: ${error.message}\nStack: ${error.stack}\n\n`;
+            const logEntry = `[${new Date().toISOString()}] Error in /generate-topics API: ${error.message}\nStack: ${error.stack}\n\n`;
             fs.appendFileSync('server_error.log', logEntry);
             return reply.code(500).send({ error: 'Internal Server Error', details: error.message });
         }
@@ -262,66 +271,27 @@ async function apiRoutes(fastify) {
             return;
         }
         await planner_service_1.default.updateWeekStatus(week.id, 'generating');
-        // Generate posts asynchronously
-        (async () => {
-            for (const post of week.posts) {
-                if (!post.topic)
-                    continue;
-                try {
-                    const genResult = await generator_service_1.default.generatePostText(projectId, week.theme, post.topic, post.id);
-                    let fullText = genResult.text;
-                    const tagsToAdd = [];
-                    // Add Category if present and not in text
-                    if (genResult.category || post.category) {
-                        const cat = (genResult.category || post.category || '').replace(/^#/, '').trim();
-                        if (cat && !fullText.includes(`#${cat}`)) {
-                            tagsToAdd.push(cat);
-                        }
-                    }
-                    // Add Tags if present
-                    if (genResult.tags && Array.isArray(genResult.tags)) {
-                        genResult.tags.forEach(t => {
-                            const cleanTag = t.replace(/^#/, '').trim();
-                            if (cleanTag && !tagsToAdd.includes(cleanTag) && !fullText.includes(`#${cleanTag}`)) {
-                                tagsToAdd.push(cleanTag);
-                            }
-                        });
-                    }
-                    if (tagsToAdd.length > 0) {
-                        const tagsString = tagsToAdd.map(t => `#${t}`).join(' ');
-                        fullText += `\n\n${tagsString}`;
-                    }
-                    await planner_service_1.default.updatePost(post.id, {
-                        generated_text: fullText,
-                        final_text: fullText,
-                        category: genResult.category || post.category,
-                        tags: genResult.tags || [],
-                        status: 'generated'
-                    });
-                }
-                catch (err) {
-                    console.error(`Error generating post ${post.id}:`, err);
-                    const errMsg = err?.message || err?.toString() || '';
-                    if (errMsg.toLowerCase().includes('quota') || errMsg.includes('429')) {
-                        console.error(`[API Quota Exceeded] on post ${post.id}`);
-                    }
-                    await prisma.post.update({
-                        where: { id: post.id },
-                        data: {
-                            status: 'failed',
-                            generated_text: `[Generation Failed]\nError: ${errMsg}`
-                        }
-                    });
-                }
-            }
-            // Do not blindly set the whole week to 'generated' because some might have failed
-            // Let the frontend handle individual status
-            const remaining = await prisma.post.count({ where: { week_id: week.id, status: 'generating' } });
-            if (remaining === 0) {
-                await planner_service_1.default.updateWeekStatus(week.id, 'generated');
-            }
-        })();
-        return { success: true, message: 'Generation started' };
+        // Generate posts asynchronously via BullMQ Queue
+        const { postsQueue } = require('../queue');
+        for (const post of week.posts) {
+            if (!post.topic)
+                continue;
+            await prisma.post.update({
+                where: { id: post.id },
+                data: { status: 'generating' }
+            });
+            await postsQueue.add('generate-post', {
+                projectId,
+                theme: week.theme,
+                topic: post.topic,
+                postId: post.id,
+                isBatch: true // Identifies we should check if entire week is done
+            }, {
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 10000 }
+            });
+        }
+        return reply.code(202).send({ success: true, message: 'Generation queued' });
     });
     fastify.post('/api/weeks/:id/generate-sequential', async (request, reply) => {
         const projectId = request.projectId;
@@ -354,71 +324,29 @@ async function apiRoutes(fastify) {
             return reply.code(404).send({ error: 'Post not found' });
         }
         try {
-            console.log(`[Generate Image] Request for Post ${id}, Provider: ${provider || 'dalle'}`);
+            console.log(`[Generate Image] Enqueueing request for Post ${id}, Provider: ${provider || 'dalle'}`);
             const textToUse = post.final_text || post.generated_text || post.topic || '';
-            const fs = require('fs');
-            // 1. Generate Prompt (Multi-Agent Chain)
-            console.log('[Generate Image] Generating prompt via Multi-Agent Chain...');
-            const imagePrompt = await multi_agent_service_1.default.runImagePromptingChain(post.project_id, textToUse, post.topic || 'Tech Post');
-            console.log(`[Generate Image] Generated prompt: ${imagePrompt.substring(0, 100)}...`);
-            // 2. Generate Image
-            let imageUrl = '';
-            // Ensure prompt is valid for DALL-E (not empty or just whitespace)
-            let safePrompt = imagePrompt;
-            if (!safePrompt || safePrompt.trim().length === 0) {
-                console.warn('[Generate Image] Fallback triggered: imagePrompt was empty or whitespace');
-                safePrompt = `A professional vector illustration for a tech blog post about: ${post.topic || 'Technology'}. Minimalist style.`;
-            }
-            if (provider === 'nano') {
-                fs.appendFileSync('debug.log', `[${new Date().toISOString()}] Calling Nano...\n`);
-                imageUrl = await generator_service_1.default.generateImageNanoBanana(safePrompt);
-            }
-            else if (provider === 'full') {
-                fs.appendFileSync('debug.log', `[${new Date().toISOString()}] Calling Full Pipeline...\n`);
-                // 1. DALL-E
-                const dalleUrl = await generator_service_1.default.generateImage(safePrompt);
-                // 2. Critic
-                const criticResult = await multi_agent_service_1.default.runImageCritic(post.project_id, textToUse, dalleUrl);
-                if (!criticResult)
-                    throw new Error("Critic failed to generate feedback.");
-                // Ensure we have a prompt, the model might use 'prompt' instead of 'new_prompt'
-                safePrompt = criticResult.new_prompt || criticResult.prompt || `A highly detailed image about: ${post.topic}`;
-                // Ensure safePrompt is valid
-                if (!safePrompt || typeof safePrompt !== 'string' || safePrompt.trim() === '') {
-                    safePrompt = `A professional illustration for: ${post.topic}`;
-                }
-                // 3. Nano Banana with reference
-                imageUrl = await generator_service_1.default.generateImageNanoBanana(safePrompt, dalleUrl);
-            }
-            else {
-                fs.appendFileSync('debug.log', `[${new Date().toISOString()}] Calling DALL-E...\n`);
-                imageUrl = await generator_service_1.default.generateImage(safePrompt);
-            }
-            fs.appendFileSync('debug.log', `[${new Date().toISOString()}] Image Gen Success. URL: ${imageUrl}\n`);
-            // 3. Save to DB
-            await planner_service_1.default.updatePost(post.id, {
-                image_url: imageUrl,
-                image_prompt: safePrompt
-            });
-            return { success: true, imageUrl, imagePrompt: safePrompt };
-        }
-        catch (error) {
-            const fs = require('fs');
-            const errMsg = error?.message || error?.toString() || '';
-            fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Image Gen Error (Post ${id}): ${errMsg}\n${error.stack}\n\n`);
-            request.log.error(error);
-            if (errMsg.toLowerCase().includes('quota') || errMsg.includes('429')) {
-                console.error(`[API Quota Exceeded] on image gen for post ${id}`);
-            }
-            // Mark post as failed for image generation visibility
+            // Mark immediately to stop re-clicks
             await prisma.post.update({
                 where: { id: parseInt(id) },
-                data: {
-                    status: 'failed',
-                    image_prompt: `[Image Gen Failed]\nError: ${errMsg}`
-                }
+                data: { status: 'generating' }
             });
-            return reply.code(500).send({ error: `Upload/Gen failed: ${errMsg}` });
+            const { imageQueue } = require('../queue');
+            await imageQueue.add('generate-image', {
+                projectId,
+                postId: post.id,
+                provider: provider || 'dalle',
+                textToUse,
+                topic: post.topic
+            }, {
+                attempts: 2,
+                backoff: { type: 'exponential', delay: 10000 }
+            });
+            return reply.code(202).send({ success: true, message: 'Image generation queued' });
+        }
+        catch (error) {
+            request.log.error(error);
+            return reply.code(500).send({ error: `Queue failed: ${error.message}` });
         }
     });
     fastify.post('/api/posts/:id/upload-image', async (request, reply) => {
@@ -530,51 +458,25 @@ async function apiRoutes(fastify) {
             if (preset)
                 promptOverride = preset.prompt_text;
         }
-        // Immediately update status and return 202 to prevent 503 timeouts
+        // Immediately update status and enqueue background generation via BullMQ
         await prisma.post.update({
             where: { id: post.id },
             data: { status: 'generating' }
         });
-        // Background generation
-        (async () => {
-            try {
-                const result = await generator_service_1.default.generatePostText(projectId, post.week.theme, post.topic, post.id, promptOverride, withImage);
-                let fullText = result.text;
-                if (result.tags && result.tags.length > 0) {
-                    fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '')}`).join(' ');
-                }
-                else if (post.category) { // Fallback to existing category if new tags fail
-                    fullText += `\n\n#${post.category.replace(/\s+/g, '')}`;
-                }
-                await prisma.post.update({
-                    where: { id: post.id },
-                    data: {
-                        generated_text: fullText,
-                        final_text: fullText,
-                        status: 'generated',
-                        category: result.category || undefined,
-                        tags: result.tags || undefined
-                    }
-                });
-            }
-            catch (err) {
-                console.error(`Error generating post ${post.id}:`, err);
-                const fs = require('fs');
-                const errMsg = err?.message || err?.toString() || '';
-                if (errMsg.toLowerCase().includes('quota') || errMsg.includes('429')) {
-                    console.error(`[API Quota Exceeded] on post ${post.id}`);
-                }
-                fs.appendFileSync('server_error.log', `[${new Date().toISOString()}] Post Gen Error (Post ${post.id}): ${errMsg}\n${err.stack}\n\n`);
-                await prisma.post.update({
-                    where: { id: post.id },
-                    data: {
-                        status: 'failed',
-                        generated_text: `[Generation Failed]\nError: ${errMsg}`
-                    }
-                });
-            }
-        })();
-        return reply.code(202).send({ success: true, message: 'Generation started in background' });
+        const { postsQueue } = require('../queue');
+        await postsQueue.add('generate-post', {
+            projectId,
+            theme: post.week.theme,
+            topic: post.topic,
+            postId: post.id,
+            promptOverride,
+            withImage,
+            isBatch: false
+        }, {
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 10000 }
+        });
+        return reply.code(202).send({ success: true, message: 'Generation queued in background' });
     });
     // Settings
     fastify.get('/api/settings/agents', async (request, reply) => {
