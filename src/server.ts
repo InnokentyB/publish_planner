@@ -9,6 +9,7 @@ import telegramRoutes from './routes/webhook';
 import apiRoutes from './routes/api.routes';
 import authRoutes from './routes/auth.routes';
 import projectRoutes from './routes/project.routes';
+import linkedinRoutes from './routes/linkedin.routes';
 import path from 'path';
 
 
@@ -74,6 +75,7 @@ server.register(projectRoutes);
 server.register(apiRoutes);
 server.register(telegramRoutes);
 server.register(jobRoutes);
+server.register(linkedinRoutes);
 
 
 // SPA fallback for non-API routes
@@ -116,6 +118,61 @@ const start = async () => {
 
         // Run once immediately on startup
         publisherService.publishDuePosts().catch(e => console.error('[Scheduler] Initial check failed:', e));
+
+        // Setup metrics collector schedule (run every 12 hours)
+        const metricsService = require('./services/metrics.service').default;
+        
+        // 12 hours in milliseconds = 12 * 60 * 60 * 1000 = 43200000
+        console.log('Starting metrics collection scheduler (every 12h)...');
+        setInterval(async () => {
+            console.log('[MetricsService] Triggering scheduled metrics collection...');
+            await metricsService.collectAllMetrics();
+        }, 43200000);
+
+        // Optionally run once on startup, 
+        // using setTimeout to delay it by a few minutes to not block initial startup
+        setTimeout(() => {
+             console.log('[MetricsService] Running initial post-startup metrics collection check...');
+             metricsService.collectAllMetrics().catch((e: any) => console.error('Initial metrics check failed:', e));
+        }, 30000); // 30 seconds after boot
+
+        // Initialize Background Workers (BullMQ)
+        console.log('[Queue] Initializing background workers...');
+        const { createTopicWorker } = require('./queue/workers/topicWorker');
+        const { createPostWorker } = require('./queue/workers/postWorker');
+        const { createImageWorker } = require('./queue/workers/imageWorker');
+        
+        const topicWorker = createTopicWorker();
+        const postWorker = createPostWorker();
+        const imageWorker = createImageWorker();
+
+        // Graceful Shutdown block for Railway deployments
+        const gracefulShutdown = async (signal: string) => {
+            console.log(`\n[Server] Received ${signal}. Starting graceful shutdown...`);
+            
+            // 1. Stop Fastify
+            await server.close();
+            console.log('[Server] Fastify closed.');
+            
+            // 2. Shut down workers (Wait for active jobs to finish)
+            console.log('[Queue] Gracefully shutting down workers (Waiting for active jobs)...');
+            await Promise.allSettled([
+                topicWorker.close(),
+                postWorker.close(),
+                imageWorker.close()
+            ]);
+            console.log('[Queue] Workers successfully shut down.');
+            
+            // 3. Close generic Redis
+            const { connection } = require('./queue/index');
+            await connection.quit();
+            
+            console.log('[Server] Graceful shutdown complete. Exiting.');
+            process.exit(0);
+        };
+
+        process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+        process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
     } catch (err) {
         server.log.error(err);

@@ -19,6 +19,7 @@ interface Post {
     image_url?: string | null
     image_prompt?: string | null
     channel_id?: number | null
+    metrics?: any | null
 }
 
 interface PromptPreset {
@@ -199,9 +200,19 @@ export default function PostEditor() {
 
             <div className="flex-between mb-3">
                 <h1>Edit Post</h1>
-                <span className={`badge badge-${post.status}`}>
-                    {post.status.toUpperCase()}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    {post.metrics && (
+                        <div style={{ display: 'flex', gap: '12px', fontSize: '0.9rem', color: 'var(--text-secondary)', background: 'var(--bg-tertiary)', padding: '4px 12px', borderRadius: '16px' }}>
+                            {post.metrics.views !== undefined && <span title="Views">👁 {post.metrics.views}</span>}
+                            {post.metrics.likes !== undefined && <span title="Likes">❤️ {post.metrics.likes}</span>}
+                            {post.metrics.comments !== undefined && <span title="Comments">💬 {post.metrics.comments}</span>}
+                            {post.metrics.reposts !== undefined && <span title="Reposts/Forwards">🔁 {post.metrics.reposts}</span>}
+                        </div>
+                    )}
+                    <span className={`badge badge-${post.status}`}>
+                        {post.status.toUpperCase()}
+                    </span>
+                </div>
             </div>
 
             {post.status === 'failed' && post.generated_text && (

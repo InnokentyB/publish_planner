@@ -123,6 +123,31 @@ class PublisherService {
                         logToFile('ERROR', `[Publisher] Failed to publish post ${post.id} to VK:`, vkErr);
                         continue; // Skip the rest if VK fails
                     }
+                } else if (channel.type === 'linkedin') {
+                    // LinkedIn Publishing Logic
+                    logToFile('INFO', `[Publisher] Publishing to LinkedIn for post ${post.id}`);
+                    const linkedinConfig = channel.config as any;
+                    const urn = linkedinConfig.linkedin_urn;
+                    const token = linkedinConfig.access_token;
+
+                    if (!urn || !token) {
+                        logToFile('ERROR', `LinkedIn config missing urn/token for post ${post.id}`);
+                        continue;
+                    }
+
+                    try {
+                        const importedLinkedin = require('./linkedin.service').default;
+                        publishedLink = await importedLinkedin.publishPost(
+                            urn,
+                            token,
+                            text,
+                            post.image_url || undefined
+                        );
+                        logToFile('INFO', `[Publisher] Successfully published post ${post.id} to LinkedIn: ${publishedLink}`);
+                    } catch (liErr) {
+                        logToFile('ERROR', `[Publisher] Failed to publish post ${post.id} to LinkedIn:`, liErr);
+                        continue;
+                    }
                 } else if (channel.type === 'telegram') {
                     // Telegram Publishing Logic
                     const rawChannelId = (channel.config as any).telegram_channel_id?.toString();
@@ -338,7 +363,7 @@ class PublisherService {
         }
     }
 
-    async publishPostNow(postId: number): Promise<{ success: boolean; publishMethod: 'mtproto' | 'bot_api' | 'vk'; warning?: string }> {
+    async publishPostNow(postId: number): Promise<{ success: boolean; publishMethod: 'mtproto' | 'bot_api' | 'vk' | 'linkedin'; warning?: string }> {
         // 1. Fetch Post with Channel info
         const post = await prisma.post.findUnique({
             where: { id: postId },
@@ -388,6 +413,15 @@ class PublisherService {
                 throw new Error(`VK config missing id/key for post ${postId}`);
             }
             publishedLink = await vkService.publishPost(vkId, apiKey, text, post.image_url || undefined);
+        } else if (channel.type === 'linkedin') {
+            const linkedinConfig = channel.config as any;
+            const urn = linkedinConfig.linkedin_urn;
+            const token = linkedinConfig.access_token;
+            if (!urn || !token) {
+                throw new Error(`LinkedIn config missing urn/token for post ${postId}`);
+            }
+            const importedLinkedin = require('./linkedin.service').default;
+            publishedLink = await importedLinkedin.publishPost(urn, token, text, post.image_url || undefined);
         } else if (channel.type === 'telegram') {
             const rawChannelId = (channel.config as any).telegram_channel_id?.toString();
             if (!rawChannelId) {
@@ -552,7 +586,7 @@ class PublisherService {
 
         return {
             success: true,
-            publishMethod: isPublishedViaClient ? 'mtproto' as const : (channel.type === 'vk' ? 'vk' as const : 'bot_api' as const),
+            publishMethod: isPublishedViaClient ? 'mtproto' as const : (channel.type === 'vk' ? 'vk' as const : (channel.type === 'linkedin' ? 'linkedin' as const : 'bot_api' as const)),
             warning: publishWarning
         };
     }

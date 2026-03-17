@@ -14,9 +14,10 @@ interface Post {
     status: string
     publish_at: string
     generated_text: string | null
-    image_url?: string | null
     telegram_message_id?: number | null
     published_link?: string | null
+    image_url?: string | null
+    metrics?: any | null
 }
 
 interface Week {
@@ -291,6 +292,14 @@ export default function WeekDetail() {
                                     {post.image_url && (
                                         <div className="mb-2">
                                             <img src={post.image_url} alt="Cover" style={{ width: '100%', height: '150px', objectFit: 'cover', borderRadius: '4px' }} />
+                                        </div>
+                                    )}
+                                    {post.status === 'published' && post.metrics && (
+                                        <div style={{ display: 'flex', gap: '8px', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px', flexWrap: 'wrap' }}>
+                                            {post.metrics.views !== undefined && <span title="Views">👁 {post.metrics.views}</span>}
+                                            {post.metrics.likes !== undefined && <span title="Likes">❤️ {post.metrics.likes}</span>}
+                                            {post.metrics.comments !== undefined && <span title="Comments">💬 {post.metrics.comments}</span>}
+                                            {post.metrics.reposts !== undefined && <span title="Reposts/Forwards">🔁 {post.metrics.reposts}</span>}
                                         </div>
                                     )}
                                     <div className="flex-between mt-2">

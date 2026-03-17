@@ -44,7 +44,7 @@ export default function Settings() {
     const [nativeScheduling, setNativeScheduling] = useState(false)
 
     // Channel State
-    const [newChannelType, setNewChannelType] = useState<'telegram' | 'vk'>('telegram')
+    const [newChannelType, setNewChannelType] = useState<'telegram' | 'vk' | 'linkedin'>('telegram')
     const [newChannelName, setNewChannelName] = useState('')
     const [newChannelId, setNewChannelId] = useState('')
     const [newChannelUsername, setNewChannelUsername] = useState('')
@@ -431,6 +431,7 @@ export default function Settings() {
                             <select value={newChannelType} onChange={(e: any) => setNewChannelType(e.target.value)}>
                                 <option value="telegram">Telegram</option>
                                 <option value="vk">VKontakte (VK)</option>
+                                <option value="linkedin">LinkedIn</option>
                             </select>
                         </div>
 
@@ -463,7 +464,7 @@ export default function Settings() {
                                         />
                                     </div>
                                 </>
-                            ) : (
+                            ) : newChannelType === 'vk' ? (
                                 <>
                                     <div>
                                         <label>VK Group/Community ID</label>
@@ -484,17 +485,33 @@ export default function Settings() {
                                         />
                                     </div>
                                 </>
+                            ) : (
+                                <div style={{ gridColumn: '1 / -1' }}>
+                                    <label>Connect to LinkedIn</label>
+                                    <p className="text-muted" style={{ fontSize: '0.8rem', marginBottom: '1rem' }}>
+                                        To publish on LinkedIn, you must connect your account or company page securely via LinkedIn OAuth.
+                                    </p>
+                                    <button
+                                        className="btn-secondary"
+                                        onClick={() => window.location.href = `${import.meta.env.VITE_API_URL || 'http://localhost:3003'}/api/auth/linkedin/connect?projectId=${currentProject?.id}`}
+                                        style={{ width: '100%' }}
+                                    >
+                                        🔗 Connect LinkedIn
+                                    </button>
+                                </div>
                             )}
-                            <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-                                <button
-                                    className="btn-primary"
-                                    onClick={handleAddChannel}
-                                    disabled={!newChannelName || !newChannelId || (newChannelType === 'vk' && !newChannelApiKey) || addChannel.isPending}
-                                    style={{ width: '100%' }}
-                                >
-                                    {addChannel.isPending ? 'Adding...' : 'Add Channel'}
-                                </button>
-                            </div>
+                            {newChannelType !== 'linkedin' && (
+                                <div style={{ display: 'flex', alignItems: 'flex-end', gridColumn: '1 / -1' }}>
+                                    <button
+                                        className="btn-primary"
+                                        onClick={handleAddChannel}
+                                        disabled={!newChannelName || !newChannelId || (newChannelType === 'vk' && !newChannelApiKey) || addChannel.isPending}
+                                        style={{ width: '100%' }}
+                                    >
+                                        {addChannel.isPending ? 'Adding...' : 'Add Channel'}
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -507,7 +524,7 @@ export default function Settings() {
                                         <span className="badge" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>{channel.type}</span>
                                     </div>
                                     <div className="text-muted" style={{ fontSize: '0.8rem' }}>
-                                        ID: {channel.config?.telegram_channel_id || channel.config?.vk_id}
+                                        ID: {channel.config?.telegram_channel_id || channel.config?.vk_id || channel.config?.linkedin_urn}
                                         {channel.config?.channel_username && ` • @${channel.config.channel_username}`}
                                     </div>
                                 </div>

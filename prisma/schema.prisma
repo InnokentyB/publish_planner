@@ -18,7 +18,7 @@ model User {
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 
-  memberships ProjectMember[]
+  memberships      ProjectMember[]
   sent_invitations ProjectInvitation[]
 
   @@map("users")
@@ -36,27 +36,27 @@ model Project {
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
 
-  members  ProjectMember[]
-  channels SocialChannel[]
-  weeks    Week[]
-  posts    Post[]
-  settings ProjectSettings[]
+  members     ProjectMember[]
+  channels    SocialChannel[]
+  weeks       Week[]
+  posts       Post[]
+  settings    ProjectSettings[]
   invitations ProjectInvitation[]
   runs        AgentRun[]
 
   // v2 Media Orchestrator Relations
-  quarter_plans   QuarterPlan[]
-  month_arcs      MonthArc[]
-  week_packages   WeekPackage[]
-  content_items   ContentItem[]
-  feedbacks       FeedbackPackage[]
+  quarter_plans QuarterPlan[]
+  month_arcs    MonthArc[]
+  week_packages WeekPackage[]
+  content_items ContentItem[]
+  feedbacks     FeedbackPackage[]
+
+  prompt_presets    PromptPreset[]
+  comments          Comment[]
+  provider_keys     ProviderKey[]
+  telegram_accounts TelegramAccount[]
 
   @@map("projects")
-  
-  prompt_presets PromptPreset[]
-  comments       Comment[]
-  provider_keys  ProviderKey[]
-  telegram_accounts TelegramAccount[]
 }
 
 model ProjectMember {
@@ -84,11 +84,11 @@ model ProjectInvitation {
   expires_at DateTime
   created_by Int? // Make created_by optional for now, will be added back if needed
 
-  creator    User?     @relation(fields: [created_by], references: [id], onDelete: SetNull)
+  creator User? @relation(fields: [created_by], references: [id], onDelete: SetNull)
 
-  @@map("project_invitations")
   @@index([email])
   @@index([token])
+  @@map("project_invitations")
 }
 
 model ProjectSettings {
@@ -140,8 +140,8 @@ model Week {
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 
-  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
-  posts   Post[]
+  project     Project     @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  posts       Post[]
   week_memory WeekMemory?
 
   @@unique([project_id, week_start, week_end])
@@ -168,16 +168,18 @@ model Post {
   approval_message_id BigInt?
   telegram_message_id Int?
   published_link      String?
-  
-  // Sequential Generation Fields
-  core_takeaway       String?
-  key_points          Json?    // Array of strings
-  tool_used           String?
-  angle               String?
-  critic_score        Int?
 
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
+  // Sequential Generation Fields
+  core_takeaway String?
+  key_points    Json? // Array of strings
+  tool_used     String?
+  angle         String?
+  critic_score  Int?
+
+  metrics Json? // Stores views, likes, comments, etc.
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
   project Project        @relation(fields: [project_id], references: [id], onDelete: Cascade)
   week    Week           @relation(fields: [week_id], references: [id], onDelete: Cascade)
@@ -191,14 +193,14 @@ model Post {
 }
 
 model WeekMemory {
-  id              Int      @id @default(autoincrement())
-  week_id         Int      @unique
-  week            Week     @relation(fields: [week_id], references: [id], onDelete: Cascade)
+  id                Int      @id @default(autoincrement())
+  week_id           Int      @unique
+  week              Week     @relation(fields: [week_id], references: [id], onDelete: Cascade)
   week_core_summary String // Aggregated summary
-  covered_angles  Json     // Array of strings
-  used_tools      Json     // Array of strings
-  banned_takeaways Json    // Array of strings
-  updated_at      DateTime @updatedAt
+  covered_angles    Json // Array of strings
+  used_tools        Json // Array of strings
+  banned_takeaways  Json // Array of strings
+  updated_at        DateTime @updatedAt
 
   @@map("week_memories")
 }
@@ -219,28 +221,28 @@ model Event {
 }
 
 model AgentRun {
-  id        Int      @id @default(autoincrement())
+  id         Int      @id @default(autoincrement())
   project_id Int
-  project   Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
-  type      String   // 'week_plan', 'post_write', 'image_gen', 'image_chain', etc.
+  project    Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  type       String // 'week_plan', 'post_write', 'image_gen', 'image_chain', etc.
   agent_role String? // 'visual_architect', 'post_creator', 'critic', etc.
-  status    String   // 'success', 'failed'
-  input     String?
-  prompt    String?
-  output    String?
-  error     String?
+  status     String // 'success', 'failed'
+  input      String?
+  prompt     String?
+  output     String?
+  error      String?
   created_at DateTime @default(now())
 
   // Legacy fields (optional to match old schema if needed, or removed)
   // topic            String // Removed/Mapped to input
-  final_score      Int      @default(0)
-  total_iterations Int      @default(0)
+  final_score      Int @default(0)
+  total_iterations Int @default(0)
 
   iterations AgentIteration[] // Relation 
 
-  @@map("agent_runs")
   @@index([project_id])
   @@index([type])
+  @@map("agent_runs")
 }
 
 // Keeping AgentIteration for now but might be unused if we log everything in AgentRun or separate table
@@ -282,13 +284,13 @@ model PromptSettings {
 model PromptPreset {
   id          Int      @id @default(autoincrement())
   project_id  Int
-  role        String   // "post_creator", "topic_creator", etc.
+  role        String // "post_creator", "topic_creator", etc.
   name        String
   prompt_text String
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
 
-  project     Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
   @@map("prompt_presets")
 }
@@ -296,13 +298,13 @@ model PromptPreset {
 model Comment {
   id          Int      @id @default(autoincrement())
   project_id  Int
-  entity_type String   // "week", "post"
+  entity_type String // "week", "post"
   entity_id   Int
   text        String
-  author_role String   // "user", "assistant" (or specific agent role)
+  author_role String // "user", "assistant" (or specific agent role)
   created_at  DateTime @default(now())
 
-  project     Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
   @@index([project_id, entity_type, entity_id])
   @@map("comments")
@@ -313,10 +315,10 @@ model ProviderKey {
   project_id Int
   name       String
   key        String
-  provider   String   // "OpenAI", "Anthropic", "Gemini", "Other"
+  provider   String // "OpenAI", "Anthropic", "Gemini", "Other"
   created_at DateTime @default(now())
 
-  project    Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
   @@map("provider_keys")
 }
@@ -346,9 +348,9 @@ model QuarterPlan {
   project_id         Int
   quarter_start      DateTime @db.Date
   quarter_end        DateTime @db.Date
-  strategic_goal     String?  // Awareness/Authority/Conversion mix
+  strategic_goal     String? // Awareness/Authority/Conversion mix
   primary_pillar     String?
-  monetization_focus String?  // none / mini-products / intensive / flagship / club
+  monetization_focus String? // none / mini-products / intensive / flagship / club
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
 
@@ -365,9 +367,9 @@ model MonthArc {
   month             DateTime @db.Date // Representing the month
   arc_theme         String?
   arc_thesis        String?
-  key_concepts      Json?    // Array of strings
-  planned_longreads Json?    // Habr/VC/Zen plan
-  planned_video     Json?    // Video scripts count/plan
+  key_concepts      Json? // Array of strings
+  planned_longreads Json? // Habr/VC/Zen plan
+  planned_video     Json? // Video scripts count/plan
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 
@@ -386,13 +388,13 @@ model WeekPackage {
   week_end         DateTime @db.Date
   week_theme       String?
   core_thesis      String?
-  audience_focus   String?  // Beginner/Developing/Expert mix
-  intent_tag       String?  // Awareness/Authority/Warmup/Launch/Maintenance
-  monetization_tie String?  // none / hint / launch etc.
-  narrative_arc    Json?    // day1->day7 logic
-  cross_links      Json?    // cross link planning
-  risks            Json?    // oversimplify, too_deep, repetition
-  channel_mix      Json?    // Channel quota selected by MTA (e.g. { tg_post: 3, habr: 1 })
+  audience_focus   String? // Beginner/Developing/Expert mix
+  intent_tag       String? // Awareness/Authority/Warmup/Launch/Maintenance
+  monetization_tie String? // none / hint / launch etc.
+  narrative_arc    Json? // day1->day7 logic
+  cross_links      Json? // cross link planning
+  risks            Json? // oversimplify, too_deep, repetition
+  channel_mix      Json? // Channel quota selected by MTA (e.g. { tg_post: 3, habr: 1 })
   approval_status  String   @default("draft") // draft/needs_review/approved/rejected
   created_at       DateTime @default(now())
   updated_at       DateTime @updatedAt
@@ -405,30 +407,30 @@ model WeekPackage {
 }
 
 model ContentItem {
-  id                  Int      @id @default(autoincrement())
+  id                  Int       @id @default(autoincrement())
   project_id          Int
   week_package_id     Int?
-  channel_id          Int?     // Target channel
-  type                String   // tg_post, vk_post, habr_article, vc_article, zen_article, video_script
-  layer               String?  // azbuka, analyst, pro, community
+  channel_id          Int? // Target channel
+  type                String // tg_post, vk_post, habr_article, vc_article, zen_article, video_script
+  layer               String? // azbuka, analyst, pro, community
   title               String?
   brief               String?
-  key_points          Json?    // Array of strings
+  key_points          Json? // Array of strings
   cta                 String?
-  cross_link_to       Json?    // Array of target IDs
-  assets              Json?    // Images or diagrams
+  cross_link_to       Json? // Array of target IDs
+  assets              Json? // Images or diagrams
   draft_text          String?
-  status              String   @default("planned") // planned, drafted, revised, approved, scheduled, published, failed
+  status              String    @default("planned") // planned, drafted, revised, approved, scheduled, published, failed
   schedule_at         DateTime? @db.Timestamptz(6)
   quality_report      Json?
   metrics             Json?
-  telegram_message_id Int?     // Fallback UI tracking
-  published_link      String?  
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
+  telegram_message_id Int? // Fallback UI tracking
+  published_link      String?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
 
-  project      Project       @relation(fields: [project_id], references: [id], onDelete: Cascade)
-  week_package WeekPackage?  @relation(fields: [week_package_id], references: [id], onDelete: SetNull)
+  project      Project        @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  week_package WeekPackage?   @relation(fields: [week_package_id], references: [id], onDelete: SetNull)
   channel      SocialChannel? @relation(fields: [channel_id], references: [id], onDelete: SetNull)
 
   @@index([project_id])
@@ -440,11 +442,11 @@ model ContentItem {
 model FeedbackPackage {
   id                  Int      @id @default(autoincrement())
   project_id          Int
-  period              String   // 'week' or 'month'
+  period              String // 'week' or 'month'
   period_start        DateTime @db.Date
   period_end          DateTime @db.Date
   per_channel_metrics Json?
-  owner_scores        Json?    // accuracy, style, depth, usefulness
+  owner_scores        Json? // accuracy, style, depth, usefulness
   notes               String?
   recommendations     String?
   applied_changes     String?
