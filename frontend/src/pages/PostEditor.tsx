@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import { format } from 'date-fns'
 import Markdown from 'markdown-to-jsx'
@@ -38,10 +38,10 @@ import { useAuth } from '../context/AuthContext'
 
 export default function PostEditor() {
     const { id } = useParams()
+    const navigate = useNavigate()
     const queryClient = useQueryClient()
-    const [currentProject] = [useAuth().currentProject] // Destructure safely
-    console.log('[PostEditor] Rendering', { id, currentProject: currentProject?.id });
-
+    const { currentProject } = useAuth()
+    
     const [topic, setTopic] = useState('')
     const [category, setCategory] = useState('')
     const [tags, setTags] = useState('')
@@ -51,6 +51,7 @@ export default function PostEditor() {
     const [showPresetSelect, setShowPresetSelect] = useState(false)
     const [imageTimestamp, setImageTimestamp] = useState(Date.now())
     const [channelId, setChannelId] = useState<number | ''>('')
+    const [aiPrompt, setAiPrompt] = useState('')
 
     const { data: presets } = useQuery<PromptPreset[]>({
         queryKey: ['presets', currentProject?.id],
@@ -124,51 +125,36 @@ export default function PostEditor() {
         onError: (err: any) => alert('Failed to upload image: ' + err.message)
     })
 
-    // Global paste handler
     useEffect(() => {
         const handlePaste = (e: ClipboardEvent) => {
             const items = e.clipboardData?.items;
-            console.log('[PostEditor] Paste event detected', { items: items?.length });
-
             if (!items) return;
-
             for (const item of items) {
-                console.log('[PostEditor] Item type:', item.type);
                 if (item.type.indexOf('image') !== -1) {
                     const file = item.getAsFile();
                     if (file) {
-                        console.log('[PostEditor] Image found in clipboard', file.name, file.type, file.size);
-                        // Prevent default paste (e.g. into textarea)
                         e.preventDefault();
                         uploadImage.mutate(file);
-                        return; // Stop after first image
+                        return;
                     }
                 }
             }
         };
-
         window.addEventListener('paste', handlePaste);
         return () => window.removeEventListener('paste', handlePaste);
     }, [uploadImage]);
 
-    if (isLoading) {
-        return (
-            <div className="container">
-                <div className="flex-center" style={{ justifyContent: 'center', padding: '4rem' }}>
-                    <div className="loading"></div>
-                    <span>Loading post...</span>
-                </div>
-            </div>
-        )
-    }
+    if (isLoading) return (
+        <div className="flex-1 flex items-center justify-center">
+            <div className="loading"></div>
+        </div>
+    )
 
-    if (!post) {
-        return (
-            <div className="container">
-                <div className="error">Post not found</div>
-            </div>
-        )
-    }
+    if (!post) return (
+        <div className="flex-1 flex items-center justify-center text-error font-bold">
+            Post not found
+        </div>
+    )
 
     const handleSave = () => {
         updatePost.mutate({
@@ -181,7 +167,7 @@ export default function PostEditor() {
         })
     }
 
-    const handleApprove = async () => {
+    const handleApprove = () => {
         approvePost.mutate({
             topic,
             category: category || null,
@@ -193,309 +179,242 @@ export default function PostEditor() {
     }
 
     return (
-        <div className="container">
-            <div className="mb-3">
-                <Link to={`/weeks/${post.week_id}`} style={{ color: 'var(--text-muted)' }}>← Back to week</Link>
-            </div>
-
-            <div className="flex-between mb-3">
-                <h1>Edit Post</h1>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                    {post.metrics && (
-                        <div style={{ display: 'flex', gap: '12px', fontSize: '0.9rem', color: 'var(--text-secondary)', background: 'var(--bg-tertiary)', padding: '4px 12px', borderRadius: '16px' }}>
-                            {post.metrics.views !== undefined && <span title="Views">👁 {post.metrics.views}</span>}
-                            {post.metrics.likes !== undefined && <span title="Likes">❤️ {post.metrics.likes}</span>}
-                            {post.metrics.comments !== undefined && <span title="Comments">💬 {post.metrics.comments}</span>}
-                            {post.metrics.reposts !== undefined && <span title="Reposts/Forwards">🔁 {post.metrics.reposts}</span>}
-                        </div>
-                    )}
-                    <span className={`badge badge-${post.status}`}>
-                        {post.status.toUpperCase()}
-                    </span>
-                </div>
-            </div>
-
-            {post.status === 'failed' && post.generated_text && (
-                <div className="mb-4 p-3" style={{ background: '#3a2020', borderLeft: '4px solid var(--error)', borderRadius: '4px' }}>
-                    <h3 style={{ color: 'var(--error)', margin: '0 0 0.5rem 0' }}>Generation Failed</h3>
-                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.9rem', color: 'var(--text-color)' }}>
-                        {post.generated_text}
-                    </pre>
-                </div>
-            )}
-
-            <div className="mb-3">
-                <CommentSection entityType="post" entityId={post.id} />
-            </div>
-
-            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '2rem', alignItems: 'start' }}>
-                <div>
-                    <div className="card mb-2">
-                        <h3>Post Details</h3>
-                        <div className="grid" style={{ gap: '1rem' }}>
-                            <div>
-                                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
-                                    Target Channel
-                                </label>
-                                <select
-                                    value={channelId}
-                                    onChange={(e) => setChannelId(e.target.value ? Number(e.target.value) : '')}
-                                    style={{ width: '100%' }}
-                                >
-                                    <option value="">(Default) Automatic Selection</option>
-                                    {(projectData as any)?.channels?.map((c: SocialChannel) => (
-                                        <option key={c.id} value={c.id}>{c.name} ({c.type})</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div>
-                                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
-                                    Topic
-                                </label>
-                                <input
-                                    type="text"
-                                    value={topic}
-                                    onChange={(e) => setTopic(e.target.value)}
-                                />
-                            </div>
-                            <div>
-                                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
-                                    Category
-                                </label>
-                                <input
-                                    type="text"
-                                    value={category}
-                                    onChange={(e) => setCategory(e.target.value)}
-                                    placeholder="e.g., Soft Skills"
-                                />
-                            </div>
-                            <div>
-                                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
-                                    Tags (comma-separated)
-                                </label>
-                                <input
-                                    type="text"
-                                    value={tags}
-                                    onChange={(e) => setTags(e.target.value)}
-                                    placeholder="e.g., communication, feedback"
-                                />
-                            </div>
-                            <div>
-                                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
-                                    Publish Time
-                                </label>
-                                <input
-                                    type="datetime-local"
-                                    value={publishAt}
-                                    onChange={(e) => setPublishAt(e.target.value)}
-                                />
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="card">
-                        <h3>Content</h3>
-                        <textarea
-                            value={text}
-                            onChange={(e) => setText(e.target.value)}
-                            rows={20}
-                            style={{ fontFamily: 'monospace', fontSize: '0.9rem' }}
-                            placeholder="Post content (Markdown supported)"
-                        />
-                    </div>
-
-                    <div className="flex mt-2" style={{ gap: '1rem' }}>
-                        <button
-                            className="btn-primary"
-                            onClick={handleSave}
-                            disabled={updatePost.isPending}
+        <div className="flex-1 w-full bg-[#F8F9FB] flex overflow-hidden">
+            {/* Left: Ghost Writer Workspace */}
+            <div className="flex-1 flex flex-col min-w-0 border-r border-outline-variant/10">
+                {/* Minimal Header */}
+                <div className="h-16 px-6 flex items-center justify-between bg-white border-b border-outline-variant/5">
+                    <div className="flex items-center gap-4">
+                        <button 
+                            onClick={() => navigate(`/v2/weeks/${post.week_id}`)}
+                            className="text-on-surface-variant hover:text-primary"
                         >
-                            {updatePost.isPending ? 'Saving...' : 'Save Changes'}
+                            <span className="material-symbols-outlined text-xl">arrow_back</span>
                         </button>
-                        {post.status !== 'failed' && (
-                            <button
-                                className="btn-success"
-                                onClick={handleApprove}
-                                disabled={updatePost.isPending || approvePost.isPending || post.status === 'scheduled' || post.status === 'published'}
-                            >
-                                {updatePost.isPending || approvePost.isPending ? 'Saving & Approving...' : 'Approve & Schedule'}
-                            </button>
-                        )}
+                        <span className="text-[10px] font-black uppercase tracking-widest text-on-surface/40">Canvas ID: {post.id}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest shadow-sm  ${
+                            post.status === 'generated' ? 'bg-success text-white shadow-success/20' : 'bg-surface-container-high text-on-surface-variant'
+                        }`}>
+                            {post.status}
+                        </span>
+                        <div className="h-4 w-[1px] bg-outline-variant/20 mx-2"></div>
+                        <button onClick={handleSave} className="text-xs font-black text-primary hover:opacity-80">SAVE DRAFT</button>
+                        <button 
+                            onClick={handleApprove}
+                            disabled={post.status === 'scheduled' || post.status === 'published'}
+                            className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-black shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all ml-2"
+                        >
+                            {post.status === 'scheduled' ? 'SCHEDULED' : 'PUBLISH'}
+                        </button>
+                    </div>
+                </div>
 
+                {/* Editor Surface */}
+                <div className="flex-1 overflow-y-auto p-12 lg:p-24 scrollbar-hide">
+                    <div className="max-w-3xl mx-auto space-y-12">
+                        {/* Title/Topic Area */}
+                        <div className="group border-l-4 border-transparent hover:border-primary/20 pl-6 -ml-7 transition-all">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-primary/40 block mb-2 opacity-0 group-hover:opacity-100 transition-opacity">Post Concept</span>
+                            <textarea 
+                                value={topic}
+                                onChange={(e) => setTopic(e.target.value)}
+                                className="w-full text-4xl lg:text-5xl font-headline font-black tracking-tight text-on-surface border-none p-0 focus:ring-0 resize-none bg-transparent placeholder:text-on-surface/10"
+                                placeholder="The hook goes here..."
+                                rows={2}
+                            />
+                        </div>
 
-                        <div style={{ position: 'relative' }}>
-                            <button
-                                className="btn-secondary"
-                                onClick={() => setShowPresetSelect(!showPresetSelect)}
-                                disabled={regenerate.isPending || !currentProject}
-                            >
-                                {regenerate.isPending ? 'Regenerating...' : (post.status === 'failed' ? '🔄 Retry Generation' : '🔄 Regenerate')}
-                            </button>
-                            {showPresetSelect && (
-                                <div style={{
-                                    position: 'absolute',
-                                    bottom: '100%',
-                                    left: 0,
-                                    background: 'var(--bg-secondary)',
-                                    border: '1px solid var(--border)',
-                                    padding: '1rem',
-                                    borderRadius: '8px',
-                                    zIndex: 10,
-                                    width: '250px',
-                                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
-                                }}>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem' }}>Select Style Preset</label>
-                                    <select
-                                        style={{ marginBottom: '0.5rem', width: '100%' }}
-                                        value={selectedPresetId}
-                                        onChange={(e) => setSelectedPresetId(e.target.value ? Number(e.target.value) : '')}
-                                    >
-                                        <option value="">Default Style</option>
-                                        {presets?.filter(p => p.role === 'post_creator').map(p => (
-                                            <option key={p.id} value={p.id}>{p.name}</option>
-                                        ))}
-                                    </select>
-                                    <button
-                                        className="btn-primary"
-                                        style={{ width: '100%', padding: '0.5rem' }}
-                                        onClick={() => {
-                                            regenerate.mutate()
-                                            setShowPresetSelect(false)
-                                        }}
-                                    >
-                                        Regenerate Now
-                                    </button>
+                        {/* Ghost Writer Input */}
+                        <div className="relative">
+                            <textarea 
+                                value={text}
+                                onChange={(e) => setText(e.target.value)}
+                                className="w-full min-h-[500px] font-body text-xl leading-relaxed text-on-surface border-none p-0 focus:ring-0 resize-none bg-transparent placeholder:text-on-surface/5"
+                                placeholder="Start writing or use AI to generate..."
+                            />
+                            {text.length === 0 && (
+                                <div className="absolute top-0 left-0 pointer-events-none opacity-20">
+                                    <p className="text-xl italic font-serif leading-relaxed">
+                                        "The screen was white, the cursor blinking, waiting for the first word to drop like a seed into the earth..."
+                                    </p>
                                 </div>
                             )}
                         </div>
                     </div>
                 </div>
 
-                <div
-                    className="card mb-2"
-                    onDragOver={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                    }}
-                    onDrop={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const file = e.dataTransfer.files?.[0];
-                        if (file && file.type.startsWith('image/')) {
-                            uploadImage.mutate(file);
-                        }
-                    }}
-                >
-                    <h3>Image</h3>
-                    {post.image_url ? (
-                        <div className="mb-2 text-center">
-                            <img src={post.image_url.startsWith('data:') ? post.image_url : `${post.image_url}?t=${imageTimestamp}`} alt="Post visual" style={{ maxWidth: '100%', borderRadius: '4px' }} />
+                {/* AI Prompt Bar - Floating at bottom */}
+                <div className="px-6 pb-6 mt-auto">
+                    <div className="max-w-4xl mx-auto bg-white/80 backdrop-blur-xl border border-outline-variant/10 p-2 rounded-[2rem] shadow-2xl flex items-center gap-2 group focus-within:ring-4 focus-within:ring-primary/5 transition-all">
+                        <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white shrink-0 shadow-lg shadow-primary/20">
+                            <span className="material-symbols-outlined text-sm">auto_awesome</span>
                         </div>
-                    ) : (
-                        <p className="text-muted" style={{ border: '2px dashed var(--border)', padding: '2rem', textAlign: 'center', borderRadius: '8px' }}>
-                            Drag & Drop image here<br />
-                            <span style={{ fontSize: '0.8rem' }}>or paste from clipboard (Ctrl+V)</span>
-                        </p>
-                    )}
-
-                    {post.image_prompt && (
-                        <div className="mb-2 p-2" style={{ background: 'var(--bg-tertiary)', borderRadius: '4px', fontSize: '0.8rem' }}>
-                            <strong>Generation Prompt:</strong>
-                            <p style={{ margin: '0.5rem 0 0', color: 'var(--text-secondary)' }}>{post.image_prompt}</p>
-                        </div>
-                    )}
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                        <button
-                            className="btn-secondary"
-                            style={{ width: '100%' }}
-                            onClick={() => {
-                                if (window.confirm('Generate basic DALL-E image?')) {
-                                    generateImage.mutate('dalle');
-                                }
-                            }}
-                            disabled={generateImage.isPending}
-                        >
-                            {generateImage.isPending ? 'Generating...' : (post.image_url ? 'Regenerate DALL-E' : 'Generate DALL-E')}
-                        </button>
-                        <button
-                            className="btn-secondary"
-                            style={{ width: '100%' }}
-                            onClick={() => {
-                                if (window.confirm('Generate Nano Banana image?')) {
-                                    generateImage.mutate('nano');
-                                }
-                            }}
-                            disabled={generateImage.isPending}
-                        >
-                            {generateImage.isPending ? 'Generating...' : (post.image_url ? 'Regenerate Nano Banana' : 'Generate Nano Banana')}
-                        </button>
-                        <button
-                            className="btn-primary"
-                            style={{ width: '100%' }}
-                            onClick={() => {
-                                if (window.confirm('Run full pipeline: DALL-E -> Image Critic -> Nano Banana? This may take up to a minute.')) {
-                                    generateImage.mutate('full');
-                                }
-                            }}
-                            disabled={generateImage.isPending}
-                        >
-                            🧠 {generateImage.isPending ? 'Running Pipeline...' : 'DALL-E -> Critic -> Nano'}
-                        </button>
-                    </div>
-
-                    <div className="mt-2 text-center" style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-                        or
-                    </div>
-
-                    <div className="mt-2">
-                        <input
-                            type="file"
-                            accept="image/*"
-                            style={{ display: 'none' }}
-                            id="image-upload"
-                            onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                    uploadImage.mutate(file);
-                                }
-                            }}
+                        <input 
+                            value={aiPrompt}
+                            onChange={(e) => setAiPrompt(e.target.value)}
+                            className="flex-1 bg-transparent border-none focus:ring-0 text-sm font-bold text-on-surface placeholder:text-on-surface/30"
+                            placeholder="Transform this draft into a LinkedIn thought leader thread..."
                         />
-                        <label
-                            htmlFor="image-upload"
-                            className="btn-secondary"
-                            style={{
-                                display: 'block',
-                                textAlign: 'center',
-                                width: '100%',
-                                cursor: 'pointer',
-                                padding: '0.75rem 1.5rem',
-                                borderRadius: '8px'
-                            }}
-                        >
-                            {uploadImage.isPending ? 'Uploading...' : 'Upload Image'}
-                        </label>
-                    </div>
-                </div>
-
-                <div className="card" style={{ position: 'sticky', top: '2rem' }}>
-                    <h3>Preview</h3>
-                    <div style={{
-                        padding: '1rem',
-                        background: 'var(--bg-tertiary)',
-                        borderRadius: '8px',
-                        minHeight: '400px',
-                        maxHeight: '80vh',
-                        overflow: 'auto'
-                    }}>
-                        {text ? (
-                            <Markdown>{text}</Markdown>
-                        ) : (
-                            <p className="text-muted">No content yet...</p>
-                        )}
+                        <div className="flex items-center gap-1">
+                            <button 
+                                onClick={() => setShowPresetSelect(!showPresetSelect)}
+                                className="p-2 text-on-surface-variant hover:text-primary transition-colors relative"
+                            >
+                                <span className="material-symbols-outlined text-lg">tune</span>
+                                {showPresetSelect && (
+                                    <div className="absolute bottom-full right-0 mb-4 w-64 bg-white border border-outline-variant p-4 rounded-3xl shadow-2xl z-50">
+                                        <h4 className="text-[10px] font-black uppercase tracking-widest text-on-surface/40 mb-3">Writer Persona</h4>
+                                        <div className="space-y-1">
+                                            <button 
+                                                onClick={() => { setSelectedPresetId(''); setShowPresetSelect(false); }}
+                                                className={`w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition-colors ${selectedPresetId === '' ? 'bg-primary/5 text-primary' : 'hover:bg-surface'}`}
+                                            >
+                                                Default
+                                            </button>
+                                            {presets?.filter(p => p.role === 'post_creator').map(p => (
+                                                <button 
+                                                    key={p.id}
+                                                    onClick={() => { setSelectedPresetId(p.id); setShowPresetSelect(false); }}
+                                                    className={`w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition-colors ${selectedPresetId === p.id ? 'bg-primary/5 text-primary' : 'hover:bg-surface'}`}
+                                                >
+                                                    {p.name}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </button>
+                            <button 
+                                onClick={() => regenerate.mutate()}
+                                disabled={regenerate.isPending}
+                                className="bg-surface-container-high hover:bg-primary hover:text-white text-on-surface-variant px-6 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all"
+                            >
+                                {regenerate.isPending ? 'Processing...' : 'Execute'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div >
+
+            {/* Right: Asset & Intelligence Panel */}
+            <div className="w-[450px] bg-white border-l border-outline-variant/10 flex flex-col h-full hidden 2xl:flex overflow-hidden">
+                {/* Intelligence Tabs */}
+                <div className="flex border-b border-outline-variant/5">
+                    <button className="flex-1 py-4 text-[10px] font-black uppercase tracking-widest text-primary border-b-2 border-primary">Assets & Preview</button>
+                    <button className="flex-1 py-4 text-[10px] font-black uppercase tracking-widest text-on-surface/20">Strategy Review</button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-8 space-y-10 scrollbar-hide">
+                    {/* Visual Asset Card */}
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-xs font-black uppercase tracking-[0.2em] text-on-surface/40">Visual Asset</h3>
+                            <button 
+                                onClick={() => document.getElementById('image-upload')?.click()}
+                                className="text-primary"
+                            >
+                                <span className="material-symbols-outlined text-lg">upload</span>
+                            </button>
+                            <input type="file" id="image-upload" className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && uploadImage.mutate(e.target.files[0])} />
+                        </div>
+
+                        <div 
+                            className="aspect-square w-full rounded-[2rem] bg-surface-container-low border-2 border-dashed border-outline-variant/20 overflow-hidden relative group"
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => { e.preventDefault(); e.dataTransfer.files?.[0] && uploadImage.mutate(e.dataTransfer.files[0]); }}
+                        >
+                            {post.image_url ? (
+                                <>
+                                    <img src={post.image_url.startsWith('data:') ? post.image_url : `${post.image_url}?t=${imageTimestamp}`} className="w-full h-full object-cover" alt="Post" />
+                                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-3">
+                                        <button onClick={() => generateImage.mutate('full')} className="bg-white/20 backdrop-blur-md text-white px-4 py-2 rounded-xl text-xs font-bold border border-white/20 hover:bg-white/30">REGENERATE AI</button>
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center gap-4">
+                                    <div className="w-16 h-16 rounded-full bg-surface-container-high flex items-center justify-center text-primary/30">
+                                        <span className="material-symbols-outlined text-3xl">image</span>
+                                    </div>
+                                    <p className="text-sm font-bold opacity-30">Drag visual asset here</p>
+                                    <button onClick={() => generateImage.mutate('full')} className="btn-primary text-[10px] font-black uppercase px-6">Synthesize from text</button>
+                                </div>
+                            )}
+                        </div>
+                        {post.image_prompt && (
+                            <div className="p-4 bg-surface-container-low rounded-2xl border border-outline-variant/5">
+                                <span className="text-[9px] font-black uppercase text-primary mb-1 block">AI Prompt Node</span>
+                                <p className="text-[11px] font-medium leading-relaxed italic opacity-60 underline decoration-primary/10">{post.image_prompt}</p>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Metadata Synthesis */}
+                    <div className="space-y-6">
+                        <h3 className="text-xs font-black uppercase tracking-[0.2em] text-on-surface/40">Execution Protocol</h3>
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-surface-container-low p-5 rounded-3xl space-y-1">
+                                <span className="text-[9px] font-black uppercase text-on-surface/40">Schedule</span>
+                                <input 
+                                    type="datetime-local" 
+                                    value={publishAt} 
+                                    onChange={(e) => setPublishAt(e.target.value)}
+                                    className="block w-full bg-transparent border-none p-0 text-sm font-bold focus:ring-0"
+                                />
+                            </div>
+                            <div className="bg-surface-container-low p-5 rounded-3xl space-y-1">
+                                <span className="text-[9px] font-black uppercase text-on-surface/40">Channel</span>
+                                <select 
+                                    value={channelId}
+                                    onChange={(e) => setChannelId(e.target.value ? Number(e.target.value) : '')}
+                                    className="block w-full bg-transparent border-none p-0 text-sm font-bold focus:ring-0"
+                                >
+                                    <option value="">Default Node</option>
+                                    {(projectData as any)?.channels?.map((c: SocialChannel) => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="bg-surface-container-low p-5 rounded-3xl space-y-1">
+                            <span className="text-[9px] font-black uppercase text-on-surface/40">Layer Distribution</span>
+                            <input 
+                                value={category} 
+                                onChange={(e) => setCategory(e.target.value)}
+                                className="block w-full bg-transparent border-none p-0 text-sm font-bold focus:ring-0"
+                                placeholder="Distribution node..."
+                            />
+                        </div>
+
+                        <div className="bg-surface-container-low p-5 rounded-3xl space-y-1">
+                            <span className="text-[9px] font-black uppercase text-on-surface/40">Strategy Tags</span>
+                            <input 
+                                value={tags} 
+                                onChange={(e) => setTags(e.target.value)}
+                                className="block w-full bg-transparent border-none p-0 text-sm font-bold focus:ring-0"
+                                placeholder="#tag1, #tag2..."
+                            />
+                        </div>
+                    </div>
+
+                    {/* Live Preview / Render */}
+                    <div className="space-y-4">
+                        <h3 className="text-xs font-black uppercase tracking-[0.2em] text-on-surface/40">Synthesized Preview</h3>
+                        <div className="p-8 bg-[#F8F9FB] rounded-[2rem] border border-outline-variant/10 min-h-[400px]">
+                            <div className="prose prose-sm prose-slate max-w-none prose-p:leading-relaxed prose-strong:text-primary prose-a:text-primary">
+                                {text ? <Markdown>{text}</Markdown> : <p className="italic opacity-20">Awaiting content for synthesis...</p>}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="pt-8 border-t border-outline-variant/10">
+                         <CommentSection entityType="post" entityId={post.id} />
+                    </div>
+                </div>
+            </div>
+        </div>
     )
 }

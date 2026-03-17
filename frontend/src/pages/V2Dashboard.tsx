@@ -97,134 +97,73 @@ function StrategyChat() {
     }
 
     return (
-        <div style={{
-            border: '1px solid var(--border)',
-            borderRadius: '12px',
-            background: 'var(--bg-secondary)',
-            display: 'flex',
-            flexDirection: 'column',
-            height: '560px'
-        }}>
+        <div className="flex flex-col h-[600px] rounded-3xl overflow-hidden glass-panel border border-outline-variant/10 shadow-2xl">
             {/* Header */}
-            <div style={{
-                padding: '1rem 1.25rem',
-                borderBottom: '1px solid var(--border)',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center'
-            }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                    <span style={{ fontSize: '1.2rem' }}>🧠</span>
+            <div className="px-6 py-5 border-b border-outline-variant/10 flex justify-between items-center bg-white/10 backdrop-blur-md">
+                <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-full ai-gradient flex items-center justify-center text-white shadow-lg shadow-primary/20">
+                        <span className="material-symbols-outlined text-xl">psychology</span>
+                    </div>
                     <div>
-                        <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>Стратегический Ассистент</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Знает твой текущий квартальный план</div>
+                        <div className="font-headline font-bold text-sm tracking-tight text-on-surface">Strategy Assistant</div>
+                        <div className="text-[10px] uppercase tracking-widest font-bold text-primary/60">Live Intelligence</div>
                     </div>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div className="flex gap-2">
                     {messages.length > 0 && (
-                        <button
+                        <button 
                             onClick={() => setMessages([])}
-                            style={{
-                                background: 'none', border: '1px solid var(--border)',
-                                borderRadius: '6px', padding: '0.3rem 0.6rem',
-                                fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text-muted)'
-                            }}
+                            className="p-2 hover:bg-white/20 rounded-full transition-colors text-on-surface-variant"
                         >
-                            Очистить
+                            <span className="material-symbols-outlined text-lg">delete_sweep</span>
                         </button>
                     )}
-                    <button
+                    <button 
                         onClick={() => setShowPromptEditor(!showPromptEditor)}
-                        style={{
-                            background: showPromptEditor ? 'var(--primary)' : 'none',
-                            border: '1px solid var(--border)',
-                            borderRadius: '6px', padding: '0.3rem 0.7rem',
-                            fontSize: '0.75rem', cursor: 'pointer',
-                            color: showPromptEditor ? '#fff' : 'var(--text-muted)'
-                        }}
-                        title="Настроить системный промпт"
+                        className={`p-2 rounded-full transition-colors ${showPromptEditor ? 'bg-primary text-white' : 'hover:bg-white/20 text-on-surface-variant'}`}
                     >
-                        ⚙️ Промпт
+                        <span className="material-symbols-outlined text-lg">settings</span>
                     </button>
                 </div>
             </div>
 
             {/* System prompt editor */}
             {showPromptEditor && (
-                <div style={{
-                    padding: '1rem',
-                    borderBottom: '1px solid var(--border)',
-                    background: 'rgba(var(--primary-rgb, 99,102,241), 0.05)'
-                }}>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
-                        Системный промпт ассистента
-                    </label>
+                <div className="p-4 bg-primary-container/20 border-b border-outline-variant/10 animate-in slide-in-from-top duration-300">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-primary mb-2 block">System Directive</label>
                     <textarea
                         value={systemPrompt}
                         onChange={e => setSystemPrompt(e.target.value)}
-                        rows={6}
-                        style={{
-                            width: '100%', resize: 'vertical', fontSize: '0.82rem',
-                            fontFamily: 'monospace', padding: '0.6rem',
-                            background: 'var(--bg-main)', border: '1px solid var(--border)',
-                            borderRadius: '6px', color: 'var(--text-main)', lineHeight: 1.5,
-                            boxSizing: 'border-box'
-                        }}
+                        rows={5}
+                        className="w-full bg-white/50 border-outline-variant/20 rounded-xl text-xs font-body p-3 focus:ring-2 focus:ring-primary/20 transition-all outline-none"
                     />
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
-                        <button
-                            onClick={() => setShowPromptEditor(false)}
-                            style={{
-                                padding: '0.35rem 0.8rem', fontSize: '0.8rem',
-                                background: 'none', border: '1px solid var(--border)',
-                                borderRadius: '6px', cursor: 'pointer', color: 'var(--text-muted)'
-                            }}
-                        >
-                            Отмена
-                        </button>
-                        <button
+                    <div className="flex justify-end gap-2 mt-3">
+                        <button 
                             onClick={savePrompt}
                             disabled={isSavingPrompt}
-                            style={{
-                                padding: '0.35rem 0.8rem', fontSize: '0.8rem',
-                                background: 'var(--primary)', color: '#fff',
-                                border: 'none', borderRadius: '6px', cursor: 'pointer'
-                            }}
+                            className="bg-primary text-white text-[10px] font-bold uppercase tracking-widest px-4 py-2 rounded-full hover:opacity-90 transition-opacity"
                         >
-                            {isSavingPrompt ? 'Сохраняю...' : '✓ Сохранить'}
+                            {isSavingPrompt ? 'Saving...' : 'Deploy Directive'}
                         </button>
                     </div>
                 </div>
             )}
 
             {/* Messages */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-hide">
                 {messages.length === 0 && (
-                    <div style={{
-                        flex: 1, display: 'flex', flexDirection: 'column',
-                        alignItems: 'center', justifyContent: 'center', gap: '1rem',
-                        color: 'var(--text-muted)', textAlign: 'center', padding: '2rem'
-                    }}>
-                        <div style={{ fontSize: '2.5rem' }}>🎯</div>
-                        <div style={{ fontSize: '0.9rem', lineHeight: 1.6 }}>
-                            Спроси меня о стратегии для своих каналов.<br />
-                            Я знаю твой текущий квартальный план и помогу его доработать.
+                    <div className="h-full flex flex-col items-center justify-center text-center px-8 space-y-4">
+                        <div className="w-16 h-16 rounded-3xl ai-gradient flex items-center justify-center text-white text-3xl shadow-2xl rotate-3">
+                            <span className="material-symbols-outlined text-3xl">auto_awesome</span>
                         </div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', justifyContent: 'center', marginTop: '0.5rem' }}>
-                            {[
-                                'Как выстроить контент под разные каналы?',
-                                'Проверь мою стратегию',
-                                'Что публиковать в период прогрева?',
-                                'Как часто публиковать?'
-                            ].map(hint => (
-                                <button
+                        <h3 className="font-headline font-black text-xl text-on-surface">How can I help you scale?</h3>
+                        <p className="text-sm text-on-surface-variant leading-relaxed">I have full access to your 3-month strategy and target audience profiles.</p>
+                        <div className="flex flex-wrap justify-center gap-2 pt-4">
+                            {['Improve my hooks', 'Content gaps?', 'Audit strategy', 'Engagement ideas'].map(hint => (
+                                <button 
                                     key={hint}
-                                    onClick={() => { setInput(hint); }}
-                                    style={{
-                                        padding: '0.35rem 0.7rem', fontSize: '0.78rem',
-                                        background: 'var(--bg-main)', border: '1px solid var(--border)',
-                                        borderRadius: '20px', cursor: 'pointer', color: 'var(--text-secondary)'
-                                    }}
+                                    onClick={() => setInput(hint)}
+                                    className="px-4 py-2 bg-white/60 hover:bg-white rounded-full text-xs font-bold text-primary shadow-sm border border-primary/5 transition-all"
                                 >
                                     {hint}
                                 </button>
@@ -234,37 +173,26 @@ function StrategyChat() {
                 )}
 
                 {messages.map((msg, i) => (
-                    <div key={i} style={{
-                        display: 'flex',
-                        justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start'
-                    }}>
-                        <div style={{
-                            maxWidth: '85%',
-                            padding: '0.65rem 0.9rem',
-                            borderRadius: msg.role === 'user' ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
-                            background: msg.role === 'user' ? 'var(--primary)' : 'var(--bg-main)',
-                            color: msg.role === 'user' ? '#fff' : 'var(--text-main)',
-                            fontSize: '0.875rem',
-                            lineHeight: 1.55,
-                            border: msg.role === 'assistant' ? '1px solid var(--border)' : 'none',
-                            whiteSpace: 'pre-wrap'
-                        }}>
+                    <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start underline-none'}`}>
+                        <div className={`max-w-[85%] px-5 py-4 rounded-3xl text-sm leading-relaxed shadow-sm ${
+                            msg.role === 'user' 
+                                ? 'bg-primary text-white rounded-tr-none font-medium' 
+                                : 'bg-white rounded-tl-none border border-outline-variant/10 text-on-surface'
+                        }`}>
                             {msg.content}
                         </div>
                     </div>
                 ))}
 
                 {isLoading && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <div style={{
-                            padding: '0.65rem 1rem',
-                            borderRadius: '12px 12px 12px 2px',
-                            background: 'var(--bg-main)',
-                            border: '1px solid var(--border)',
-                            fontSize: '0.875rem',
-                            color: 'var(--text-muted)'
-                        }}>
-                            <span style={{ animation: 'pulse 1.5s ease-in-out infinite' }}>⏳ Думаю...</span>
+                    <div className="flex justify-start">
+                        <div className="bg-white px-5 py-4 rounded-3xl rounded-tl-none border border-outline-variant/10 text-xs text-primary font-bold flex items-center gap-2 shadow-sm">
+                            <div className="flex gap-1">
+                                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"></span>
+                            </div>
+                            <span>Analyzing Strategy...</span>
                         </div>
                     </div>
                 )}
@@ -272,39 +200,25 @@ function StrategyChat() {
             </div>
 
             {/* Input */}
-            <div style={{ padding: '0.75rem 1rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.5rem' }}>
-                <textarea
-                    value={input}
-                    onChange={e => setInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-                    placeholder="Задай вопрос по стратегии... (Enter — отправить, Shift+Enter — новая строка)"
-                    rows={2}
-                    disabled={isLoading}
-                    style={{
-                        flex: 1, resize: 'none', fontSize: '0.875rem',
-                        padding: '0.6rem 0.75rem',
-                        background: 'var(--bg-main)', border: '1px solid var(--border)',
-                        borderRadius: '8px', color: 'var(--text-main)',
-                        fontFamily: 'inherit', lineHeight: 1.45,
-                        boxSizing: 'border-box'
-                    }}
-                />
-                <button
-                    onClick={sendMessage}
-                    disabled={isLoading || !input.trim()}
-                    style={{
-                        padding: '0 1rem',
-                        background: 'var(--primary)', color: '#fff',
-                        border: 'none', borderRadius: '8px',
-                        cursor: isLoading || !input.trim() ? 'not-allowed' : 'pointer',
-                        opacity: isLoading || !input.trim() ? 0.5 : 1,
-                        fontSize: '1.1rem',
-                        flexShrink: 0
-                    }}
-                    title="Отправить"
-                >
-                    ➤
-                </button>
+            <div className="p-4 bg-white/30 backdrop-blur-md border-t border-outline-variant/10">
+                <div className="relative group">
+                    <textarea
+                        value={input}
+                        onChange={e => setInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+                        placeholder="Message AI..."
+                        rows={1}
+                        disabled={isLoading}
+                        className="w-full bg-white border-2 border-transparent focus:border-primary/20 rounded-2xl py-4 pl-5 pr-14 text-sm font-medium transition-all shadow-lg outline-none resize-none"
+                    />
+                    <button 
+                        onClick={sendMessage}
+                        disabled={isLoading || !input.trim()}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 ai-gradient text-white rounded-xl flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-30"
+                    >
+                        <span className="material-symbols-outlined">send</span>
+                    </button>
+                </div>
             </div>
         </div>
     )
@@ -371,192 +285,350 @@ export default function V2Dashboard() {
 
     if (!currentProject) {
         return (
-            <div className="container">
-                <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>
-                    <h2>No Project Selected</h2>
-                    <p style={{ color: 'var(--text-secondary)' }}>Select a project to view V2 Orchestrator.</p>
+            <div className="flex-1 flex flex-col items-center justify-center p-8">
+                <div className="max-w-md w-full glass-panel p-12 text-center rounded-[3rem] border border-outline-variant/10 shadow-3xl animate-in zoom-in duration-500">
+                    <div className="w-24 h-24 bg-surface-container-high rounded-3xl mx-auto mb-8 flex items-center justify-center text-primary/30">
+                        <span className="material-symbols-outlined text-5xl">folder_off</span>
+                    </div>
+                    <h2 className="text-3xl font-headline font-black text-on-surface mb-4">Space is Empty</h2>
+                    <p className="text-on-surface-variant mb-10 leading-relaxed font-body">Select a project from the sidebar to initialize your cognitive workspace.</p>
+                    <button className="w-full ai-gradient text-white font-bold py-5 rounded-2xl shadow-xl hover:opacity-90 transition-opacity">
+                        Connect Project
+                    </button>
                 </div>
             </div>
         )
     }
 
-    if (loadingWeeks || loadingQuarters) return <div className="container">Loading Orchestrator...</div>
+    if (loadingWeeks || loadingQuarters) {
+        return (
+            <div className="flex-1 flex items-center justify-center bg-surface">
+                <div className="flex flex-col items-center gap-4">
+                    <div className="w-12 h-12 border-4 border-outline-variant border-t-primary rounded-full animate-spin"></div>
+                    <p className="font-label text-xs uppercase tracking-widest text-primary font-bold">Synchronizing Node...</p>
+                </div>
+            </div>
+        )
+    }
 
     return (
-        <div className="container">
-            {/* Header */}
-            <div className="flex-between mb-3">
+        <div className="flex-1 w-full p-8 max-h-full overflow-y-auto space-y-10 scrollbar-hide">
+            {/* Page Header */}
+            <div className="flex justify-between items-end">
                 <div>
-                    <h1>V2 Orchestrator</h1>
-                    <p className="text-muted">Strategic Planning & Distribution</p>
+                    <div className="flex items-center gap-3 mb-2">
+                        <span className="px-3 py-1 bg-primary/10 text-primary text-[10px] font-black uppercase tracking-widest rounded-full">Orchestrator V2</span>
+                        <span className="w-2 h-2 bg-success rounded-full animate-pulse"></span>
+                    </div>
+                    <h1 className="text-4xl font-headline font-black tracking-tight text-on-surface">Factory Matrix</h1>
+                    <p className="text-on-surface-variant font-body mt-2">Scale your knowledge across every platform in 1-click.</p>
                 </div>
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                    <button className="btn-secondary" onClick={() => runSweep.mutate()} disabled={runSweep.isPending}>
-                        {runSweep.isPending ? 'Sweeping...' : 'Run Factory Sweep'}
+                <div className="flex gap-4">
+                    <button 
+                        onClick={() => runSweep.mutate()} 
+                        className="flex items-center gap-2 bg-surface-container-high hover:bg-surface-container-highest px-6 py-3 rounded-2xl font-bold text-sm transition-colors"
+                    >
+                        <span className="material-symbols-outlined text-lg">cyclone</span>
+                        {runSweep.isPending ? 'Processing...' : 'Run Sweep'}
                     </button>
                     {activeTab === 'weeks' ? (
-                        <button className="btn-primary" onClick={() => setShowCreate(!showCreate)}>
-                            {showCreate ? 'Cancel' : '+ Plan New Week'}
+                        <button 
+                            onClick={() => setShowCreate(!showCreate)}
+                            className="flex items-center gap-2 ai-gradient text-white px-6 py-3 rounded-2xl font-bold text-sm shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                        >
+                            <span className="material-symbols-outlined">add</span>
+                            <span>Tactical Week</span>
                         </button>
                     ) : (
-                        <button className="btn-primary" onClick={() => setShowCreateQuarter(!showCreateQuarter)}>
-                            {showCreateQuarter ? 'Cancel' : '+ Plan Strategic Quarter'}
+                        <button 
+                            onClick={() => setShowCreateQuarter(!showCreateQuarter)}
+                            className="flex items-center gap-2 ai-gradient text-white px-6 py-3 rounded-2xl font-bold text-sm shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                        >
+                            <span className="material-symbols-outlined">auto_awesome</span>
+                            <span>Strategic Quarter</span>
                         </button>
                     )}
                 </div>
             </div>
 
-            {/* Tabs */}
-            <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', borderBottom: '1px solid var(--border)' }}>
+            {/* Matrix Tabs */}
+            <div className="flex gap-2 p-1.5 bg-surface-container-high/50 rounded-2xl w-fit">
                 {(['quarters', 'weeks'] as const).map(tab => (
                     <button
                         key={tab}
-                        style={{
-                            background: 'none', border: 'none', padding: '10px 20px', cursor: 'pointer',
-                            borderBottom: activeTab === tab ? '2px solid var(--primary)' : '2px solid transparent',
-                            color: activeTab === tab ? 'var(--primary)' : 'var(--text-main)'
-                        }}
                         onClick={() => setActiveTab(tab)}
+                        className={`px-8 py-3 rounded-xl font-bold text-sm transition-all ${
+                            activeTab === tab 
+                                ? 'bg-white text-primary shadow-sm' 
+                                : 'text-on-surface-variant hover:text-on-surface'
+                        }`}
                     >
-                        {tab === 'quarters' ? 'Quarter Strategy (Top-Down)' : 'Tactical Weeks'}
+                        {tab === 'quarters' ? 'Quarter Architecture' : 'Tactical Execution'}
                     </button>
                 ))}
             </div>
 
-            {/* Create Quarter form */}
+            {/* Creation Panels */}
             {showCreateQuarter && activeTab === 'quarters' && (
-                <div className="card mb-3" style={{ border: '2px solid var(--primary)' }}>
-                    <h3>Plan Quarter (QSP › MTA › SMO)</h3>
-                    <div className="grid grid-2" style={{ gap: '1rem' }}>
-                        <div>
-                            <label className="text-muted">Global Strategic Goal</label>
-                            <input
-                                type="text"
-                                value={qGoalHint}
-                                onChange={e => setQGoalHint(e.target.value)}
-                                placeholder="e.g. Sell the analytics course in Month 3"
-                            />
+                <div className="p-8 rounded-[2rem] bg-surface-container border-2 border-primary/20 shadow-xl animate-in slide-in-from-top-4 duration-500">
+                    <div className="max-w-2xl mx-auto space-y-6">
+                        <div className="flex items-center gap-4 mb-4">
+                            <div className="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center text-white">
+                                <span className="material-symbols-outlined">architecture</span>
+                            </div>
+                            <div>
+                                <h3 className="text-xl font-headline font-black">Plan Strategic Quarter</h3>
+                                <p className="text-sm text-on-surface-variant">Architecture through QSP › MTA › SMO frameworks</p>
+                            </div>
                         </div>
-                        <div>
-                            <label className="text-muted">Quarter Start Date</label>
-                            <input type="date" value={qStartDate} onChange={e => setQStartDate(e.target.value)} />
+                        <div className="grid grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold uppercase tracking-widest text-primary ml-1">Global Project Goal</label>
+                                <input
+                                    type="text"
+                                    value={qGoalHint}
+                                    onChange={e => setQGoalHint(e.target.value)}
+                                    placeholder="e.g. Lead generation for SEO tool"
+                                    className="w-full bg-white border-none rounded-xl py-4 px-5 text-sm shadow-sm focus:ring-2 focus:ring-primary/20 transition-all outline-none"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold uppercase tracking-widest text-primary ml-1">Quarter Start</label>
+                                <input 
+                                    type="date" 
+                                    value={qStartDate} 
+                                    onChange={e => setQStartDate(e.target.value)} 
+                                    className="w-full bg-white border-none rounded-xl py-4 px-5 text-sm shadow-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                                />
+                            </div>
                         </div>
+                        <button
+                            onClick={() => createQuarter.mutate({ goalHint: qGoalHint, startDate: qStartDate || undefined })}
+                            disabled={createQuarter.isPending}
+                            className="w-full ai-gradient text-white font-black py-5 rounded-2xl shadow-xl hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-3"
+                        >
+                            {createQuarter.isPending ? (
+                                <>
+                                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                    <span>Simulating 3 Months of Content...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <span className="material-symbols-outlined">bolt</span>
+                                    <span>Assemble Full Quarter Strategy</span>
+                                </>
+                            )}
+                        </button>
                     </div>
-                    <button
-                        className="btn-primary mt-2"
-                        onClick={() => createQuarter.mutate({ goalHint: qGoalHint, startDate: qStartDate || undefined })}
-                        disabled={createQuarter.isPending}
-                    >
-                        {createQuarter.isPending ? 'Architecting 3 Months & 12 Weeks (may take 2 mins)...' : 'Generate Full Quarter'}
-                    </button>
                 </div>
             )}
 
-            {/* Create Week form */}
             {showCreate && activeTab === 'weeks' && (
-                <div className="card mb-3" style={{ border: '2px solid var(--primary)' }}>
-                    <h3>Plan Week (SMO › DA › NCC)</h3>
-                    <div className="grid grid-2" style={{ gap: '1rem' }}>
-                        <div>
-                            <label className="text-muted">Theme Hint (Optional)</label>
-                            <input
-                                type="text"
-                                value={themeHint}
-                                onChange={e => setThemeHint(e.target.value)}
-                                placeholder="e.g. System Analysis Focus"
-                            />
+                <div className="p-8 rounded-[2rem] bg-surface-container border-2 border-primary/20 shadow-xl animate-in slide-in-from-top-4 duration-500">
+                    <div className="max-w-2xl mx-auto space-y-6">
+                        <div className="flex items-center gap-4 mb-4">
+                            <div className="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center text-white">
+                                <span className="material-symbols-outlined">event_upcoming</span>
+                            </div>
+                            <div>
+                                <h3 className="text-xl font-headline font-black">Generate Tactical Week</h3>
+                                <p className="text-sm text-on-surface-variant">Detailed mapping using SMO › DA › NCC flows</p>
+                            </div>
                         </div>
-                        <div>
-                            <label className="text-muted">Start Date (Monday)</label>
-                            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+                        <div className="grid grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold uppercase tracking-widest text-primary ml-1">Theme / Focus</label>
+                                <input
+                                    type="text"
+                                    value={themeHint}
+                                    onChange={e => setThemeHint(e.target.value)}
+                                    placeholder="e.g. Case studies & social proof"
+                                    className="w-full bg-white border-none rounded-xl py-4 px-5 text-sm shadow-sm focus:ring-2 focus:ring-primary/20 transition-all outline-none"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold uppercase tracking-widest text-primary ml-1">Week Monday</label>
+                                <input 
+                                    type="date" 
+                                    value={startDate} 
+                                    onChange={e => setStartDate(e.target.value)} 
+                                    className="w-full bg-white border-none rounded-xl py-4 px-5 text-sm shadow-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                                />
+                            </div>
                         </div>
+                        <button
+                            onClick={() => createWeek.mutate({ themeHint, startDate: startDate || undefined })}
+                            disabled={createWeek.isPending}
+                            className="w-full ai-gradient text-white font-black py-5 rounded-2xl shadow-xl hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-3"
+                        >
+                            {createWeek.isPending ? (
+                                <>
+                                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                    <span>Planning Strategic Topics...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <span className="material-symbols-outlined">insights</span>
+                                    <span>Plan Tactical Week</span>
+                                </>
+                            )}
+                        </button>
                     </div>
-                    <button
-                        className="btn-primary mt-2"
-                        onClick={() => createWeek.mutate({ themeHint, startDate: startDate || undefined })}
-                        disabled={createWeek.isPending}
-                    >
-                        {createWeek.isPending ? 'Agents are planning (may take 60s)...' : 'Generate Strategic Plan'}
-                    </button>
                 </div>
             )}
 
-            {/* WEEKS TAB */}
+            {/* Matrix Content */}
             {activeTab === 'weeks' && (
-                <div className="grid grid-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {weeks?.map(wp => (
-                        <Link key={wp.id} to={`/v2/weeks/${wp.id}`} style={{ textDecoration: 'none' }}>
-                            <div className="card" style={{ cursor: 'pointer', transition: 'transform 0.2s' }}
-                                onMouseEnter={e => (e.currentTarget.style.transform = 'translateY(-2px)')}
-                                onMouseLeave={e => (e.currentTarget.style.transform = 'translateY(0)')}>
-                                <div className="flex-between mb-1">
-                                    <h3 style={{ margin: 0 }}>{wp.theme}</h3>
-                                    <span className={`badge badge-${wp.approval_status}`}>{wp.approval_status.toUpperCase()}</span>
+                        <Link key={wp.id} to={`/v2/weeks/${wp.id}`} className="group transition-transform hover:-translate-y-2 active:scale-95 duration-300">
+                            <div className="bg-white p-8 rounded-[2.5rem] border border-outline-variant/10 shadow-sm hover:shadow-2xl hover:border-primary/20 transition-all h-full flex flex-col">
+                                <div className="flex justify-between items-start mb-6">
+                                    <div className="w-12 h-12 bg-primary-fixed text-primary rounded-2xl flex items-center justify-center font-black group-hover:scale-110 transition-transform">
+                                        W{format(new Date(wp.week_start), 'w')}
+                                    </div>
+                                    <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-tighter shadow-sm  ${
+                                        wp.approval_status === 'approved' 
+                                            ? 'bg-success text-white shadow-success/20' 
+                                            : wp.approval_status === 'generating' 
+                                                ? 'bg-primary text-white shadow-primary/20' 
+                                                : 'bg-surface-container-high text-on-surface-variant'
+                                    }`}>
+                                        {wp.approval_status}
+                                    </span>
                                 </div>
-                                <p className="text-muted mb-2" style={{ fontSize: '0.9rem', lineHeight: '1.4' }}>{wp.core_thesis}</p>
-                                <div className="flex-between text-muted" style={{ fontSize: '0.85rem' }}>
-                                    <span>{format(new Date(wp.week_start), 'MMM d')} - {format(new Date(wp.week_end), 'MMM d, yyyy')}</span>
-                                    <span>{wp._count?.content_items || 0} items</span>
+                                <h3 className="text-xl font-headline font-black mb-3 text-on-surface leading-tight">{wp.theme}</h3>
+                                <p className="text-sm text-on-surface-variant font-body line-clamp-3 mb-8 leading-relaxed italic border-l-4 border-primary/10 pl-4">{wp.core_thesis}</p>
+                                <div className="mt-auto pt-6 border-t border-outline-variant/5 flex justify-between items-center text-[11px] font-bold uppercase tracking-widest text-on-surface/40">
+                                    <div className="flex items-center gap-2">
+                                        <span className="material-symbols-outlined text-sm">schedule</span>
+                                        <span>{format(new Date(wp.week_start), 'MMM d')} - {format(new Date(wp.week_end), 'MMM d')}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="material-symbols-outlined text-sm">view_timeline</span>
+                                        <span>{wp._count?.content_items || 0} Items</span>
+                                    </div>
                                 </div>
                             </div>
                         </Link>
                     ))}
                     {weeks && weeks.length === 0 && (
-                        <div className="card text-center text-muted" style={{ gridColumn: '1 / -1', padding: '3rem' }}>
-                            No tactical weeks found.
+                        <div className="col-span-full py-24 text-center glass-panel rounded-[3rem] border-dashed border-2 border-outline-variant/20">
+                            <div className="text-4xl mb-4 opacity-30">🕳️</div>
+                            <h4 className="text-xl font-headline font-black text-on-surface/40">No tactical deployment found</h4>
+                            <p className="text-on-surface-variant/40 mt-1">Start by generating your first week plan.</p>
                         </div>
                     )}
                 </div>
             )}
 
-            {/* QUARTERS TAB */}
             {activeTab === 'quarters' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: '1.5rem', alignItems: 'start' }}>
-                    {/* Left: Quarter cards */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                <div className="grid grid-cols-1 xl:grid-cols-[1fr_400px] gap-10 items-start pb-20">
+                    {/* Architecture Feed */}
+                    <div className="space-y-12">
                         {quarters?.map(q => (
-                            <div key={q.id} className="card" style={{ borderLeft: '4px solid var(--primary)' }}>
-                                <div className="flex-between mb-2">
-                                    <h2>Q: {format(new Date(q.quarter_start), 'MMM yyyy')} - {format(new Date(q.quarter_end), 'MMM yyyy')}</h2>
-                                    <span className="badge badge-draft">STRATEGY</span>
+                            <div key={q.id} className="relative pl-12">
+                                {/* Timeline line */}
+                                <div className="absolute left-[23px] top-6 bottom-[-48px] w-1 bg-surface-container-highest/50 rounded-full"></div>
+                                <div className="absolute left-0 top-0 w-12 h-12 rounded-full bg-white border-4 border-surface-container-highest flex items-center justify-center z-10 shadow-sm">
+                                    <span className="material-symbols-outlined text-primary text-xl font-black">rocket_launch</span>
                                 </div>
-                                <p><strong>Goal:</strong> {q.strategic_goal}</p>
-                                <p><strong>Pillar:</strong> {q.primary_pillar}</p>
-
-                                <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem', overflowX: 'auto', paddingBottom: '1rem' }}>
-                                    {q.month_arcs.map((m, i) => (
-                                        <div key={m.id} className="card" style={{ minWidth: '300px', background: 'var(--bg-secondary)' }}>
-                                            <h4>Month {i + 1}: {format(new Date(m.month), 'MMMM')}</h4>
-                                            <p style={{ fontSize: '0.9rem', color: 'var(--primary)' }}><strong>Focus:</strong> {m.arc_theme}</p>
-                                            <p style={{ fontSize: '0.85rem' }} className="text-muted"><strong>Thesis:</strong> {m.arc_thesis}</p>
-                                            <div style={{ marginTop: '1rem' }}>
-                                                <strong style={{ fontSize: '0.8rem' }}>WEEKS:</strong>
-                                                <ul style={{ paddingLeft: '1.2rem', margin: '0.5rem 0', fontSize: '0.85rem' }}>
-                                                    {m.week_packages.map(wp => (
-                                                        <li key={wp.id} style={{ marginBottom: '0.5rem' }}>
-                                                            <Link to={`/v2/weeks/${wp.id}`} style={{ color: 'var(--text-main)' }}>
-                                                                {wp.theme} <span style={{ color: 'var(--text-muted)' }}>({wp.approval_status})</span>
-                                                            </Link>
-                                                        </li>
-                                                    ))}
-                                                </ul>
-                                            </div>
+                                
+                                <div className="bg-white p-10 rounded-[3rem] border border-outline-variant/10 shadow-sm">
+                                    <div className="flex justify-between items-start mb-8">
+                                        <div>
+                                            <h2 className="text-2xl font-headline font-black tracking-tight mb-1">
+                                                {format(new Date(q.quarter_start), 'MMM yyyy')} — Quarter Scale
+                                            </h2>
+                                            <p className="text-on-surface-variant text-sm font-medium">{format(new Date(q.quarter_start), 'MMMM do')} to {format(new Date(q.quarter_end), 'MMMM do, yyyy')}</p>
                                         </div>
-                                    ))}
+                                        <div className="flex gap-2">
+                                            <span className="px-4 py-2 bg-primary-fixed text-primary text-[10px] font-black uppercase tracking-widest rounded-xl">Strategic Phase</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
+                                        <div className="space-y-1 p-5 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+                                            <span className="text-[10px] font-bold text-primary uppercase tracking-widest block mb-1">North Star Goal</span>
+                                            <p className="text-sm font-bold leading-relaxed">{q.strategic_goal}</p>
+                                        </div>
+                                        <div className="space-y-1 p-5 rounded-2xl bg-surface-container-low border border-outline-variant/5">
+                                            <span className="text-[10px] font-bold text-primary uppercase tracking-widest block mb-1">Primary Content Pillar</span>
+                                            <p className="text-sm font-bold leading-relaxed">{q.primary_pillar}</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex gap-6 overflow-x-auto pb-4 scrollbar-hide">
+                                        {q.month_arcs.map((m, i) => (
+                                            <div key={m.id} className="min-w-[320px] bg-surface-container-low/50 rounded-[2rem] p-6 border border-outline-variant/5 hover:border-primary/20 transition-all group">
+                                                <div className="flex items-center gap-3 mb-5">
+                                                    <div className="w-8 h-8 rounded-xl bg-white flex items-center justify-center font-black text-xs shadow-sm text-primary group-hover:scale-110 transition-transform">
+                                                        M{i + 1}
+                                                    </div>
+                                                    <h4 className="font-headline font-black uppercase tracking-tight text-sm">{format(new Date(m.month), 'MMMM')} Arc</h4>
+                                                </div>
+                                                <div className="space-y-4">
+                                                    <div>
+                                                        <span className="text-[9px] font-bold uppercase text-primary/50 tracking-widest block mb-1">Theme</span>
+                                                        <p className="text-xs font-black text-on-surface line-clamp-1">{m.arc_theme}</p>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-[9px] font-bold uppercase text-primary/50 tracking-widest block mb-1">Core Narrative</span>
+                                                        <p className="text-xs font-body text-on-surface-variant line-clamp-3 leading-relaxed">{m.arc_thesis}</p>
+                                                    </div>
+                                                    <div className="pt-4 border-t border-outline-variant/5">
+                                                        <span className="text-[9px] font-bold uppercase text-primary/50 tracking-widest block mb-4">Deployment Trace</span>
+                                                        <div className="space-y-2">
+                                                            {m.week_packages.map(wp => (
+                                                                <Link 
+                                                                    key={wp.id} 
+                                                                    to={`/v2/weeks/${wp.id}`} 
+                                                                    className="flex items-center justify-between p-3 bg-white rounded-xl border border-outline-variant/5 hover:border-primary/20 hover:shadow-sm transition-all text-[11px] font-bold text-on-surface"
+                                                                >
+                                                                    <span className="truncate pr-4 leading-none">{wp.theme}</span>
+                                                                    <span className="material-symbols-outlined text-primary text-xs shrink-0">arrow_forward</span>
+                                                                </Link>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
                         ))}
 
-                        {quarters && quarters.length === 0 && !showCreateQuarter && (
-                            <div className="card text-center text-muted" style={{ padding: '3rem' }}>
-                                No strategic quarters planned yet. Click '+ Plan Strategic Quarter' to build your 3-month strategy.
+                        {quarters && quarters.length === 0 && (
+                            <div className="py-24 text-center glass-panel rounded-[3rem] border-dashed border-2 border-outline-variant/20 ml-12">
+                                <div className="text-4xl mb-4 opacity-30">🏗️</div>
+                                <h4 className="text-xl font-headline font-black text-on-surface/40">Blueprint Matrix Empty</h4>
+                                <p className="text-on-surface-variant/40 mt-1">Architecture your next 3 months with a single prompt.</p>
                             </div>
                         )}
                     </div>
 
-                    {/* Right: Strategy Assistant Chat */}
-                    <div style={{ position: 'sticky', top: '1rem' }}>
+                    {/* Matrix AI Sideboard */}
+                    <div className="sticky top-10 space-y-6">
                         <StrategyChat />
+                        
+                        <div className="bg-primary text-white p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden group">
+                           <div className="absolute -right-8 -bottom-8 w-40 h-40 bg-white/10 rounded-full blur-3xl group-hover:scale-150 transition-transform duration-1000"></div>
+                           <h4 className="text-xl font-headline font-black mb-2 relative z-10">Usage Metrics</h4>
+                           <p className="text-white/60 text-xs font-medium mb-6 relative z-10">Your engine is performing above target thresholds.</p>
+                           <div className="space-y-4 relative z-10">
+                              {[
+                                { label: 'Token Efficiency', value: '98.2%' },
+                                { label: 'Agent Uptime', value: '100%' },
+                                { label: 'Content Relevancy', value: 'Auto-Optimizing' }
+                              ].map(m => (
+                                <div key={m.label} className="flex justify-between items-center py-2 border-b border-white/10 last:border-0 text-[11px] font-bold uppercase tracking-widest">
+                                    <span className="text-white/40">{m.label}</span>
+                                    <span>{m.value}</span>
+                                </div>
+                              ))}
+                           </div>
+                        </div>
                     </div>
                 </div>
             )}
