@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { format } from 'date-fns'
 import Markdown from 'markdown-to-jsx'
 import { api, presetsApi } from '../api'
@@ -52,6 +52,16 @@ export default function PostEditor() {
     const [imageTimestamp, setImageTimestamp] = useState(Date.now())
     const [channelId, setChannelId] = useState<number | ''>('')
     const [aiPrompt, setAiPrompt] = useState('')
+    const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+    // Auto-resize textarea
+    useEffect(() => {
+        const textarea = textareaRef.current;
+        if (textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = `${textarea.scrollHeight}px`;
+        }
+    }, [text]);
 
     const { data: presets } = useQuery<PromptPreset[]>({
         queryKey: ['presets', currentProject?.id],
@@ -212,7 +222,7 @@ export default function PostEditor() {
                 </div>
 
                 {/* Editor Surface */}
-                <div className="flex-1 overflow-y-auto p-12 lg:p-24 scrollbar-hide">
+                <div className="flex-1 overflow-y-auto p-12 lg:p-24">
                     <div className="max-w-3xl mx-auto space-y-12">
                         {/* Title/Topic Area */}
                         <div className="group border-l-4 border-transparent hover:border-primary/20 pl-6 -ml-7 transition-all">
@@ -227,11 +237,12 @@ export default function PostEditor() {
                         </div>
 
                         {/* Ghost Writer Input */}
-                        <div className="relative">
+                        <div className="relative pb-32">
                             <textarea 
+                                ref={textareaRef}
                                 value={text}
                                 onChange={(e) => setText(e.target.value)}
-                                className="w-full min-h-[500px] font-body text-xl leading-relaxed text-on-surface border-none p-0 focus:ring-0 resize-none bg-transparent placeholder:text-on-surface/5"
+                                className="w-full font-body text-xl leading-relaxed text-on-surface border-none p-0 focus:ring-0 resize-none bg-transparent placeholder:text-on-surface/5"
                                 placeholder="Start writing or use AI to generate..."
                             />
                             {text.length === 0 && (
@@ -326,21 +337,43 @@ export default function PostEditor() {
                             onDrop={(e) => { e.preventDefault(); e.dataTransfer.files?.[0] && uploadImage.mutate(e.dataTransfer.files[0]); }}
                         >
                             {post.image_url ? (
-                                <>
-                                    <img src={post.image_url.startsWith('data:') ? post.image_url : `${post.image_url}?t=${imageTimestamp}`} className="w-full h-full object-cover" alt="Post" />
-                                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-3">
-                                        <button onClick={() => generateImage.mutate('full')} className="bg-white/20 backdrop-blur-md text-white px-4 py-2 rounded-xl text-xs font-bold border border-white/20 hover:bg-white/30">REGENERATE AI</button>
-                                    </div>
-                                </>
+                                <img src={post.image_url.startsWith('data:') ? post.image_url : `${post.image_url}?t=${imageTimestamp}`} className="w-full h-full object-cover" alt="Post" />
                             ) : (
                                 <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center gap-4">
                                     <div className="w-16 h-16 rounded-full bg-surface-container-high flex items-center justify-center text-primary/30">
                                         <span className="material-symbols-outlined text-3xl">image</span>
                                     </div>
                                     <p className="text-sm font-bold opacity-30">Drag visual asset here</p>
-                                    <button onClick={() => generateImage.mutate('full')} className="btn-primary text-[10px] font-black uppercase px-6">Synthesize from text</button>
                                 </div>
                             )}
+                            
+                            {/* Generation Loading Overlay */}
+                            {generateImage.isPending && (
+                                <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center gap-4 z-20">
+                                    <div className="w-10 h-10 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-primary">Synthesizing...</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Explicit Generation Controls */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <button 
+                                onClick={() => generateImage.mutate('dalle')}
+                                disabled={generateImage.isPending}
+                                className="flex items-center justify-center gap-2 py-3 bg-white border border-outline-variant/10 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-surface-container-low transition-all"
+                            >
+                                <span className="material-symbols-outlined text-sm">palette</span>
+                                DALL-E 3
+                            </button>
+                            <button 
+                                onClick={() => generateImage.mutate('full')}
+                                disabled={generateImage.isPending}
+                                className="flex items-center justify-center gap-2 py-3 bg-primary text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                            >
+                                <span className="material-symbols-outlined text-sm">psychology</span>
+                                Agent
+                            </button>
                         </div>
                         {post.image_prompt && (
                             <div className="p-4 bg-surface-container-low rounded-2xl border border-outline-variant/5">
