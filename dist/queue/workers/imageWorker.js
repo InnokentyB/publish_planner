@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createImageWorker = void 0;
 const bullmq_1 = require("bullmq");
+const index_1 = require("../index");
 const client_1 = require("@prisma/client");
 const pg_1 = require("pg");
 const adapter_pg_1 = require("@prisma/adapter-pg");
@@ -80,7 +81,7 @@ const createImageWorker = () => {
             throw error;
         }
     }, {
-        connection: require('../index').connectionOptions,
+        connection: index_1.connection,
         concurrency: 1 // Images strictly 1 concurrent job to avoid 429 rate limit
     });
 };

@@ -87,7 +87,7 @@ export const createImageWorker = () => {
             throw error;
         }
     }, {
-        connection: require('../index').connectionOptions,
+        connection: connection as any,
         concurrency: 1 // Images strictly 1 concurrent job to avoid 429 rate limit
     });
 };

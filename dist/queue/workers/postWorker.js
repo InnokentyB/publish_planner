@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createPostWorker = void 0;
 const bullmq_1 = require("bullmq");
+const index_1 = require("../index");
 const client_1 = require("@prisma/client");
 const pg_1 = require("pg");
 const adapter_pg_1 = require("@prisma/adapter-pg");
@@ -67,7 +68,7 @@ const createPostWorker = () => {
             throw error; // Let BullMQ handle failure tracking
         }
     }, {
-        connection: require('../index').connectionOptions,
+        connection: index_1.connection,
         concurrency: 2 // Max 2 concurrent post generations across all queues to prevent heavy limits
     });
 };

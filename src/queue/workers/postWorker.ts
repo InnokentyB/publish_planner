@@ -79,7 +79,7 @@ export const createPostWorker = () => {
             throw error; // Let BullMQ handle failure tracking
         }
     }, {
-        connection: require('../index').connectionOptions,
+        connection: connection as any,
         concurrency: 2 // Max 2 concurrent post generations across all queues to prevent heavy limits
     });
 };

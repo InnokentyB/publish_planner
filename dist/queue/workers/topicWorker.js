@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createTopicWorker = void 0;
 const bullmq_1 = require("bullmq");
+const index_1 = require("../index");
 const client_1 = require("@prisma/client");
 const pg_1 = require("pg");
 const adapter_pg_1 = require("@prisma/adapter-pg");
@@ -42,7 +43,7 @@ const createTopicWorker = () => {
             throw error; // Will be caught by BullMQ for retries/DLQ
         }
     }, {
-        connection: require('../index').connectionOptions,
+        connection: index_1.connection,
         concurrency: 1 // Rate limiting topics generation (usually hits heavy models)
     });
 };

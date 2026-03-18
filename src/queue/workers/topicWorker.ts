@@ -53,7 +53,7 @@ export const createTopicWorker = () => {
             throw error; // Will be caught by BullMQ for retries/DLQ
         }
     }, {
-        connection: require('../index').connectionOptions,
+        connection: connection as any,
         concurrency: 1 // Rate limiting topics generation (usually hits heavy models)
     });
 };
