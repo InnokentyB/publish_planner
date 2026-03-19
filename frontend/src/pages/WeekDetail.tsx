@@ -14,9 +14,9 @@ interface Post {
     status: string
     publish_at: string
     generated_text: string | null
-    telegram_message_id?: number | null
     published_link?: string | null
     image_url?: string | null
+    image_prompt?: string | null
     metrics?: any | null
 }
 
@@ -111,15 +111,38 @@ export default function WeekDetail() {
     })
 
     const generateImage = useMutation({
-        mutationFn: ({ postId, provider }: { postId: number, provider: 'dalle' | 'nano' | 'full' }) =>
-            api.post(`/api/posts/${postId}/generate-image`, { provider }),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['week', id] }),
-        onError: (err: any) => alert('Failed to generate image: ' + (err.response?.data?.error || err.message))
+        mutationFn: ({ postId, provider }: { postId: number, provider: 'dalle' | 'nano' | 'full' }) => {
+            setGeneratingPostId(postId);
+            return api.post(`/api/posts/${postId}/generate-image`, { provider });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['week', id] });
+            setGeneratingPostId(null);
+        },
+        onError: (err: any) => {
+            alert('Failed to generate image: ' + (err.response?.data?.error || err.message));
+            setGeneratingPostId(null);
+        }
     });
 
+    const isImageFailure = (p: Post) => p.status === 'failed' && Boolean(p.image_prompt?.includes('[Image Gen Failed]'));
+    const isTextFailure = (p: Post) => p.status === 'failed' && !isImageFailure(p);
+
     const unapprovedPosts = week?.posts?.filter(p => p.status === 'topics_generated') || []
-    const approvedPosts = week?.posts?.filter(p => p.status === 'topics_approved' || p.status === 'failed' || p.status === 'planned') || []
-    const completedPosts = week?.posts?.filter(p => ['generated', 'scheduled', 'published'].includes(p.status)) || []
+    
+    // Execution Nodes: topics_approved, planned, or text generation failed, or text generating
+    const approvedPosts = week?.posts?.filter(p => 
+        ['topics_approved', 'planned'].includes(p.status) || 
+        isTextFailure(p) ||
+        (p.status === 'generating' && !p.generated_text)
+    ) || []
+    
+    // Deployment Queue: generated, scheduled, published, publishing, or image generating, or image failed
+    const completedPosts = week?.posts?.filter(p => 
+        ['generated', 'scheduled', 'scheduled_native', 'published', 'publishing'].includes(p.status) ||
+        isImageFailure(p) ||
+        (p.status === 'generating' && !!p.generated_text)
+    ) || []
 
     if (!currentProject) return (
         <div className="flex-1 flex items-center justify-center">
@@ -267,25 +290,25 @@ export default function WeekDetail() {
                                 </div>
                                 <h4 className="text-sm font-black text-on-surface leading-tight mb-6">{post.topic}</h4>
                                 
-                                {post.status === 'failed' ? (
+                                {isTextFailure(post) ? (
                                     <button 
                                         onClick={() => generatePost.mutate({ postId: post.id, withImage: true })}
-                                        disabled={generatingPostId === post.id}
-                                        className="w-full py-3 bg-error text-white rounded-xl text-[10px] font-black uppercase tracking-[0.2em] shadow-lg shadow-error/20"
+                                        disabled={generatingPostId === post.id || post.status === 'generating'}
+                                        className="w-full py-3 bg-error text-white rounded-xl text-[10px] font-black uppercase tracking-[0.2em] shadow-lg shadow-error/20 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
-                                        {generatingPostId === post.id ? 'SYNTHESIZING...' : 'REBOOT NODE'}
+                                        {generatingPostId === post.id || post.status === 'generating' ? 'SYNTHESIZING...' : 'REBOOT NODE'}
                                     </button>
                                 ) : (
                                     <button 
                                         onClick={() => generatePost.mutate({ postId: post.id, withImage: true })}
-                                        disabled={generatingPostId === post.id}
-                                        className="w-full py-3 bg-primary text-white rounded-xl text-[10px] font-black uppercase tracking-[0.2em] shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                                        disabled={generatingPostId === post.id || post.status === 'generating'}
+                                        className="w-full py-3 bg-primary text-white rounded-xl text-[10px] font-black uppercase tracking-[0.2em] shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:active:scale-100"
                                     >
-                                        {generatingPostId === post.id ? 'SYNTHESIZING...' : 'SYNTHESIZE CONTENT'}
+                                        {generatingPostId === post.id || post.status === 'generating' ? 'SYNTHESIZING...' : 'SYNTHESIZE CONTENT'}
                                     </button>
                                 )}
 
-                                {post.status === 'failed' && post.generated_text && (
+                                {isTextFailure(post) && post.generated_text && (
                                      <div className="mt-4 p-3 bg-error/10 rounded-xl text-[10px] font-medium text-error leading-relaxed overflow-hidden">
                                          {post.generated_text}
                                      </div>
@@ -323,6 +346,16 @@ export default function WeekDetail() {
                                         <img src={post.image_url} alt="Cover" className="w-full h-full object-cover" />
                                     </div>
                                 )}
+                                
+                                {isImageFailure(post) && (
+                                    <div className="mb-6 p-3 bg-error/10 border border-error/20 rounded-xl">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="material-symbols-outlined text-[10px] text-error">warning</span>
+                                            <span className="text-[9px] font-black uppercase tracking-widest text-error">Image Generation Failed</span>
+                                        </div>
+                                        <p className="text-[10px] font-medium text-error/80 leading-relaxed truncate">{post.image_prompt?.replace(/\[Image Gen Failed\]\nError: /g, '') || ''}</p>
+                                    </div>
+                                )}
 
                                 <div className="flex items-center gap-2 mb-6">
                                     {post.metrics && (
@@ -336,16 +369,22 @@ export default function WeekDetail() {
                                 <div className="flex gap-2">
                                     <button 
                                         onClick={(e) => { e.stopPropagation(); if(confirm('Fire deployment now?')) publishNow.mutate(post.id); }}
-                                        disabled={post.status === 'published'}
-                                        className="flex-1 py-3 bg-surface-container-low hover:bg-primary hover:text-white rounded-xl text-[10px] font-black uppercase tracking-[0.1em] transition-all"
+                                        disabled={post.status === 'published' || post.status === 'publishing' || publishNow.isPending}
+                                        className="flex-1 py-3 bg-surface-container-low hover:bg-primary hover:text-white rounded-xl text-[10px] font-black uppercase tracking-[0.1em] transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-surface-container-low disabled:hover:text-primary"
                                     >
-                                        {post.status === 'published' ? 'DEPLOYED' : 'DEPLOY NOW'}
+                                        {post.status === 'published' ? 'DEPLOYED' : (post.status === 'publishing' || publishNow.isPending) ? 'PUBLISHING...' : 'DEPLOY NOW'}
                                     </button>
                                     <button 
                                         onClick={(e) => { e.stopPropagation(); generateImage.mutate({ postId: post.id, provider: 'full' }); }}
-                                        className="w-12 h-12 bg-surface-container-low hover:bg-surface-container-high rounded-xl flex items-center justify-center text-primary transition-all"
+                                        disabled={generatingPostId === post.id || post.status === 'generating'}
+                                        title="Auto-generate image"
+                                        className="w-12 h-12 bg-surface-container-low hover:bg-surface-container-high rounded-xl flex items-center justify-center text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
-                                        <span className="material-symbols-outlined text-lg">auto_fix</span>
+                                        {generatingPostId === post.id || post.status === 'generating' ? (
+                                             <div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+                                        ) : (
+                                             <span className="material-symbols-outlined text-lg">auto_fix</span>
+                                        )}
                                     </button>
                                 </div>
                             </div>

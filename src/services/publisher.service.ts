@@ -373,8 +373,11 @@ class PublisherService {
         if (!post) {
             throw new Error(`Post ${postId} not found`);
         }
+        
+        const initialStatus = post.status;
 
-        // 2. Get Channel info
+        try {
+            // 2. Get Channel info
         let channel = null;
         if (post.channel_id) {
             channel = await prisma.socialChannel.findUnique({ where: { id: post.channel_id } });
@@ -589,6 +592,17 @@ class PublisherService {
             publishMethod: isPublishedViaClient ? 'mtproto' as const : (channel.type === 'vk' ? 'vk' as const : (channel.type === 'linkedin' ? 'linkedin' as const : 'bot_api' as const)),
             warning: publishWarning
         };
+        } catch (error: any) {
+            // Rollback if we locked it at 'publishing'
+            if (initialStatus === 'scheduled') {
+                logToFile('WARN', `[Publisher] publishPostNow failed, rolling back status to ${initialStatus} for post ${postId}`);
+                await prisma.post.update({
+                    where: { id: postId },
+                    data: { status: initialStatus }
+                }).catch(e => logToFile('ERROR', 'Failed to rollback post status', e));
+            }
+            throw error;
+        }
     }
 
     async scheduleNativePosts() {

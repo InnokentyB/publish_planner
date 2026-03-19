@@ -299,10 +299,10 @@ export default function PostEditor() {
                             </button>
                             <button 
                                 onClick={() => regenerate.mutate()}
-                                disabled={regenerate.isPending}
-                                className="bg-surface-container-high hover:bg-primary hover:text-white text-on-surface-variant px-6 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all"
+                                disabled={regenerate.isPending || post.status === 'generating'}
+                                className="bg-surface-container-high hover:bg-primary hover:text-white text-on-surface-variant px-6 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                                {regenerate.isPending ? 'Processing...' : 'Execute'}
+                                {regenerate.isPending || post.status === 'generating' ? 'Processing...' : 'Execute'}
                             </button>
                         </div>
                     </div>
@@ -348,7 +348,7 @@ export default function PostEditor() {
                             )}
                             
                             {/* Generation Loading Overlay */}
-                            {generateImage.isPending && (
+                            {(generateImage.isPending || post.status === 'generating') && (
                                 <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center gap-4 z-20">
                                     <div className="w-10 h-10 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
                                     <span className="text-[10px] font-black uppercase tracking-widest text-primary">Synthesizing...</span>
@@ -360,16 +360,16 @@ export default function PostEditor() {
                         <div className="grid grid-cols-2 gap-3">
                             <button 
                                 onClick={() => generateImage.mutate('dalle')}
-                                disabled={generateImage.isPending}
-                                className="flex items-center justify-center gap-2 py-3 bg-white border border-outline-variant/10 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-surface-container-low transition-all"
+                                disabled={generateImage.isPending || post.status === 'generating'}
+                                className="flex items-center justify-center gap-2 py-3 bg-white border border-outline-variant/10 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-surface-container-low transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 <span className="material-symbols-outlined text-sm">palette</span>
                                 DALL-E 3
                             </button>
                             <button 
                                 onClick={() => generateImage.mutate('full')}
-                                disabled={generateImage.isPending}
-                                className="flex items-center justify-center gap-2 py-3 bg-primary text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                                disabled={generateImage.isPending || post.status === 'generating'}
+                                className="flex items-center justify-center gap-2 py-3 bg-primary text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:active:scale-100"
                             >
                                 <span className="material-symbols-outlined text-sm">psychology</span>
                                 Agent
