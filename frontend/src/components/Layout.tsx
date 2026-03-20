@@ -7,7 +7,7 @@ interface LayoutProps {
 }
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
-  const { user, logout } = useAuth();
+  const { user, projects, currentProject, setCurrentProject, logout } = useAuth();
   const location = useLocation();
 
   const isActive = (path: string) => location.pathname === path;
@@ -22,9 +22,35 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     <div className="bg-surface font-body text-on-surface flex min-h-screen overflow-hidden">
       {/* SideNavBar */}
       <aside className="bg-surface-container-low w-64 h-full flex flex-col py-8 px-4 border-r-0 shrink-0 border-outline-variant/10">
-        <div className="mb-10 px-2">
-          <h1 className="text-2xl font-black text-primary tracking-tighter font-headline">Project Alpha</h1>
-          <p className="text-xs text-on-surface-variant font-label mt-1">Status Tracking Beta</p>
+        <div className="mb-10 px-2 space-y-4">
+          <div>
+            <h1 className="text-2xl font-black text-primary tracking-tighter font-headline">Project Alpha</h1>
+            <p className="text-xs text-on-surface-variant font-label mt-1">Status Tracking Beta</p>
+          </div>
+          
+          {/* Project Switcher */}
+          {projects.length > 0 && (
+            <div className="relative group">
+              <select
+                className="w-full appearance-none bg-surface-container-high hover:bg-surface-container-highest border border-outline-variant/10 rounded-xl py-3 pl-4 pr-10 text-sm font-bold text-on-surface cursor-pointer focus:ring-2 focus:ring-primary/20 transition-all outline-none shadow-sm group-hover:shadow-md"
+                value={currentProject?.id || ''}
+                onChange={(e) => {
+                  const selectedId = parseInt(e.target.value);
+                  const selectedProject = projects.find(p => p.id === selectedId);
+                  if (selectedProject) {
+                    setCurrentProject(selectedProject);
+                  }
+                }}
+              >
+                {projects.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none group-hover:text-primary transition-colors text-lg">
+                expand_more
+              </span>
+            </div>
+          )}
         </div>
         
         <nav className="flex-1 space-y-1">

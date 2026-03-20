@@ -241,13 +241,13 @@ export default function V2Dashboard() {
     const [qGoalHint, setQGoalHint] = useState('')
     const [qStartDate, setQStartDate] = useState('')
 
-    const { data: weeks, isLoading: loadingWeeks } = useQuery<WeekPackage[]>({
+    const { data: weeks, isLoading: loadingWeeks, error: errorWeeks } = useQuery<WeekPackage[]>({
         queryKey: ['v2_weeks', currentProject?.id],
         queryFn: () => api.get('/api/v2/weeks'),
         enabled: !!currentProject && activeTab === 'weeks'
     })
 
-    const { data: quarters, isLoading: loadingQuarters } = useQuery<QuarterPlan[]>({
+    const { data: quarters, isLoading: loadingQuarters, error: errorQuarters } = useQuery<QuarterPlan[]>({
         queryKey: ['v2_quarters', currentProject?.id],
         queryFn: () => api.get('/api/v2/quarters'),
         enabled: !!currentProject && activeTab === 'quarters'
@@ -300,12 +300,37 @@ export default function V2Dashboard() {
         )
     }
 
-    if (loadingWeeks || loadingQuarters) {
+    const activeLoading = activeTab === 'weeks' ? loadingWeeks : loadingQuarters;
+    const activeError = activeTab === 'weeks' ? errorWeeks : errorQuarters;
+
+    if (activeLoading) {
         return (
             <div className="flex-1 flex items-center justify-center bg-surface">
                 <div className="flex flex-col items-center gap-4">
                     <div className="w-12 h-12 border-4 border-outline-variant border-t-primary rounded-full animate-spin"></div>
                     <p className="font-label text-xs uppercase tracking-widest text-primary font-bold">Synchronizing Node...</p>
+                </div>
+            </div>
+        )
+    }
+
+    if (activeError) {
+        return (
+            <div className="flex-1 flex flex-col items-center justify-center p-8">
+                <div className="max-w-md w-full glass-panel p-12 text-center rounded-[3rem] border border-error/20 shadow-3xl animate-in zoom-in duration-500">
+                    <div className="w-24 h-24 bg-error/10 text-error rounded-3xl mx-auto mb-8 flex items-center justify-center">
+                        <span className="material-symbols-outlined text-5xl">warning</span>
+                    </div>
+                    <h2 className="text-2xl font-headline font-black text-on-surface mb-2">Synchronization Failed</h2>
+                    <p className="text-on-surface-variant mb-10 leading-relaxed font-body text-sm">
+                        {(activeError as any)?.message || 'Unable to connect to the intelligence layer. Please try again later.'}
+                    </p>
+                    <button 
+                        onClick={() => window.location.reload()}
+                        className="w-full bg-error text-white font-bold py-4 rounded-2xl shadow-xl hover:opacity-90 transition-opacity"
+                    >
+                        Reboot Node
+                    </button>
                 </div>
             </div>
         )
