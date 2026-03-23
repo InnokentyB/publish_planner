@@ -130,9 +130,9 @@ export default function WeekDetail() {
 
     const unapprovedPosts = week?.posts?.filter(p => p.status === 'topics_generated') || []
     
-    // Execution Nodes: topics_approved, planned, or text generation failed, or text generating
+    // Execution Nodes: topics_approved, or text generation failed, or text generating
     const approvedPosts = week?.posts?.filter(p => 
-        ['topics_approved', 'planned'].includes(p.status) || 
+        ['topics_approved'].includes(p.status) || 
         isTextFailure(p) ||
         (p.status === 'generating' && !p.generated_text)
     ) || []
@@ -143,6 +143,9 @@ export default function WeekDetail() {
         isImageFailure(p) ||
         (p.status === 'generating' && !!p.generated_text)
     ) || []
+
+    const postsWithTopics = week?.posts?.filter(p => p.status !== 'planned') || [];
+    const missingTopicsCount = Math.max(0, 14 - postsWithTopics.length);
 
     if (!currentProject) return (
         <div className="flex-1 flex items-center justify-center">
@@ -211,14 +214,14 @@ export default function WeekDetail() {
                         <div className="h-6 w-[1px] bg-outline-variant/20 mx-1"></div>
                         <button 
                             onClick={() => generateTopics.mutate({ overwrite: false })}
-                            disabled={isGeneratingTopics || week.posts.length >= 14}
+                            disabled={isGeneratingTopics || postsWithTopics.length >= 14}
                             className="bg-primary text-white px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:opacity-90 disabled:opacity-40 transition-all flex items-center gap-2"
                         >
                             <span className="material-symbols-outlined text-sm">auto_awesome</span>
-                            {isGeneratingTopics ? 'SYNTHESIZING...' : `FILL SLOTS (${14 - week.posts.length})`}
+                            {isGeneratingTopics ? 'SYNTHESIZING...' : `FILL SLOTS (${missingTopicsCount})`}
                         </button>
                     </div>
-                    {week.posts.length > 0 && (
+                    {postsWithTopics.length > 0 && (
                         <button 
                             onClick={() => confirm('Wipe and regenerate all content nodes?') && generateTopics.mutate({ overwrite: true })}
                             className="text-[9px] font-black uppercase tracking-widest text-on-surface/20 hover:text-error transition-colors"
