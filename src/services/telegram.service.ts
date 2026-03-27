@@ -507,11 +507,12 @@ class TelegramService {
                 const result = await generatorService.generatePostText(projectId, existingWeek.theme, post.topic, post.id);
 
                 // Construct full text with hashtags
+                // Strip any leading # from AI-returned tags to avoid ## double-prefix
                 let fullText = result.text;
                 if (result.tags && result.tags.length > 0) {
-                    fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '')}`).join(' ');
+                    fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '').replace(/^#+/, '')}`).join(' ');
                 } else if (result.category) {
-                    fullText += `\n\n#${result.category.replace(/\s+/g, '')}`;
+                    fullText += `\n\n#${result.category.replace(/\s+/g, '').replace(/^#+/, '')}`;
                 }
 
                 await plannerService.updatePost(post.id, {
@@ -775,11 +776,12 @@ class TelegramService {
         const result = await generatorService.generatePostText(projectId, post.week.theme, post.topic || '', post.id);
 
         // Construct full text with hashtags
+        // Strip any leading # from AI-returned tags to avoid ## double-prefix
         let fullText = result.text;
         if (result.tags && result.tags.length > 0) {
-            fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '')}`).join(' ');
+            fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '').replace(/^#+/, '')}`).join(' ');
         } else if (result.category) {
-            fullText += `\n\n#${result.category.replace(/\s+/g, '')}`;
+            fullText += `\n\n#${result.category.replace(/\s+/g, '').replace(/^#+/, '')}`;
         }
 
         await plannerService.updatePost(postId, {

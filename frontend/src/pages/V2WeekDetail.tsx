@@ -61,8 +61,11 @@ export default function V2WeekDetail() {
                 <div className="w-20 h-20 bg-error/10 text-error rounded-full flex items-center justify-center mx-auto mb-6">
                     <span className="material-symbols-outlined text-4xl">warning</span>
                 </div>
-                <h2 className="text-2xl font-headline font-black text-on-surface mb-2">Synchronization Failed</h2>
-                <p className="text-on-surface-variant font-body">Node busy or invalid package ID. Please refresh.</p>
+                <h2 className="text-2xl font-headline font-black text-on-surface mb-2">Week Package Not Found</h2>
+                <p className="text-on-surface-variant font-body">
+                    {error instanceof Error ? error.message : 'This week package does not exist or you do not have access to it.'}
+                </p>
+                <p className="text-xs text-on-surface-variant/50 font-mono mt-2">ID: {id}</p>
                 <button onClick={() => navigate('/orchestrator')} className="mt-8 btn-primary px-8">Return to Force Matrix</button>
              </div>
         </div>
