@@ -984,6 +984,20 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         return { success: true, status: updated.approval_status };
     });
 
+    fastify.post('/api/v2/architect-week/:id', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { id } = request.params as { id: string };
+
+        try {
+            const items = await v2Orchestrator.architectDistribution(parseInt(id));
+            return { success: true, count: items.length };
+        } catch (e: any) {
+            reply.code(500).send({ error: e.message || 'Failed to architect week' });
+        }
+    });
+
     fastify.post('/api/v2/plan-quarter', async (request, reply) => {
         const projectId = (request as any).projectId;
         if (!projectId) return reply.code(400).send({ error: 'Project ID required' });

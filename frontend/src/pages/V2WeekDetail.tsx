@@ -46,6 +46,14 @@ export default function V2WeekDetail() {
         }
     })
 
+    const architectWeek = useMutation({
+        mutationFn: () => api.post(`/api/v2/architect-week/${id}`, {}),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['v2_week', id] })
+        },
+        onError: (err: any) => alert(`Architecture failed: ${err.message}`)
+    })
+
     if (isLoading) return (
         <div className="flex-1 flex items-center justify-center bg-surface">
             <div className="flex flex-col items-center gap-4">
@@ -96,7 +104,17 @@ export default function V2WeekDetail() {
                 </div>
                 
                 <div className="flex gap-4">
-                    {week.approval_status === 'draft' && (
+                    {week.content_items?.length === 0 && (
+                        <button
+                            onClick={() => architectWeek.mutate()}
+                            disabled={architectWeek.isPending}
+                            className="bg-primary text-white px-8 py-4 rounded-2xl font-black text-sm shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center gap-2"
+                        >
+                            <span className="material-symbols-outlined">architecture</span>
+                            {architectWeek.isPending ? 'ARCHITECTING...' : 'ARCHITECT DISTRIBUTION'}
+                        </button>
+                    )}
+                    {week.approval_status === 'draft' && week.content_items?.length > 0 && (
                         <button
                             onClick={() => approveWeek.mutate()}
                             disabled={approveWeek.isPending}

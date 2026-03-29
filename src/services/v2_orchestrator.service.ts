@@ -179,15 +179,20 @@ ${strategyShifts}
             const wEnd = new Date(wStart);
             wEnd.setDate(wEnd.getDate() + 6);
 
-            const weekData = parsed.weeks[i] || parsed.weeks[0]; // fallback if LLM misses
-
-            // Note: MTA creates DRAFT week packages. SMO handles the actual narrative arc generation later.
-            // But we can directly call SMO here OR just create shallow drafts for SMO to pick up.
-            // To provide immediate value, we will directly call SMO logic (planWeek helper) using the MTA generated theme.
+            const weekData = parsed.weeks[i] || parsed.weeks[0]; 
 
             const smoothHint = `Стратегический фокус недели: ${weekData.week_theme}. Тезис: ${weekData.core_thesis}. Интент: ${weekData.intent_tag}. Месяц: ${arc.arc_theme}`;
 
             const newlyPlannedWeek = await this.planWeek(arc.project_id, new Date(wStart), new Date(wEnd), smoothHint, arc.id, weekData.channel_mix);
+            
+            // AUTO-ARCHITECT: Immediately slice the week into Content Items (posts)
+            try {
+                console.log(`[MTA] Auto-architecting week ${newlyPlannedWeek.id}`);
+                await this.architectDistribution(newlyPlannedWeek.id, weekData.channel_mix);
+            } catch (ae) {
+                console.error(`[MTA] Auto-architecture failed for week ${newlyPlannedWeek.id}`, ae);
+            }
+
             weekPackages.push(newlyPlannedWeek);
 
             // Advance next week
