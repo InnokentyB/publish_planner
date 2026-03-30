@@ -1002,11 +1002,11 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         const projectId = (request as any).projectId;
         if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
 
-        const { goalHint, startDate } = request.body as { goalHint?: string; startDate?: string };
+        const { goalHint, startDate, plannedChannels } = request.body as { goalHint?: string; startDate?: string; plannedChannels?: any };
         const dStart = startDate ? new Date(startDate) : new Date();
 
         try {
-            const result = await v2Orchestrator.planQuarter(projectId, dStart, goalHint);
+            const result = await v2Orchestrator.planQuarter(projectId, dStart, goalHint, plannedChannels);
 
             // For MVP, immediately kick off Monthly Tactical Agents (MTA) for all 3 generated months
             for (const month of result.monthArcs) {

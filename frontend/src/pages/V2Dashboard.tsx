@@ -240,6 +240,7 @@ export default function V2Dashboard() {
     // Quarter state
     const [qGoalHint, setQGoalHint] = useState('')
     const [qStartDate, setQStartDate] = useState('')
+    const [selectedChannels, setSelectedChannels] = useState<Record<number, string>>({})
 
     const { data: weeks, isLoading: loadingWeeks, error: errorWeeks } = useQuery<WeekPackage[]>({
         queryKey: ['v2_weeks', currentProject?.id],
@@ -251,6 +252,12 @@ export default function V2Dashboard() {
         queryKey: ['v2_quarters', currentProject?.id],
         queryFn: () => api.get('/api/v2/quarters'),
         enabled: !!currentProject && activeTab === 'quarters'
+    })
+
+    const { data: projectData } = useQuery({
+        queryKey: ['project', currentProject?.id],
+        queryFn: () => api.get(`/api/projects/${currentProject?.id}`),
+        enabled: !!currentProject && showCreateQuarter
     })
 
     const createWeek = useMutation({
@@ -266,13 +273,14 @@ export default function V2Dashboard() {
     })
 
     const createQuarter = useMutation({
-        mutationFn: (data: { goalHint: string; startDate?: string }) =>
+        mutationFn: (data: { goalHint: string; startDate?: string; plannedChannels?: any }) =>
             api.post('/api/v2/plan-quarter', data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['v2_quarters'] })
             setShowCreateQuarter(false)
             setQGoalHint('')
             setQStartDate('')
+            setSelectedChannels({})
         },
         onError: (err: any) => alert(`Quarter Planning failed: ${err.message}`)
     })
@@ -427,8 +435,52 @@ export default function V2Dashboard() {
                                 />
                             </div>
                         </div>
+                        <div className="space-y-4">
+                            <label className="text-xs font-bold uppercase tracking-widest text-primary ml-1">Plan for Channels</label>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {projectData?.channels?.map((ch: any) => (
+                                    <div key={ch.id} className="flex items-center gap-3 p-3 bg-white rounded-xl shadow-sm border border-outline-variant/10">
+                                        <input
+                                            type="checkbox"
+                                            checked={!!selectedChannels[ch.id]}
+                                            onChange={(e) => {
+                                                const newSelected = { ...selectedChannels };
+                                                if (e.target.checked) newSelected[ch.id] = 'value'; // Default role
+                                                else delete newSelected[ch.id];
+                                                setSelectedChannels(newSelected);
+                                            }}
+                                            className="w-5 h-5 rounded border-outline-variant text-primary focus:ring-primary/20"
+                                        />
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-sm font-bold truncate">{ch.name}</div>
+                                            <div className="text-[10px] text-on-surface-variant uppercase font-black">{ch.type}</div>
+                                        </div>
+                                        {selectedChannels[ch.id] && (
+                                            <select
+                                                value={selectedChannels[ch.id]}
+                                                onChange={(e) => setSelectedChannels({ ...selectedChannels, [ch.id]: e.target.value })}
+                                                className="bg-surface-container-high border-none rounded-lg py-1 px-2 text-[10px] font-bold uppercase tracking-widest focus:ring-1 focus:ring-primary/20 transition-all outline-none"
+                                            >
+                                                <option value="onboarding">Onboarding</option>
+                                                <option value="sales">Sales</option>
+                                                <option value="value">Value</option>
+                                                <option value="hybrid">Hybrid</option>
+                                            </select>
+                                        )}
+                                    </div>
+                                ))}
+                                {(!projectData?.channels || projectData.channels.length === 0) && (
+                                    <p className="col-span-full text-xs text-on-surface-variant italic p-4 text-center">No channels connected. Please add channels in Settings first.</p>
+                                )}
+                            </div>
+                        </div>
+
                         <button
-                            onClick={() => createQuarter.mutate({ goalHint: qGoalHint, startDate: qStartDate || undefined })}
+                            onClick={() => createQuarter.mutate({ 
+                                goalHint: qGoalHint, 
+                                startDate: qStartDate || undefined,
+                                plannedChannels: selectedChannels
+                            })}
                             disabled={createQuarter.isPending}
                             className="w-full ai-gradient text-white font-black py-5 rounded-2xl shadow-xl hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-3"
                         >

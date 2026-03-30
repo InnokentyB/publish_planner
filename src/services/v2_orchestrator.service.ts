@@ -37,7 +37,7 @@ export class V2OrchestratorService {
      * Quarter Strategic Planner (QSP)
      * Generates a QuarterPlan and 3 MonthArcs
      */
-    async planQuarter(projectId: number, quarterStart: Date, goalHint: string = "") {
+    async planQuarter(projectId: number, quarterStart: Date, goalHint: string = "", plannedChannels?: any) {
         console.log(`[QSP] Planning quarter for project ${projectId} starting ${quarterStart.toISOString()}`);
 
         // Fetch known FAE preferences
@@ -61,16 +61,12 @@ ${strategyShifts}
       "arc_theme": "строка (тема месяца 1)",
       "arc_thesis": "строка (главная мысль / тема месяца: Awareness / Cases / Presale)"
     },
-    {
-      "arc_theme": "строка (тема месяца 2)",
-      "arc_thesis": "строка (главная мысль / тема месяца: Authority / Education / Soft Launch)"
-    },
-    {
-      "arc_theme": "строка (тема месяца 3)",
-      "arc_thesis": "строка (главная мысль / тема месяца: Conversion / Hard Launch / Sales)"
-    }
+    ...
   ]
-}`;
+}
+
+Учитывай, что в рамках этого квартала мы используем следующий набор каналов и их ролей:
+${plannedChannels ? JSON.stringify(plannedChannels, null, 2) : 'Стандартный набор (TG, VK)'}`;
 
         const quarterEnd = new Date(quarterStart);
         quarterEnd.setMonth(quarterEnd.getMonth() + 3);
@@ -94,7 +90,8 @@ ${strategyShifts}
                 quarter_end: quarterEnd,
                 strategic_goal: parsed.strategic_goal,
                 primary_pillar: parsed.primary_pillar,
-                monetization_focus: 'systemic step-by-step'
+                monetization_focus: 'systemic step-by-step',
+                planned_channels: plannedChannels || null
             }
         });
 
@@ -140,6 +137,8 @@ ${strategyShifts}
 
         if (!arc) throw new Error("MonthArc not found");
 
+        const plannedChannels = arc.quarter_plan?.planned_channels || null;
+
         const systemPrompt = `Ты — Monthly Tactical Agent (MTA).
 Твоя задача — разбить фокус-тему месяца '${arc.arc_theme}' на 4 логичные недели.
 Каждая неделя должна иметь свою тему (theme) и главный тезис (thesis), которые поэтапно ведут аудиторию к главной мысли месяца '${arc.arc_thesis}'.
@@ -161,7 +160,10 @@ ${strategyShifts}
     },
     ... (ровно 4 недели)
   ]
-}`;
+}
+
+ВАЖНО: При формировании 'channel_mix' используй только те каналы, которые указаны в стратегии квартала (если указаны):
+${plannedChannels ? JSON.stringify(plannedChannels, null, 2) : 'Любые доступные (TG, VK, Habr, Video)'}`;
         const userPrompt = `Разбей месяц на 4 недели.`;
 
         const resultStr = await this.callLLM(systemPrompt, userPrompt);
@@ -264,8 +266,17 @@ ${strategyShifts}
     async architectDistribution(weekPackageId: number, overrideChannelsSpec?: any) {
         console.log(`[DA] Architecting distribution for week package ${weekPackageId}`);
 
-        const wp = await prisma.weekPackage.findUnique({ where: { id: weekPackageId } });
+        const wp = await prisma.weekPackage.findUnique({ 
+            where: { id: weekPackageId },
+            include: { 
+                month_arc: {
+                    include: { quarter_plan: true }
+                }
+            }
+        });
         if (!wp) throw new Error("WeekPackage not found");
+
+        const plannedChannels = wp.month_arc?.quarter_plan?.planned_channels as any || null;
 
         const systemPrompt = `Ты — Distribution Architect (DA).
 Твоя задача — разложить стратегию 'Week Package' на конкретные единицы контента (Content Items).
@@ -304,7 +315,10 @@ Narrative Arc: ${JSON.stringify(wp.narrative_arc)}
 Requirements (Target Channel Mix Quotas):
 ${JSON.stringify(activeChannelsSpec, null, 2)}
 
-Распредели контент логично по дням недели (day_offset 0-6), чтобы поддержать Narrative Arc.`;
+Strategic Channel Roles (from Quarter Strategy):
+${plannedChannels ? JSON.stringify(plannedChannels, null, 2) : 'No specific roles defined.'}
+
+Распредели контент логично по дням недели (day_offset 0-6), чтобы поддержать Narrative Arc и роли каналов.`;
 
         const resultStr = await this.callLLM(systemPrompt, userPrompt);
 

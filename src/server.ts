@@ -138,13 +138,13 @@ const start = async () => {
 
         // Initialize Background Workers (BullMQ)
         console.log('[Queue] Initializing background workers...');
-        const { createTopicWorker } = require('./queue/workers/topicWorker');
-        const { createPostWorker } = require('./queue/workers/postWorker');
-        const { createImageWorker } = require('./queue/workers/imageWorker');
+        // const { createTopicWorker } = require('./queue/workers/topicWorker');
+        // const { createPostWorker } = require('./queue/workers/postWorker');
+        // const { createImageWorker } = require('./queue/workers/imageWorker');
         
-        const topicWorker = createTopicWorker();
-        const postWorker = createPostWorker();
-        const imageWorker = createImageWorker();
+        // const topicWorker = createTopicWorker();
+        // const postWorker = createPostWorker();
+        // const imageWorker = createImageWorker();
 
         // Graceful Shutdown block for Railway deployments
         const gracefulShutdown = async (signal: string) => {
@@ -156,11 +156,11 @@ const start = async () => {
             
             // 2. Shut down workers (Wait for active jobs to finish)
             console.log('[Queue] Gracefully shutting down workers (Waiting for active jobs)...');
-            await Promise.allSettled([
-                topicWorker.close(),
-                postWorker.close(),
-                imageWorker.close()
-            ]);
+            // await Promise.allSettled([
+            //     topicWorker.close(),
+            //     postWorker.close(),
+            //     imageWorker.close()
+            // ]);
             console.log('[Queue] Workers successfully shut down.');
             
             // 3. Close generic Redis

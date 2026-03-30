@@ -24,10 +24,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       {/* SideNavBar */}
       <aside className="bg-surface-container-low w-64 h-full flex flex-col py-8 px-4 border-r-0 shrink-0 border-outline-variant/10">
         <div className="mb-10 px-2 space-y-4">
-          <div>
+          <Link to="/" className="block hover:opacity-80 transition-opacity">
             <h1 className="text-2xl font-black text-primary tracking-tighter font-headline">Project Alpha</h1>
             <p className="text-xs text-on-surface-variant font-label mt-1">Status Tracking Beta</p>
-          </div>
+          </Link>
           
           {/* Project Switcher */}
           {projects.length > 0 && (

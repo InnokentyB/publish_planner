@@ -33,6 +33,201 @@ interface SocialChannel {
     is_active: boolean;
 }
 
+const AGENT_ROLES = [
+    {
+        group: 'Content Creation',
+        roles: [
+            { id: 'post_creator', label: 'Post Creator', icon: 'edit_note' },
+            { id: 'post_critic', label: 'Post Critic', icon: 'rate_review' },
+            { id: 'post_fixer', label: 'Post Fixer', icon: 'build_circle' },
+        ]
+    },
+    {
+        group: 'Topic Generation',
+        roles: [
+            { id: 'topic_creator', label: 'Topic Creator', icon: 'lightbulb' },
+            { id: 'topic_critic', label: 'Topic Critic', icon: 'psychology' },
+            { id: 'topic_fixer', label: 'Topic Fixer', icon: 'auto_fix_high' },
+        ]
+    },
+    {
+        group: 'Visual Synthesis (V2)',
+        roles: [
+            { id: 'visual_architect', label: 'Visual Architect', icon: 'architecture' },
+            { id: 'structural_critic', label: 'Structural Critic', icon: 'grid_view' },
+            { id: 'precision_fixer', label: 'Precision Fixer', icon: 'precision_manufacturing' },
+            { id: 'image_critic', label: 'Image Critic', icon: 'image_search' },
+        ]
+    },
+    {
+        group: 'Legacy Generators',
+        roles: [
+            { id: 'dalle_image_gen', label: 'DALL-E Prompt', icon: 'palette' },
+            { id: 'nano_image_gen', label: 'Nano Banana Prompt', icon: 'imagesmode' },
+        ]
+    }
+]
+
+function AgentSettingsRow({ 
+    roleId, 
+    label, 
+    icon, 
+    config, 
+    keys, 
+    onSave, 
+    isUpdating,
+    loadModels
+}: { 
+    roleId: string, 
+    label: string, 
+    icon: string, 
+    config?: AgentConfig, 
+    keys?: ProviderKey[], 
+    onSave: (data: any) => void,
+    isUpdating: boolean,
+    loadModels: (apiKey: string) => Promise<string[]>
+}) {
+    const [isExpanded, setIsExpanded] = useState(false)
+    const [prompt, setPrompt] = useState(config?.prompt || '')
+    const [apiKey, setApiKey] = useState(config?.apiKey || '')
+    const [model, setModel] = useState(config?.model || '')
+    const [availableModels, setAvailableModels] = useState<string[]>([])
+    const [isLoadingModels, setIsLoadingModels] = useState(false)
+
+    useEffect(() => {
+        if (config) {
+            setPrompt(config.prompt)
+            setApiKey(config.apiKey)
+            setModel(config.model)
+        }
+    }, [config?.prompt, config?.apiKey, config?.model])
+
+    const handleLoadModels = async () => {
+        if (!apiKey) return
+        setIsLoadingModels(true)
+        try {
+            const models = await loadModels(apiKey)
+            setAvailableModels(models)
+        } catch (e: any) {
+            alert('Failed to load models: ' + e.message)
+        } finally {
+            setIsLoadingModels(false)
+        }
+    }
+
+    return (
+        <div className={`transition-all duration-300 ${isExpanded ? 'bg-surface-container-low' : 'hover:bg-surface-container-lowest'}`}>
+            <div 
+                className="flex items-center justify-between p-4 cursor-pointer" 
+                onClick={() => setIsExpanded(!isExpanded)}
+            >
+                <div className="flex items-center gap-4">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${isExpanded ? 'bg-primary text-white' : 'bg-surface-container-high text-on-surface-variant'}`}>
+                        <span className="material-symbols-outlined">{icon}</span>
+                    </div>
+                    <div>
+                        <h4 className="font-bold text-on-surface m-0 leading-tight">{label}</h4>
+                        <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-on-surface-variant/60">{roleId}</span>
+                            {config?.model && (
+                                <span className="badge py-0.5 px-1.5 text-[10px]">{config.model}</span>
+                            )}
+                        </div>
+                    </div>
+                </div>
+                <div className="flex items-center gap-3">
+                    {isUpdating && <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin"></div>}
+                    <span className={`material-symbols-outlined transition-transform duration-300 ${isExpanded ? 'rotate-180 text-primary' : 'text-on-surface-variant'}`}>
+                        expand_more
+                    </span>
+                </div>
+            </div>
+            
+            {isExpanded && (
+                <div className="p-6 pt-0 border-t border-outline-variant/5">
+                    <div className="space-y-4 pt-4">
+                        <div className="space-y-1.5">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-on-surface-variant ml-1">System Prompt</label>
+                            <textarea 
+                                value={prompt} 
+                                onChange={e => setPrompt(e.target.value)} 
+                                rows={6} 
+                                className="w-full bg-surface-container-high border-none rounded-2xl p-4 text-sm font-mono focus:ring-2 focus:ring-primary/20 transition-all"
+                                placeholder="Enter system instructions for this agent..."
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-1.5">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-on-surface-variant ml-1">API Provider / Key</label>
+                                <select 
+                                    className="w-full bg-surface-container-high border-none rounded-xl py-3 px-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 transition-all outline-none"
+                                    value={apiKey.startsWith('pk_') ? apiKey : 'custom'}
+                                    onChange={e => {
+                                        if (e.target.value === 'custom') setApiKey('')
+                                        else setApiKey(e.target.value)
+                                    }}
+                                >
+                                    {keys?.map(k => (
+                                        <option key={k.id} value={`pk_${k.id}`}>{k.name} ({k.provider})</option>
+                                    ))}
+                                    <option value="custom">Use Custom Raw Key...</option>
+                                </select>
+                                {!apiKey.startsWith('pk_') && (
+                                    <input 
+                                        type="password" 
+                                        value={apiKey} 
+                                        onChange={e => setApiKey(e.target.value)} 
+                                        placeholder="Paste raw API key..." 
+                                        className="w-full mt-2 bg-surface-container-high border-none rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all outline-none"
+                                    />
+                                )}
+                            </div>
+                            <div className="space-y-1.5">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-on-surface-variant ml-1">Model Selection</label>
+                                <div className="flex gap-2">
+                                    <input 
+                                        type="text" 
+                                        value={model} 
+                                        onChange={e => setModel(e.target.value)} 
+                                        className="flex-1 bg-surface-container-high border-none rounded-xl py-3 px-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 transition-all outline-none"
+                                        list={`models-${roleId}`} 
+                                        placeholder="e.g. gpt-4o"
+                                    />
+                                    <button 
+                                        className="bg-surface-container-highest hover:bg-primary/10 text-on-surface-variant hover:text-primary p-3 rounded-xl transition-all disabled:opacity-50"
+                                        onClick={handleLoadModels} 
+                                        disabled={!apiKey || isLoadingModels}
+                                        title="Load available models"
+                                    >
+                                        <span className={`material-symbols-outlined text-xl ${isLoadingModels ? 'animate-spin' : ''}`}>
+                                            {isLoadingModels ? 'progress_activity' : 'search'}
+                                        </span>
+                                    </button>
+                                </div>
+                                <datalist id={`models-${roleId}`}>
+                                    {availableModels.map(m => <option key={m} value={m} />)}
+                                </datalist>
+                            </div>
+                        </div>
+
+                        <div className="pt-4 flex justify-end">
+                            <button 
+                                className="bg-primary text-white font-bold py-3 px-8 rounded-xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 flex items-center gap-2"
+                                onClick={() => onSave({ role: roleId, prompt, apiKey, model })} 
+                                disabled={isUpdating}
+                            >
+                                <span className="material-symbols-outlined text-lg">save</span>
+                                <span>Save Changes</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    )
+}
+
 export default function Settings() {
     const queryClient = useQueryClient()
     const { currentProject } = useAuth()
@@ -50,13 +245,6 @@ export default function Settings() {
     const [newChannelUsername, setNewChannelUsername] = useState('')
     const [newChannelApiKey, setNewChannelApiKey] = useState('')
 
-    // Agent State
-    const [selectedRole, setSelectedRole] = useState<string>('post_creator')
-    const [prompt, setPrompt] = useState('')
-    const [apiKey, setApiKey] = useState('')
-    const [model, setModel] = useState('')
-    const [availableModels, setAvailableModels] = useState<string[]>([])
-    const [isLoadingModels, setIsLoadingModels] = useState(false)
 
     // Key State
     const [newKeyName, setNewKeyName] = useState('')
@@ -210,37 +398,7 @@ export default function Settings() {
         }
     }, [projectData, activeTab])
 
-    const currentAgent = agents?.find(a => a.role === selectedRole)
 
-    useEffect(() => {
-        if (currentAgent) {
-            setPrompt(currentAgent.prompt)
-            setApiKey(currentAgent.apiKey)
-            setModel(currentAgent.model)
-            setAvailableModels([]) // Reset on agent switch
-        }
-    }, [currentAgent])
-
-    const handleLoadModels = async () => {
-        if (!apiKey) return
-        setIsLoadingModels(true)
-        try {
-            // Check if apiKey is a pk_ ID
-            let params: any = {}
-            if (apiKey.startsWith('pk_')) {
-                params.keyId = apiKey.substring(3)
-            } else {
-                params.key = apiKey
-            }
-
-            const res = await modelsApi.fetch(params)
-            setAvailableModels(res.models)
-        } catch (e: any) {
-            alert('Failed to load models: ' + e.message)
-        } finally {
-            setIsLoadingModels(false)
-        }
-    }
 
     const handleSavePreset = () => {
         if (!presetName || !presetPrompt) return
@@ -264,13 +422,6 @@ export default function Settings() {
         setPresetPrompt('')
     }
 
-    const handleSelectRole = (role: string) => {
-        setSelectedRole(role)
-    }
-
-    const handleSaveAgent = () => {
-        updateAgent.mutate({ role: selectedRole, prompt, apiKey, model })
-    }
 
     const handleAddChannel = () => {
         if (!newChannelName || !newChannelId) return;
@@ -634,102 +785,35 @@ export default function Settings() {
             )}
 
             {activeTab === 'agents' && (
-                <div className="grid" style={{ gridTemplateColumns: '2fr 1fr', gap: '2rem', alignItems: 'start' }}>
-                    <div className="card">
-                        <h2>Agent Configuration</h2>
-                        <div className="mb-2">
-                            <label>Select Agent Role</label>
-                            <select value={selectedRole} onChange={(e) => handleSelectRole(e.target.value)}>
-                                <option value="post_creator">Post Creator</option>
-                                <option value="post_critic">Post Critic</option>
-                                <option value="post_fixer">Post Fixer</option>
-                                <option value="topic_creator">Topic Creator</option>
-                                <option value="topic_critic">Topic Critic</option>
-                                <option value="topic_fixer">Topic Fixer</option>
-                                <option disabled>--- Image Generation Chain ---</option>
-                                <option value="visual_architect">Visual Architect</option>
-                                <option value="structural_critic">Structural Critic</option>
-                                <option value="precision_fixer">Precision Fixer</option>
-                                <option value="image_critic">Image Critic</option>
-                                <option disabled>--- Legacy / Simple Image ---</option>
-                                <option value="dalle_image_gen">DALL-E Prompt</option>
-                                <option value="nano_image_gen">Nano Banana Prompt</option>
-                            </select>
-                        </div>
-
-                        {currentAgent && (
-                            <div className="grid" style={{ gap: '1rem' }}>
-                                <div>
-                                    <label>System Prompt</label>
-                                    <textarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={8} style={{ fontFamily: 'monospace' }} />
-                                </div>
-
-                                <div>
-                                    <label>
-                                        API Key
-                                        {currentAgent.provider && <span className="badge ml-1">{currentAgent.provider}</span>}
-                                    </label>
-                                    <select
-                                        value={apiKey.startsWith('pk_') ? apiKey : 'custom'}
-                                        onChange={e => {
-                                            if (e.target.value === 'custom') setApiKey('')
-                                            else setApiKey(e.target.value)
-                                        }}
-                                        style={{ marginBottom: '0.5rem' }}
-                                    >
-                                        {keys?.map(k => (
-                                            <option key={k.id} value={`pk_${k.id}`}>{k.name} ({k.provider})</option>
-                                        ))}
-                                        <option value="custom">Use Custom Key...</option>
-                                    </select>
-
-                                    {(!apiKey.startsWith('pk_')) && (
-                                        <input
-                                            type="password"
-                                            value={apiKey}
-                                            onChange={e => setApiKey(e.target.value)}
-                                            placeholder="Paste raw API key..."
-                                        />
-                                    )}
-                                </div>
-
-                                <div>
-                                    <label>Model Name</label>
-                                    <div className="flex">
-                                        <input
-                                            type="text"
-                                            value={model}
-                                            onChange={e => setModel(e.target.value)}
-                                            style={{ flex: 1 }}
-                                            list="model-options"
-                                        />
-                                        <button
-                                            type="button"
-                                            className="btn-secondary ml-1"
-                                            onClick={handleLoadModels}
-                                            disabled={!apiKey || isLoadingModels}
-                                        >
-                                            {isLoadingModels ? 'Loading...' : '🔍 Load Models'}
-                                        </button>
-                                    </div>
-                                    <datalist id="model-options">
-                                        {availableModels.map(m => (
-                                            <option key={m} value={m} />
-                                        ))}
-                                    </datalist>
-                                    {availableModels.length > 0 && (
-                                        <div className="mt-1">
-                                            <small className="text-muted">Detected models: {availableModels.join(', ')}</small>
-                                        </div>
-                                    )}
-                                </div>
-
-                                <button className="btn-primary" onClick={handleSaveAgent} disabled={updateAgent.isPending}>
-                                    {updateAgent.isPending ? 'Saving...' : 'Save Configuration'}
-                                </button>
+                <div className="space-y-6">
+                    {AGENT_ROLES.map(group => (
+                        <div key={group.group} className="card p-0 overflow-hidden">
+                            <div className="bg-surface-container-low px-4 py-3 border-b flex-between">
+                                <h3 className="text-sm font-black uppercase tracking-widest text-primary m-0">{group.group}</h3>
                             </div>
-                        )}
-                    </div>
+                            <div className="divide-y">
+                                {group.roles.map(role => (
+                                    <AgentSettingsRow
+                                        key={role.id}
+                                        roleId={role.id}
+                                        label={role.label}
+                                        icon={role.icon}
+                                        config={agents?.find(a => a.role === role.id)}
+                                        keys={keys}
+                                        onSave={(data) => updateAgent.mutate(data)}
+                                        isUpdating={updateAgent.isPending && updateAgent.variables?.role === role.id}
+                                        loadModels={async (key) => {
+                                            let params: any = {}
+                                            if (key.startsWith('pk_')) params.keyId = key.substring(3)
+                                            else params.key = key
+                                            const res = await modelsApi.fetch(params)
+                                            return res.models
+                                        }}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    ))}
                 </div>
             )}
 

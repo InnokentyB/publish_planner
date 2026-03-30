@@ -351,6 +351,7 @@ model QuarterPlan {
   strategic_goal     String? // Awareness/Authority/Conversion mix
   primary_pillar     String?
   monetization_focus String? // none / mini-products / intensive / flagship / club
+  planned_channels   Json? // e.g. { "123": "onboarding", "456": "sales" }
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
 
