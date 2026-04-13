@@ -349,7 +349,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
     fastify.post('/api/posts/:id/generate-image', async (request, reply) => {
         const projectId = (request as any).projectId;
         const { id } = request.params as { id: string };
-        const { provider } = request.body as { provider?: 'dalle' | 'nano' | 'full' };
+        const { provider } = request.body as { provider?: 'gpt-image' | 'nano' | 'full' };
 
         const post = await prisma.post.findUnique({
             where: { id: parseInt(id) }
@@ -360,7 +360,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         }
 
         try {
-            console.log(`[Generate Image] Enqueueing request for Post ${id}, Provider: ${provider || 'dalle'}`);
+            console.log(`[Generate Image] Enqueueing request for Post ${id}, Provider: ${provider || 'gpt-image'}`);
             const textToUse = post.final_text || post.generated_text || post.topic || '';
             
             // Mark immediately to stop re-clicks
@@ -373,7 +373,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             await imageQueue.add('generate-image', {
                 projectId,
                 postId: post.id,
-                provider: provider || 'dalle',
+                provider: provider || 'gpt-image',
                 textToUse,
                 topic: post.topic
             }, {
@@ -581,11 +581,11 @@ export default async function apiRoutes(fastify: FastifyInstance) {
                 }
             }
 
-            // Image Agents (DALL-E)
+            // Image Agents (GPT-Image)
             try {
-                const dallePrompt = await generatorService.getImagePromptTemplate(projectId, 'dalle');
+                const dallePrompt = await generatorService.getImagePromptTemplate(projectId, 'gpt-image');
                 agents.push({
-                    role: 'dalle_image_gen',
+                    role: 'gpt_image_gen',
                     prompt: dallePrompt,
                     apiKey: '', // Managed via env mostly for now
                     model: 'dall-e-3',
@@ -624,8 +624,8 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         const { prompt, apiKey, model } = request.body as { prompt: string; apiKey: string; model: string };
 
         // Handle Image Agents
-        if (role === 'dalle_image_gen') {
-            await generatorService.updateImagePromptTemplate(projectId, prompt, 'dalle');
+        if (role === 'gpt_image_gen') {
+            await generatorService.updateImagePromptTemplate(projectId, prompt, 'gpt-image');
             return { success: true };
         }
         if (role === 'nano_image_gen') {

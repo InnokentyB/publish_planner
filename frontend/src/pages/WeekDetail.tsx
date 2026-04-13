@@ -111,7 +111,7 @@ export default function WeekDetail() {
     })
 
     const generateImage = useMutation({
-        mutationFn: ({ postId, provider }: { postId: number, provider: 'dalle' | 'nano' | 'full' }) => {
+        mutationFn: ({ postId, provider }: { postId: number, provider: 'gpt-image' | 'nano' | 'full' }) => {
             setGeneratingPostId(postId);
             return api.post(`/api/posts/${postId}/generate-image`, { provider });
         },

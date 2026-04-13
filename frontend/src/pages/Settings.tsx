@@ -62,7 +62,7 @@ const AGENT_ROLES = [
     {
         group: 'Legacy Generators',
         roles: [
-            { id: 'dalle_image_gen', label: 'DALL-E Prompt', icon: 'palette' },
+            { id: 'gpt_image_gen', label: 'GPT-Image Prompt', icon: 'palette' },
             { id: 'nano_image_gen', label: 'Nano Banana Prompt', icon: 'imagesmode' },
         ]
     }

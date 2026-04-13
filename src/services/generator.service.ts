@@ -17,10 +17,10 @@ class GeneratorService {
     private openai!: OpenAI;
     private genAI: any;
 
-    private PROMPT_KEY_DALLE = 'image_generation_prompt';
+    private PROMPT_KEY_GPT_IMAGE = 'image_generation_prompt';
     private PROMPT_KEY_NANO = 'nano_banana_image_prompt';
 
-    private DEFAULT_PROMPT_DALLE = "Create a modern, flat vector illustration for a tech blog post about: ${topic}. \n\nStyle: Minimalist, clean lines, corporate colors (blue, grey, white). \nUse metaphors related to: ${text.substring(0, 500)} \nNo text in the image.";
+    private DEFAULT_PROMPT_GPT_IMAGE = "Create a modern, flat vector illustration for a tech blog post about: ${topic}. \n\nStyle: Minimalist, clean lines, corporate colors (blue, grey, white). \nUse metaphors related to: ${text.substring(0, 500)} \nNo text in the image.";
     private DEFAULT_PROMPT_NANO = "Generate a photorealistic image for a post about ${topic}. Context: ${text.substring(0, 500)}. High quality, professional lighting.";
 
     constructor() {
@@ -40,9 +40,9 @@ class GeneratorService {
         }
     }
 
-    async getImagePromptTemplate(projectId: number, provider: 'dalle' | 'nano' = 'dalle'): Promise<string> {
-        const key = provider === 'nano' ? this.PROMPT_KEY_NANO : this.PROMPT_KEY_DALLE;
-        const defaultPrompt = provider === 'nano' ? this.DEFAULT_PROMPT_NANO : this.DEFAULT_PROMPT_DALLE;
+    async getImagePromptTemplate(projectId: number, provider: 'gpt-image' | 'nano' = 'gpt-image'): Promise<string> {
+        const key = provider === 'nano' ? this.PROMPT_KEY_NANO : this.PROMPT_KEY_GPT_IMAGE;
+        const defaultPrompt = provider === 'nano' ? this.DEFAULT_PROMPT_NANO : this.DEFAULT_PROMPT_GPT_IMAGE;
 
         try {
             const setting = await prisma.projectSettings.findUnique({
@@ -76,8 +76,8 @@ class GeneratorService {
         }
     }
 
-    async updateImagePromptTemplate(projectId: number, value: string, provider: 'dalle' | 'nano' = 'dalle') {
-        const key = provider === 'nano' ? this.PROMPT_KEY_NANO : this.PROMPT_KEY_DALLE;
+    async updateImagePromptTemplate(projectId: number, value: string, provider: 'gpt-image' | 'nano' = 'gpt-image') {
+        const key = provider === 'nano' ? this.PROMPT_KEY_NANO : this.PROMPT_KEY_GPT_IMAGE;
 
         await prisma.projectSettings.upsert({
             where: {
@@ -139,7 +139,7 @@ CTA: ${item.cta || 'Нет'}
         return result.finalText;
     }
 
-    async generateImagePrompt(projectId: number, topic: string, text: string, provider: 'dalle' | 'nano' = 'dalle'): Promise<string> {
+    async generateImagePrompt(projectId: number, topic: string, text: string, provider: 'gpt-image' | 'nano' = 'gpt-image'): Promise<string> {
         let template = await this.getImagePromptTemplate(projectId, provider);
 
         // Replace placeholders safely
@@ -160,7 +160,7 @@ CTA: ${item.cta || 'Нет'}
     async generateImage(prompt: string): Promise<string> {
         try {
             const response = await this.openai.images.generate({
-                model: "dall-e-3",
+                model: "gpt-image-1.5",
                 prompt: prompt,
                 n: 1,
                 size: "1024x1024",
@@ -169,17 +169,17 @@ CTA: ${item.cta || 'Нет'}
             });
 
             if (!response.data || !response.data[0]) {
-                throw new Error('No image data returned from DALL-E');
+                throw new Error('No image data returned from GPT-Image');
             }
 
             const imageUrl = response.data[0].url || '';
-            if (!imageUrl) throw new Error('Empty image URL from DALL-E');
+            if (!imageUrl) throw new Error('Empty image URL from GPT-Image');
 
             // Download and save locally
             const filename = `img-${Date.now()}-${Math.random().toString(36).substring(7)}.png`;
             return await this.downloadAndSaveImage(imageUrl, filename);
         } catch (e) {
-            console.error('Failed to generate image (DALL-E)', e);
+            console.error('Failed to generate image (GPT-Image)', e);
             throw e;
         }
     }
