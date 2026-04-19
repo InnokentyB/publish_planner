@@ -324,7 +324,7 @@ async function apiRoutes(fastify) {
             return reply.code(404).send({ error: 'Post not found' });
         }
         try {
-            console.log(`[Generate Image] Enqueueing request for Post ${id}, Provider: ${provider || 'dalle'}`);
+            console.log(`[Generate Image] Enqueueing request for Post ${id}, Provider: ${provider || 'gpt-image'}`);
             const textToUse = post.final_text || post.generated_text || post.topic || '';
             // Mark immediately to stop re-clicks
             await prisma.post.update({
@@ -335,7 +335,7 @@ async function apiRoutes(fastify) {
             await imageQueue.add('generate-image', {
                 projectId,
                 postId: post.id,
-                provider: provider || 'dalle',
+                provider: provider || 'gpt-image',
                 textToUse,
                 topic: post.topic
             }, {
@@ -521,11 +521,11 @@ async function apiRoutes(fastify) {
                     });
                 }
             }
-            // Image Agents (DALL-E)
+            // Image Agents (GPT-Image)
             try {
-                const dallePrompt = await generator_service_1.default.getImagePromptTemplate(projectId, 'dalle');
+                const dallePrompt = await generator_service_1.default.getImagePromptTemplate(projectId, 'gpt-image');
                 agents.push({
-                    role: 'dalle_image_gen',
+                    role: 'gpt_image_gen',
                     prompt: dallePrompt,
                     apiKey: '', // Managed via env mostly for now
                     model: 'dall-e-3',
@@ -563,8 +563,8 @@ async function apiRoutes(fastify) {
         const { role } = request.params;
         const { prompt, apiKey, model } = request.body;
         // Handle Image Agents
-        if (role === 'dalle_image_gen') {
-            await generator_service_1.default.updateImagePromptTemplate(projectId, prompt, 'dalle');
+        if (role === 'gpt_image_gen') {
+            await generator_service_1.default.updateImagePromptTemplate(projectId, prompt, 'gpt-image');
             return { success: true };
         }
         if (role === 'nano_image_gen') {
@@ -889,14 +889,27 @@ async function apiRoutes(fastify) {
         });
         return { success: true, status: updated.approval_status };
     });
+    fastify.post('/api/v2/architect-week/:id', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const { id } = request.params;
+        try {
+            const items = await v2_orchestrator_service_1.default.architectDistribution(parseInt(id));
+            return { success: true, count: items.length };
+        }
+        catch (e) {
+            reply.code(500).send({ error: e.message || 'Failed to architect week' });
+        }
+    });
     fastify.post('/api/v2/plan-quarter', async (request, reply) => {
         const projectId = request.projectId;
         if (!projectId)
             return reply.code(400).send({ error: 'Project ID required' });
-        const { goalHint, startDate } = request.body;
+        const { goalHint, startDate, plannedChannels } = request.body;
         const dStart = startDate ? new Date(startDate) : new Date();
         try {
-            const result = await v2_orchestrator_service_1.default.planQuarter(projectId, dStart, goalHint);
+            const result = await v2_orchestrator_service_1.default.planQuarter(projectId, dStart, goalHint, plannedChannels);
             // For MVP, immediately kick off Monthly Tactical Agents (MTA) for all 3 generated months
             for (const month of result.monthArcs) {
                 await v2_orchestrator_service_1.default.planMonth(month.id);

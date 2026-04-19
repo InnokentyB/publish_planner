@@ -127,6 +127,7 @@ export const modelsApi = {
 
 export const projectsApi = {
     create: (data: { name: string; slug?: string; description?: string }) => api.post('/api/projects', data),
+    importConfig: (config: string) => api.post('/api/projects/import', { config }),
     update: (id: number, data: { name: string; description: string }) => api.put(`/api/projects/${id}`, data),
     addMember: (id: number, email: string, role: string) => api.post(`/api/projects/${id}/members`, { email, role }),
     removeMember: (id: number, userId: number) => api.delete(`/api/projects/${id}/members/${userId}`)

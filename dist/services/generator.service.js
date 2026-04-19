@@ -16,9 +16,9 @@ const adapter = new adapter_pg_1.PrismaPg(pool);
 const prisma = new client_1.PrismaClient({ adapter });
 class GeneratorService {
     constructor() {
-        this.PROMPT_KEY_DALLE = 'image_generation_prompt';
+        this.PROMPT_KEY_GPT_IMAGE = 'image_generation_prompt';
         this.PROMPT_KEY_NANO = 'nano_banana_image_prompt';
-        this.DEFAULT_PROMPT_DALLE = "Create a modern, flat vector illustration for a tech blog post about: ${topic}. \n\nStyle: Minimalist, clean lines, corporate colors (blue, grey, white). \nUse metaphors related to: ${text.substring(0, 500)} \nNo text in the image.";
+        this.DEFAULT_PROMPT_GPT_IMAGE = "Create a modern, flat vector illustration for a tech blog post about: ${topic}. \n\nStyle: Minimalist, clean lines, corporate colors (blue, grey, white). \nUse metaphors related to: ${text.substring(0, 500)} \nNo text in the image.";
         this.DEFAULT_PROMPT_NANO = "Generate a photorealistic image for a post about ${topic}. Context: ${text.substring(0, 500)}. High quality, professional lighting.";
         if (process.env.OPENAI_API_KEY) {
             this.openai = new openai_1.default({
@@ -35,9 +35,9 @@ class GeneratorService {
             }
         }
     }
-    async getImagePromptTemplate(projectId, provider = 'dalle') {
-        const key = provider === 'nano' ? this.PROMPT_KEY_NANO : this.PROMPT_KEY_DALLE;
-        const defaultPrompt = provider === 'nano' ? this.DEFAULT_PROMPT_NANO : this.DEFAULT_PROMPT_DALLE;
+    async getImagePromptTemplate(projectId, provider = 'gpt-image') {
+        const key = provider === 'nano' ? this.PROMPT_KEY_NANO : this.PROMPT_KEY_GPT_IMAGE;
+        const defaultPrompt = provider === 'nano' ? this.DEFAULT_PROMPT_NANO : this.DEFAULT_PROMPT_GPT_IMAGE;
         try {
             const setting = await prisma.projectSettings.findUnique({
                 where: {
@@ -69,8 +69,8 @@ class GeneratorService {
             return defaultPrompt;
         }
     }
-    async updateImagePromptTemplate(projectId, value, provider = 'dalle') {
-        const key = provider === 'nano' ? this.PROMPT_KEY_NANO : this.PROMPT_KEY_DALLE;
+    async updateImagePromptTemplate(projectId, value, provider = 'gpt-image') {
+        const key = provider === 'nano' ? this.PROMPT_KEY_NANO : this.PROMPT_KEY_GPT_IMAGE;
         await prisma.projectSettings.upsert({
             where: {
                 project_id_key: {
@@ -122,7 +122,7 @@ CTA: ${item.cta || 'Нет'}
         });
         return result.finalText;
     }
-    async generateImagePrompt(projectId, topic, text, provider = 'dalle') {
+    async generateImagePrompt(projectId, topic, text, provider = 'gpt-image') {
         let template = await this.getImagePromptTemplate(projectId, provider);
         // Replace placeholders safely
         const filledPrompt = template
@@ -138,7 +138,7 @@ CTA: ${item.cta || 'Нет'}
     async generateImage(prompt) {
         try {
             const response = await this.openai.images.generate({
-                model: "dall-e-3",
+                model: "gpt-image-1.5",
                 prompt: prompt,
                 n: 1,
                 size: "1024x1024",
@@ -146,17 +146,17 @@ CTA: ${item.cta || 'Нет'}
                 response_format: "url",
             });
             if (!response.data || !response.data[0]) {
-                throw new Error('No image data returned from DALL-E');
+                throw new Error('No image data returned from GPT-Image');
             }
             const imageUrl = response.data[0].url || '';
             if (!imageUrl)
-                throw new Error('Empty image URL from DALL-E');
+                throw new Error('Empty image URL from GPT-Image');
             // Download and save locally
             const filename = `img-${Date.now()}-${Math.random().toString(36).substring(7)}.png`;
             return await this.downloadAndSaveImage(imageUrl, filename);
         }
         catch (e) {
-            console.error('Failed to generate image (DALL-E)', e);
+            console.error('Failed to generate image (GPT-Image)', e);
             throw e;
         }
     }

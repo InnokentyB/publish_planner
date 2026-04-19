@@ -3,11 +3,220 @@ import authService from '../services/auth.service';
 import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
+import yaml from 'js-yaml';
+import multiAgentService from '../services/multi_agent.service';
 
 const connectionString = process.env.DATABASE_URL;
 const pool = new Pool({ connectionString });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
+
+const agentSettingKeyMap: Record<string, { prompt: string; key: string; model: string }> = {
+    post_creator: {
+        prompt: multiAgentService.KEY_POST_CREATOR_PROMPT,
+        key: multiAgentService.KEY_POST_CREATOR_KEY,
+        model: multiAgentService.KEY_POST_CREATOR_MODEL
+    },
+    post_critic: {
+        prompt: multiAgentService.KEY_POST_CRITIC_PROMPT,
+        key: multiAgentService.KEY_POST_CRITIC_KEY,
+        model: multiAgentService.KEY_POST_CRITIC_MODEL
+    },
+    post_fixer: {
+        prompt: multiAgentService.KEY_POST_FIXER_PROMPT,
+        key: multiAgentService.KEY_POST_FIXER_KEY,
+        model: multiAgentService.KEY_POST_FIXER_MODEL
+    },
+    topic_creator: {
+        prompt: multiAgentService.KEY_TOPIC_CREATOR_PROMPT,
+        key: multiAgentService.KEY_TOPIC_CREATOR_KEY,
+        model: multiAgentService.KEY_TOPIC_CREATOR_MODEL
+    },
+    topic_critic: {
+        prompt: multiAgentService.KEY_TOPIC_CRITIC_PROMPT,
+        key: multiAgentService.KEY_TOPIC_CRITIC_KEY,
+        model: multiAgentService.KEY_TOPIC_CRITIC_MODEL
+    },
+    topic_fixer: {
+        prompt: multiAgentService.KEY_TOPIC_FIXER_PROMPT,
+        key: multiAgentService.KEY_TOPIC_FIXER_KEY,
+        model: multiAgentService.KEY_TOPIC_FIXER_MODEL
+    },
+    visual_architect: {
+        prompt: multiAgentService.KEY_VISUAL_ARCHITECT_PROMPT,
+        key: multiAgentService.KEY_VISUAL_ARCHITECT_KEY,
+        model: multiAgentService.KEY_VISUAL_ARCHITECT_MODEL
+    },
+    structural_critic: {
+        prompt: multiAgentService.KEY_STRUCTURAL_CRITIC_PROMPT,
+        key: multiAgentService.KEY_STRUCTURAL_CRITIC_KEY,
+        model: multiAgentService.KEY_STRUCTURAL_CRITIC_MODEL
+    },
+    precision_fixer: {
+        prompt: multiAgentService.KEY_PRECISION_FIXER_PROMPT,
+        key: multiAgentService.KEY_PRECISION_FIXER_KEY,
+        model: multiAgentService.KEY_PRECISION_FIXER_MODEL
+    },
+    image_critic: {
+        prompt: multiAgentService.KEY_IMAGE_CRITIC_PROMPT,
+        key: multiAgentService.KEY_IMAGE_CRITIC_KEY,
+        model: multiAgentService.KEY_IMAGE_CRITIC_MODEL
+    }
+};
+
+type ImportedProjectConfig = {
+    project?: {
+        name?: string;
+        slug?: string;
+        description?: string;
+    };
+    settings?: Record<string, unknown>;
+    channels?: Array<{
+        type?: string;
+        name?: string;
+        config?: any;
+    }>;
+    agents?: Record<string, {
+        prompt?: string;
+        apiKey?: string;
+        model?: string;
+    }>;
+    presets?: Array<{
+        name?: string;
+        role?: string;
+        prompt_text?: string;
+    }>;
+};
+
+function slugifyProjectName(value: string) {
+    return value
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60);
+}
+
+async function makeUniqueProjectSlug(baseSlug?: string, fallbackName?: string) {
+    const source = baseSlug?.trim() || fallbackName || 'project';
+    const normalized = slugifyProjectName(source) || `project-${Date.now()}`;
+    let candidate = normalized;
+    let suffix = 1;
+
+    while (await prisma.project.findUnique({ where: { slug: candidate } })) {
+        candidate = `${normalized}-${suffix}`;
+        suffix += 1;
+    }
+
+    return candidate;
+}
+
+function parseImportedProjectConfig(rawConfig: string): ImportedProjectConfig {
+    const trimmed = rawConfig.trim();
+    if (!trimmed) {
+        throw new Error('Configuration is empty');
+    }
+
+    const parsed = yaml.load(trimmed);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('Configuration must be a YAML or JSON object');
+    }
+
+    return parsed as ImportedProjectConfig;
+}
+
+async function buildImportedProjectData(rawConfig: string, userId: number) {
+    const parsed = parseImportedProjectConfig(rawConfig);
+    const projectBlock = parsed.project || {};
+    const name = projectBlock.name?.trim();
+
+    if (!name) {
+        throw new Error('`project.name` is required');
+    }
+
+    const slug = await makeUniqueProjectSlug(projectBlock.slug, name);
+    const description = projectBlock.description?.trim() || null;
+    const settings = Object.entries(parsed.settings || {})
+        .filter(([key, value]) => typeof key === 'string' && key.trim() && value !== undefined && value !== null)
+        .map(([key, value]) => ({
+            key: key.trim(),
+            value: typeof value === 'string' ? value : JSON.stringify(value)
+        }));
+
+    const channels = (parsed.channels || []).map((channel, index) => {
+        if (!channel?.type || !channel?.name) {
+            throw new Error(`channels[${index}] must include both type and name`);
+        }
+
+        return {
+            type: channel.type.trim(),
+            name: channel.name.trim(),
+            config: (channel.config || {}) as any
+        };
+    });
+
+    const agentSettings = Object.entries(parsed.agents || {}).flatMap(([role, config]) => {
+        if (role === 'gpt_image_gen') {
+            if (config?.prompt === undefined) {
+                throw new Error('gpt_image_gen must include prompt');
+            }
+            return [{ key: 'image_generation_prompt', value: String(config.prompt) }];
+        }
+
+        if (role === 'nano_image_gen') {
+            if (config?.prompt === undefined) {
+                throw new Error('nano_image_gen must include prompt');
+            }
+            return [{ key: 'nano_banana_image_prompt', value: String(config.prompt) }];
+        }
+
+        const keys = agentSettingKeyMap[role];
+        if (!keys) {
+            throw new Error(`Unsupported agent role: ${role}`);
+        }
+
+        const entries: Array<{ key: string; value: string }> = [];
+        if (config?.prompt !== undefined) entries.push({ key: keys.prompt, value: String(config.prompt) });
+        if (config?.apiKey !== undefined) entries.push({ key: keys.key, value: String(config.apiKey) });
+        if (config?.model !== undefined) entries.push({ key: keys.model, value: String(config.model) });
+        return entries;
+    });
+
+    const presets = (parsed.presets || []).map((preset, index) => {
+        if (!preset?.name || !preset?.role || !preset?.prompt_text) {
+            throw new Error(`presets[${index}] must include name, role and prompt_text`);
+        }
+
+        return {
+            name: preset.name.trim(),
+            role: preset.role.trim(),
+            prompt_text: preset.prompt_text
+        };
+    });
+
+    const uniqueSettings = Array.from(
+        new Map(
+            [...settings, ...agentSettings].map((setting) => [setting.key, setting])
+        ).values()
+    );
+
+    return {
+        project: {
+            name,
+            slug,
+            description,
+            members: {
+                create: {
+                    user_id: userId,
+                    role: 'owner'
+                }
+            }
+        },
+        settings: uniqueSettings,
+        channels,
+        presets
+    };
+}
 
 export default async function projectRoutes(fastify: FastifyInstance) {
     // Middleware-like check for project routes
@@ -36,10 +245,11 @@ export default async function projectRoutes(fastify: FastifyInstance) {
         const user = (request as any).user;
         const { name, slug, description } = request.body as any;
 
+        const finalSlug = await makeUniqueProjectSlug(slug, name);
         const project = await prisma.project.create({
             data: {
                 name,
-                slug,
+                slug: finalSlug,
                 description,
                 members: {
                     create: {
@@ -51,6 +261,70 @@ export default async function projectRoutes(fastify: FastifyInstance) {
         });
 
         return project;
+    });
+
+    fastify.post('/api/projects/import', async (request, reply) => {
+        const user = (request as any).user;
+        const { config } = request.body as { config?: string };
+
+        if (!config || typeof config !== 'string') {
+            return reply.code(400).send({ error: 'Configuration text is required' });
+        }
+
+        try {
+            const imported = await buildImportedProjectData(config, user.id);
+
+            const project = await prisma.$transaction(async (tx) => {
+                const createdProject = await tx.project.create({
+                    data: imported.project
+                });
+
+                if (imported.settings.length > 0) {
+                    await tx.projectSettings.createMany({
+                        data: imported.settings.map((setting) => ({
+                            project_id: createdProject.id,
+                            key: setting.key,
+                            value: setting.value
+                        }))
+                    });
+                }
+
+                if (imported.channels.length > 0) {
+                    await tx.socialChannel.createMany({
+                        data: imported.channels.map((channel) => ({
+                            project_id: createdProject.id,
+                            type: channel.type,
+                            name: channel.name,
+                            config: channel.config
+                        }))
+                    });
+                }
+
+                if (imported.presets.length > 0) {
+                    await tx.promptPreset.createMany({
+                        data: imported.presets.map((preset) => ({
+                            project_id: createdProject.id,
+                            name: preset.name,
+                            role: preset.role,
+                            prompt_text: preset.prompt_text
+                        }))
+                    });
+                }
+
+                return createdProject;
+            });
+
+            return {
+                ...project,
+                imported: {
+                    settings: imported.settings.length,
+                    channels: imported.channels.length,
+                    presets: imported.presets.length
+                }
+            };
+        } catch (error: any) {
+            return reply.code(400).send({ error: error.message || 'Failed to import project configuration' });
+        }
     });
 
 
@@ -337,4 +611,3 @@ export default async function projectRoutes(fastify: FastifyInstance) {
         return { success: true };
     });
 }
-

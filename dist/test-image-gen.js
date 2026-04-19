@@ -35,25 +35,31 @@ async function testImageGen() {
         console.log('Generating image prompt...');
         // We use the service to ensure the valid logic (checking project settings etc)
         // Using a short text override to avoid massive context
-        const prompt = await generator_service_1.default.generateImagePrompt(post.project_id, post.topic || 'Test Topic', 'This is a test post content for verifying image generation.', 'dalle');
+        const prompt = await generator_service_1.default.generateImagePrompt(post.project_id, post.topic || 'Test Topic', 'This is a test post content for verifying image generation.', 'gpt-image');
         console.log('Generated Prompt:', prompt);
         if (!prompt) {
             throw new Error('Prompt generation returned empty string');
         }
         // 3. Generate Image (Real call to DALL-E or Nano to verify API connection)
+        // 3. Generate Image (Real call to GPT-Image or Nano to verify API connection)
         // NOTE: This costs money/credits. If we want to skip, we can mock.
         // But the user asked to "run the generation", so we should probably do a real call or at least the Nano one if set up.
-        // Let's rely on the user's config. defaulting to DALLE as per their previous errors.
-        console.log('Generating image (using Nano/Gemini if configured to save DALLE credits, otherwise DALLE)...');
+        // Let's rely on the user's config. defaulting to GPT-Image as per their previous errors.
+        console.log('Generating image (using Nano/Gemini if configured to save GPT-Image credits, otherwise GPT-Image)...');
         // Let's try to use Nano/Gemini first if key exists, as it's cheaper/free-tier usually, 
-        // OR just use DALL-E if that's what they are using in production.
-        // The error was about DB update, so the image generation provider matters less than the DB save.
-        // I will use DALL-E as that matches the user's context.
-        let imageUrl = 'PROMPT_TEST_MODE_SKIPPED_IMAGE_GEN';
-        //  Uncomment to really generate:
-        //  imageUrl = await generatorService.generateImage(prompt);
-        console.log('Skipping ACTUAL image generation to avoid cost/time, mocking image URL.');
-        imageUrl = `https://example.com/test-image-${Date.now()}.png`;
+        // OR just use GPT-Image if that's        console.log(`\n\n=== 3. Requesting Image from GPT-Image ===`);
+        // We use the same service the actual app uses to ensure parity.
+        try {
+            // OR just use GPT-Image if that's what they are using in production.
+            // I will use GPT-Image as that matches the user's context.
+            console.log(`Generating image for Prompt: "${prompt.substring(0, 50)}..."`);
+            const imageUrl = await generator_service_1.default.generateImage(prompt);
+            console.log(`✅ Success! Image URL: ${imageUrl}`);
+        }
+        catch (e) {
+            console.error(`❌ Failed to generate image via GPT-Image:`, e.message);
+        }
+        let imageUrl = `https://example.com/test-image-${Date.now()}.png`;
         // 4. Save to DB (The Critical Failure Point)
         console.log('Attempting to save to DB (The Critical Step)...');
         await planner_service_1.default.updatePost(post.id, {
