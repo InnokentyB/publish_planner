@@ -118,6 +118,17 @@ export const keysApi = {
     delete: (id: number) => api.delete(`/api/settings/keys/${id}`)
 };
 
+export const skillConnectionsApi = {
+    getAll: () => api.get('/api/settings/skill-connections'),
+    saveAll: (connections: any[]) => api.put('/api/settings/skill-connections', { connections })
+};
+
+export const contentDictionaryApi = {
+    get: () => api.get('/api/settings/content-dictionary'),
+    save: (yaml: string) => api.put('/api/settings/content-dictionary', { yaml }),
+    validatePost: (postId: number, text: string) => api.post(`/api/posts/${postId}/validate-dictionary`, { text })
+};
+
 export const modelsApi = {
     fetch: (params: { provider?: string; keyId?: string; key?: string }) => {
         const query = new URLSearchParams(params as any).toString();

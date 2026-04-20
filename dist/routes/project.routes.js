@@ -10,6 +10,7 @@ const pg_1 = require("pg");
 const adapter_pg_1 = require("@prisma/adapter-pg");
 const js_yaml_1 = __importDefault(require("js-yaml"));
 const multi_agent_service_1 = __importDefault(require("../services/multi_agent.service"));
+const content_dictionary_service_1 = __importDefault(require("../services/content_dictionary.service"));
 const connectionString = process.env.DATABASE_URL;
 const pool = new pg_1.Pool({ connectionString });
 const adapter = new adapter_pg_1.PrismaPg(pool);
@@ -66,6 +67,19 @@ const agentSettingKeyMap = {
         model: multi_agent_service_1.default.KEY_IMAGE_CRITIC_MODEL
     }
 };
+function detectProviderFromKey(key) {
+    if (key.startsWith('sk-ant'))
+        return 'Anthropic';
+    if (key.startsWith('AIza'))
+        return 'Gemini';
+    if (key.startsWith('sk-'))
+        return 'OpenAI';
+    return 'Other';
+}
+function createConnectionId(name) {
+    const base = slugifyProjectName(name) || 'skill-connection';
+    return `${base}-${Math.random().toString(36).slice(2, 8)}`;
+}
 function slugifyProjectName(value) {
     return value
         .toLowerCase()
@@ -111,6 +125,9 @@ async function buildImportedProjectData(rawConfig, userId) {
         key: key.trim(),
         value: typeof value === 'string' ? value : JSON.stringify(value)
     }));
+    const dictionaryYaml = parsed.content_dictionary !== undefined
+        ? content_dictionary_service_1.default.normalizeToYaml(parsed.content_dictionary)
+        : null;
     const channels = (parsed.channels || []).map((channel, index) => {
         if (!channel?.type || !channel?.name) {
             throw new Error(`channels[${index}] must include both type and name`);
@@ -119,6 +136,16 @@ async function buildImportedProjectData(rawConfig, userId) {
             type: channel.type.trim(),
             name: channel.name.trim(),
             config: (channel.config || {})
+        };
+    });
+    const providerKeys = (parsed.provider_keys || []).map((providerKey, index) => {
+        if (!providerKey?.name || !providerKey?.key) {
+            throw new Error(`provider_keys[${index}] must include name and key`);
+        }
+        return {
+            name: providerKey.name.trim(),
+            key: providerKey.key.trim(),
+            provider: providerKey.provider?.trim() || detectProviderFromKey(providerKey.key.trim())
         };
     });
     const agentSettings = Object.entries(parsed.agents || {}).flatMap(([role, config]) => {
@@ -157,7 +184,37 @@ async function buildImportedProjectData(rawConfig, userId) {
             prompt_text: preset.prompt_text
         };
     });
-    const uniqueSettings = Array.from(new Map([...settings, ...agentSettings].map((setting) => [setting.key, setting])).values());
+    const skillConnections = (parsed.skill_connections || []).map((connection, index) => {
+        if (!connection?.name || !connection?.provider || !connection?.model) {
+            throw new Error(`skill_connections[${index}] must include name, provider and model`);
+        }
+        const providerKeyName = connection.providerKeyName?.trim();
+        if (providerKeyName && !providerKeys.find((key) => key.name === providerKeyName)) {
+            throw new Error(`skill_connections[${index}] references unknown provider key: ${providerKeyName}`);
+        }
+        return {
+            id: connection.id?.trim() || createConnectionId(connection.name),
+            name: connection.name.trim(),
+            provider: connection.provider.trim(),
+            model: connection.model.trim(),
+            providerKeyId: typeof connection.providerKeyId === 'number' ? connection.providerKeyId : null,
+            providerKeyName: providerKeyName || null,
+            endpointType: connection.endpointType?.trim() || 'native',
+            skillMode: connection.skillMode?.trim() || 'native_skills',
+            enabledSkills: Array.isArray(connection.enabledSkills)
+                ? connection.enabledSkills.map((skill) => String(skill).trim()).filter(Boolean)
+                : [],
+            systemPrompt: connection.systemPrompt || '',
+            notes: connection.notes || '',
+            enabled: connection.enabled !== false,
+            supportsSkills: connection.supportsSkills !== false
+        };
+    });
+    const uniqueSettings = Array.from(new Map([
+        ...settings,
+        ...agentSettings,
+        ...(dictionaryYaml ? [{ key: 'content_dictionary_yaml', value: dictionaryYaml }] : [])
+    ].map((setting) => [setting.key, setting])).values());
     return {
         project: {
             name,
@@ -171,8 +228,10 @@ async function buildImportedProjectData(rawConfig, userId) {
             }
         },
         settings: uniqueSettings,
+        providerKeys,
         channels,
-        presets
+        presets,
+        skillConnections
     };
 }
 async function projectRoutes(fastify) {
@@ -237,6 +296,18 @@ async function projectRoutes(fastify) {
                         }))
                     });
                 }
+                const createdProviderKeys = new Map();
+                for (const providerKey of imported.providerKeys) {
+                    const createdKey = await tx.providerKey.create({
+                        data: {
+                            project_id: createdProject.id,
+                            name: providerKey.name,
+                            key: providerKey.key,
+                            provider: providerKey.provider
+                        }
+                    });
+                    createdProviderKeys.set(providerKey.name, createdKey.id);
+                }
                 if (imported.channels.length > 0) {
                     await tx.socialChannel.createMany({
                         data: imported.channels.map((channel) => ({
@@ -257,14 +328,30 @@ async function projectRoutes(fastify) {
                         }))
                     });
                 }
+                if (imported.skillConnections.length > 0) {
+                    await tx.projectSettings.create({
+                        data: {
+                            project_id: createdProject.id,
+                            key: 'llm_skill_connections',
+                            value: JSON.stringify(imported.skillConnections.map((connection) => ({
+                                ...connection,
+                                providerKeyId: connection.providerKeyName
+                                    ? (createdProviderKeys.get(connection.providerKeyName) || null)
+                                    : connection.providerKeyId
+                            })))
+                        }
+                    });
+                }
                 return createdProject;
             });
             return {
                 ...project,
                 imported: {
                     settings: imported.settings.length,
+                    providerKeys: imported.providerKeys.length,
                     channels: imported.channels.length,
-                    presets: imported.presets.length
+                    presets: imported.presets.length,
+                    skillConnections: imported.skillConnections.length
                 }
             };
         }

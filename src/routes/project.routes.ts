@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import yaml from 'js-yaml';
 import multiAgentService from '../services/multi_agent.service';
+import contentDictionaryService from '../services/content_dictionary.service';
 
 const connectionString = process.env.DATABASE_URL;
 const pool = new Pool({ connectionString });
@@ -71,6 +72,12 @@ type ImportedProjectConfig = {
         description?: string;
     };
     settings?: Record<string, unknown>;
+    content_dictionary?: unknown;
+    provider_keys?: Array<{
+        name?: string;
+        key?: string;
+        provider?: string;
+    }>;
     channels?: Array<{
         type?: string;
         name?: string;
@@ -86,7 +93,34 @@ type ImportedProjectConfig = {
         role?: string;
         prompt_text?: string;
     }>;
+    skill_connections?: Array<{
+        id?: string;
+        name?: string;
+        provider?: string;
+        model?: string;
+        providerKeyId?: number;
+        providerKeyName?: string;
+        endpointType?: string;
+        skillMode?: string;
+        enabledSkills?: string[];
+        systemPrompt?: string;
+        notes?: string;
+        enabled?: boolean;
+        supportsSkills?: boolean;
+    }>;
 };
+
+function detectProviderFromKey(key: string) {
+    if (key.startsWith('sk-ant')) return 'Anthropic';
+    if (key.startsWith('AIza')) return 'Gemini';
+    if (key.startsWith('sk-')) return 'OpenAI';
+    return 'Other';
+}
+
+function createConnectionId(name: string) {
+    const base = slugifyProjectName(name) || 'skill-connection';
+    return `${base}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 function slugifyProjectName(value: string) {
     return value
@@ -143,6 +177,10 @@ async function buildImportedProjectData(rawConfig: string, userId: number) {
             value: typeof value === 'string' ? value : JSON.stringify(value)
         }));
 
+    const dictionaryYaml = parsed.content_dictionary !== undefined
+        ? contentDictionaryService.normalizeToYaml(parsed.content_dictionary)
+        : null;
+
     const channels = (parsed.channels || []).map((channel, index) => {
         if (!channel?.type || !channel?.name) {
             throw new Error(`channels[${index}] must include both type and name`);
@@ -152,6 +190,18 @@ async function buildImportedProjectData(rawConfig: string, userId: number) {
             type: channel.type.trim(),
             name: channel.name.trim(),
             config: (channel.config || {}) as any
+        };
+    });
+
+    const providerKeys = (parsed.provider_keys || []).map((providerKey, index) => {
+        if (!providerKey?.name || !providerKey?.key) {
+            throw new Error(`provider_keys[${index}] must include name and key`);
+        }
+
+        return {
+            name: providerKey.name.trim(),
+            key: providerKey.key.trim(),
+            provider: providerKey.provider?.trim() || detectProviderFromKey(providerKey.key.trim())
         };
     });
 
@@ -194,9 +244,42 @@ async function buildImportedProjectData(rawConfig: string, userId: number) {
         };
     });
 
+    const skillConnections = (parsed.skill_connections || []).map((connection, index) => {
+        if (!connection?.name || !connection?.provider || !connection?.model) {
+            throw new Error(`skill_connections[${index}] must include name, provider and model`);
+        }
+
+        const providerKeyName = connection.providerKeyName?.trim();
+        if (providerKeyName && !providerKeys.find((key) => key.name === providerKeyName)) {
+            throw new Error(`skill_connections[${index}] references unknown provider key: ${providerKeyName}`);
+        }
+
+        return {
+            id: connection.id?.trim() || createConnectionId(connection.name),
+            name: connection.name.trim(),
+            provider: connection.provider.trim(),
+            model: connection.model.trim(),
+            providerKeyId: typeof connection.providerKeyId === 'number' ? connection.providerKeyId : null,
+            providerKeyName: providerKeyName || null,
+            endpointType: connection.endpointType?.trim() || 'native',
+            skillMode: connection.skillMode?.trim() || 'native_skills',
+            enabledSkills: Array.isArray(connection.enabledSkills)
+                ? connection.enabledSkills.map((skill) => String(skill).trim()).filter(Boolean)
+                : [],
+            systemPrompt: connection.systemPrompt || '',
+            notes: connection.notes || '',
+            enabled: connection.enabled !== false,
+            supportsSkills: connection.supportsSkills !== false
+        };
+    });
+
     const uniqueSettings = Array.from(
         new Map(
-            [...settings, ...agentSettings].map((setting) => [setting.key, setting])
+            [
+                ...settings,
+                ...agentSettings,
+                ...(dictionaryYaml ? [{ key: 'content_dictionary_yaml', value: dictionaryYaml }] : [])
+            ].map((setting) => [setting.key, setting])
         ).values()
     );
 
@@ -213,8 +296,10 @@ async function buildImportedProjectData(rawConfig: string, userId: number) {
             }
         },
         settings: uniqueSettings,
+        providerKeys,
         channels,
-        presets
+        presets,
+        skillConnections
     };
 }
 
@@ -289,6 +374,21 @@ export default async function projectRoutes(fastify: FastifyInstance) {
                     });
                 }
 
+                const createdProviderKeys = new Map<string, number>();
+
+                for (const providerKey of imported.providerKeys) {
+                    const createdKey = await tx.providerKey.create({
+                        data: {
+                            project_id: createdProject.id,
+                            name: providerKey.name,
+                            key: providerKey.key,
+                            provider: providerKey.provider
+                        }
+                    });
+
+                    createdProviderKeys.set(providerKey.name, createdKey.id);
+                }
+
                 if (imported.channels.length > 0) {
                     await tx.socialChannel.createMany({
                         data: imported.channels.map((channel) => ({
@@ -311,6 +411,23 @@ export default async function projectRoutes(fastify: FastifyInstance) {
                     });
                 }
 
+                if (imported.skillConnections.length > 0) {
+                    await tx.projectSettings.create({
+                        data: {
+                            project_id: createdProject.id,
+                            key: 'llm_skill_connections',
+                            value: JSON.stringify(
+                                imported.skillConnections.map((connection) => ({
+                                    ...connection,
+                                    providerKeyId: connection.providerKeyName
+                                        ? (createdProviderKeys.get(connection.providerKeyName) || null)
+                                        : connection.providerKeyId
+                                }))
+                            )
+                        }
+                    });
+                }
+
                 return createdProject;
             });
 
@@ -318,8 +435,10 @@ export default async function projectRoutes(fastify: FastifyInstance) {
                 ...project,
                 imported: {
                     settings: imported.settings.length,
+                    providerKeys: imported.providerKeys.length,
                     channels: imported.channels.length,
-                    presets: imported.presets.length
+                    presets: imported.presets.length,
+                    skillConnections: imported.skillConnections.length
                 }
             };
         } catch (error: any) {

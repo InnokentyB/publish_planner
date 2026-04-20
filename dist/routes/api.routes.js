@@ -20,6 +20,7 @@ const prisma = new client_1.PrismaClient({ adapter });
 const auth_service_1 = __importDefault(require("../services/auth.service"));
 const comment_service_1 = __importDefault(require("../services/comment.service"));
 const storage_service_1 = __importDefault(require("../services/storage.service"));
+const content_dictionary_service_1 = __importDefault(require("../services/content_dictionary.service"));
 async function apiRoutes(fastify) {
     // Auth and Project context middleware
     fastify.addHook('preHandler', async (request, reply) => {
@@ -478,6 +479,27 @@ async function apiRoutes(fastify) {
         });
         return reply.code(202).send({ success: true, message: 'Generation queued in background' });
     });
+    fastify.post('/api/posts/:id/validate-dictionary', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const { id } = request.params;
+        const { text } = request.body;
+        const post = await prisma.post.findFirst({
+            where: {
+                id: parseInt(id),
+                project_id: projectId
+            }
+        });
+        if (!post) {
+            return reply.code(404).send({ error: 'Post not found' });
+        }
+        const dictionarySetting = await prisma.projectSettings.findUnique({
+            where: { project_id_key: { project_id: projectId, key: 'content_dictionary_yaml' } }
+        });
+        const report = content_dictionary_service_1.default.validateText(text || post.final_text || post.generated_text || '', dictionarySetting?.value || null);
+        return report;
+    });
     // Settings
     fastify.get('/api/settings/agents', async (request, reply) => {
         try {
@@ -776,6 +798,110 @@ async function apiRoutes(fastify) {
             return reply.code(404).send({ error: 'Not found' });
         await prisma.providerKey.delete({ where: { id: parseInt(id) } });
         return { success: true };
+    });
+    fastify.get('/api/settings/content-dictionary', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const setting = await prisma.projectSettings.findUnique({
+            where: { project_id_key: { project_id: projectId, key: 'content_dictionary_yaml' } }
+        });
+        const yamlValue = setting?.value || content_dictionary_service_1.default.getDefaultYaml();
+        const parsed = content_dictionary_service_1.default.parseYaml(yamlValue);
+        return {
+            yaml: yamlValue,
+            parsed,
+            updated_at: setting?.updated_at || null
+        };
+    });
+    fastify.put('/api/settings/content-dictionary', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const { yaml: yamlText } = request.body;
+        if (typeof yamlText !== 'string' || !yamlText.trim()) {
+            return reply.code(400).send({ error: 'yaml is required' });
+        }
+        try {
+            const normalizedYaml = content_dictionary_service_1.default.normalizeToYaml(yamlText);
+            const parsed = content_dictionary_service_1.default.parseYaml(normalizedYaml);
+            const saved = await prisma.projectSettings.upsert({
+                where: { project_id_key: { project_id: projectId, key: 'content_dictionary_yaml' } },
+                update: { value: normalizedYaml },
+                create: {
+                    project_id: projectId,
+                    key: 'content_dictionary_yaml',
+                    value: normalizedYaml
+                }
+            });
+            return {
+                yaml: saved.value,
+                parsed,
+                updated_at: saved.updated_at
+            };
+        }
+        catch (error) {
+            return reply.code(400).send({ error: error.message || 'Invalid dictionary YAML' });
+        }
+    });
+    fastify.get('/api/settings/skill-connections', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const setting = await prisma.projectSettings.findUnique({
+            where: { project_id_key: { project_id: projectId, key: 'llm_skill_connections' } }
+        });
+        if (!setting?.value) {
+            return [];
+        }
+        try {
+            const parsed = JSON.parse(setting.value);
+            return Array.isArray(parsed) ? parsed : [];
+        }
+        catch (error) {
+            console.error('Failed to parse llm_skill_connections', error);
+            return [];
+        }
+    });
+    fastify.put('/api/settings/skill-connections', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const { connections } = request.body;
+        if (!Array.isArray(connections)) {
+            return reply.code(400).send({ error: 'connections must be an array' });
+        }
+        const normalized = connections.map((connection, index) => {
+            if (!connection?.name || !connection?.provider || !connection?.model) {
+                throw new Error(`connections[${index}] must include name, provider and model`);
+            }
+            return {
+                id: String(connection.id || `skill-connection-${index + 1}`),
+                name: String(connection.name).trim(),
+                provider: String(connection.provider).trim(),
+                model: String(connection.model).trim(),
+                providerKeyId: typeof connection.providerKeyId === 'number' ? connection.providerKeyId : null,
+                endpointType: String(connection.endpointType || 'native').trim(),
+                skillMode: String(connection.skillMode || 'native_skills').trim(),
+                enabledSkills: Array.isArray(connection.enabledSkills)
+                    ? connection.enabledSkills.map((skill) => String(skill).trim()).filter(Boolean)
+                    : [],
+                systemPrompt: String(connection.systemPrompt || ''),
+                notes: String(connection.notes || ''),
+                enabled: connection.enabled !== false,
+                supportsSkills: connection.supportsSkills !== false
+            };
+        });
+        await prisma.projectSettings.upsert({
+            where: { project_id_key: { project_id: projectId, key: 'llm_skill_connections' } },
+            update: { value: JSON.stringify(normalized) },
+            create: {
+                project_id: projectId,
+                key: 'llm_skill_connections',
+                value: JSON.stringify(normalized)
+            }
+        });
+        return normalized;
     });
     // Model Fetching
     fastify.get('/api/settings/models', async (request, reply) => {

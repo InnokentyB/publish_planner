@@ -24,6 +24,29 @@ settings:
       "focus": ["system analysis", "product thinking", "team conflicts"]
     }
 
+content_dictionary:
+  terms:
+    - canonical: "системный анализ"
+      aliases: ["system analysis"]
+      forbidden: ["сисан"]
+      notes: "Используем канонический термин в публичном контенте."
+    - canonical: "бизнес-анализ"
+      aliases: ["business analysis"]
+      forbidden: ["BA без расшифровки"]
+  style_rules:
+    required_phrases: []
+    forbidden_phrases:
+      - "best practice без контекста"
+    preferred_tone: "direct, practical, non-generic"
+
+provider_keys:
+  - name: Claude Prod
+    provider: Anthropic
+    key: sk-ant-...
+  - name: OpenAI Shared
+    provider: OpenAI
+    key: sk-...
+
 channels:
   - type: telegram
     name: Main Channel
@@ -61,6 +84,31 @@ agents:
     prompt: >
       Create a modern editorial illustration for a post about \${topic}.
       Context: \${text.substring(0, 500)}.
+
+skill_connections:
+  - name: Claude Skills
+    provider: Anthropic
+    model: claude-3-7-sonnet-latest
+    providerKeyName: Claude Prod
+    endpointType: native
+    skillMode: native_skills
+    enabledSkills:
+      - planning
+      - project_bootstrap
+      - research
+    systemPrompt: >
+      Используй подключенные skills только когда они реально помогают
+      собрать структуру проекта, стратегию или контентный pipeline.
+    notes: Основной skill-capable assistant для стратегических задач.
+  - name: OpenAI Tools
+    provider: OpenAI
+    model: gpt-4o
+    providerKeyName: OpenAI Shared
+    endpointType: openai_compatible
+    skillMode: tools
+    enabledSkills:
+      - content_ops
+      - qa_review
 
 presets:
   - name: Sharp Telegram
@@ -190,11 +238,13 @@ export default function CreateProjectModal({ onClose, onSuccess }: CreateProject
                                 />
                             </div>
                             <div className="text-muted mb-3" style={{ fontSize: '0.85rem', lineHeight: 1.5 }}>
-                                Supported sections: <code>project</code>, <code>settings</code>, <code>channels</code>, <code>agents</code>, <code>presets</code>.
+                                Supported sections: <code>project</code>, <code>settings</code>, <code>content_dictionary</code>, <code>provider_keys</code>, <code>channels</code>, <code>agents</code>, <code>skill_connections</code>, <code>presets</code>.
                                 <br />
                                 For text agents use roles like <code>post_creator</code>, <code>post_critic</code>, <code>topic_creator</code>, <code>visual_architect</code>.
                                 <br />
                                 For image templates use <code>gpt_image_gen</code> or <code>nano_image_gen</code> with a single <code>prompt</code> field.
+                                <br />
+                                For skill-capable LLMs use <code>skill_connections</code> with provider, model, providerKeyName and enabledSkills.
                             </div>
                         </>
                     )}
