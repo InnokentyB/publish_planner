@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
-import { api, presetsApi, keysApi, modelsApi, projectsApi } from '../api'
+import { api, presetsApi, keysApi, modelsApi, projectsApi, skillConnectionsApi, contentDictionaryApi } from '../api'
 import { useAuth } from '../context/AuthContext'
 
 interface AgentConfig {
@@ -23,6 +23,21 @@ interface ProviderKey {
     name: string
     key: string
     provider: string
+}
+
+interface SkillConnection {
+    id: string
+    name: string
+    provider: string
+    model: string
+    providerKeyId?: number | null
+    endpointType?: string
+    skillMode?: string
+    enabledSkills: string[]
+    systemPrompt?: string
+    notes?: string
+    enabled: boolean
+    supportsSkills: boolean
 }
 
 interface SocialChannel {
@@ -231,7 +246,7 @@ function AgentSettingsRow({
 export default function Settings() {
     const queryClient = useQueryClient()
     const { currentProject } = useAuth()
-    const [activeTab, setActiveTab] = useState<'general' | 'keys' | 'channels' | 'team' | 'agents' | 'presets' | 'history'>('general')
+    const [activeTab, setActiveTab] = useState<'general' | 'keys' | 'dictionary' | 'skills' | 'channels' | 'team' | 'agents' | 'presets' | 'history'>('general')
 
     // Project State
     const [projectName, setProjectName] = useState('')
@@ -249,6 +264,19 @@ export default function Settings() {
     // Key State
     const [newKeyName, setNewKeyName] = useState('')
     const [newKeyValue, setNewKeyValue] = useState('')
+    const [dictionaryYaml, setDictionaryYaml] = useState('')
+
+    const [skillConnectionName, setSkillConnectionName] = useState('')
+    const [skillConnectionProvider, setSkillConnectionProvider] = useState('Anthropic')
+    const [skillConnectionModel, setSkillConnectionModel] = useState('')
+    const [skillConnectionKeyId, setSkillConnectionKeyId] = useState('')
+    const [skillConnectionEndpointType, setSkillConnectionEndpointType] = useState('native')
+    const [skillConnectionMode, setSkillConnectionMode] = useState('native_skills')
+    const [skillConnectionSkills, setSkillConnectionSkills] = useState('')
+    const [skillConnectionPrompt, setSkillConnectionPrompt] = useState('')
+    const [skillConnectionNotes, setSkillConnectionNotes] = useState('')
+    const [skillConnectionEnabled, setSkillConnectionEnabled] = useState(true)
+    const [editingSkillConnectionId, setEditingSkillConnectionId] = useState<string | null>(null)
 
     // Member State
     const [inviteEmail, setInviteEmail] = useState('')
@@ -276,7 +304,19 @@ export default function Settings() {
     const { data: keys } = useQuery<ProviderKey[]>({
         queryKey: ['keys', currentProject?.id],
         queryFn: () => keysApi.getAll(),
-        enabled: !!currentProject && (activeTab === 'keys' || activeTab === 'agents')
+        enabled: !!currentProject && (activeTab === 'keys' || activeTab === 'agents' || activeTab === 'skills')
+    })
+
+    const { data: skillConnections } = useQuery<SkillConnection[]>({
+        queryKey: ['skill-connections', currentProject?.id],
+        queryFn: () => skillConnectionsApi.getAll(),
+        enabled: !!currentProject && activeTab === 'skills'
+    })
+
+    const { data: contentDictionary } = useQuery<{ yaml: string; parsed: any; updated_at: string | null }>({
+        queryKey: ['content-dictionary', currentProject?.id],
+        queryFn: () => contentDictionaryApi.get(),
+        enabled: !!currentProject && activeTab === 'dictionary'
     })
 
     const { data: presets } = useQuery<PromptPreset[]>({
@@ -334,6 +374,25 @@ export default function Settings() {
     const deleteKey = useMutation({
         mutationFn: (id: number) => keysApi.delete(id),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['keys'] })
+    })
+
+    const saveSkillConnections = useMutation({
+        mutationFn: (connections: SkillConnection[]) => skillConnectionsApi.saveAll(connections),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['skill-connections'] })
+            alert('Skill connections saved')
+        },
+        onError: (err: any) => alert(err.message || 'Failed to save skill connections')
+    })
+
+    const saveContentDictionary = useMutation({
+        mutationFn: (yaml: string) => contentDictionaryApi.save(yaml),
+        onSuccess: (result: any) => {
+            setDictionaryYaml(result.yaml)
+            queryClient.invalidateQueries({ queryKey: ['content-dictionary'] })
+            alert('Content dictionary saved')
+        },
+        onError: (err: any) => alert(err.message || 'Failed to save content dictionary')
     })
 
     const updateAgent = useMutation({
@@ -398,6 +457,12 @@ export default function Settings() {
         }
     }, [projectData, activeTab])
 
+    useEffect(() => {
+        if (contentDictionary && activeTab === 'dictionary') {
+            setDictionaryYaml(contentDictionary.yaml || '')
+        }
+    }, [contentDictionary, activeTab])
+
 
 
     const handleSavePreset = () => {
@@ -441,6 +506,68 @@ export default function Settings() {
             name: newChannelName,
             config
         });
+    }
+
+    const resetSkillConnectionForm = () => {
+        setEditingSkillConnectionId(null)
+        setSkillConnectionName('')
+        setSkillConnectionProvider('Anthropic')
+        setSkillConnectionModel('')
+        setSkillConnectionKeyId('')
+        setSkillConnectionEndpointType('native')
+        setSkillConnectionMode('native_skills')
+        setSkillConnectionSkills('')
+        setSkillConnectionPrompt('')
+        setSkillConnectionNotes('')
+        setSkillConnectionEnabled(true)
+    }
+
+    const handleSaveSkillConnection = () => {
+        if (!skillConnectionName || !skillConnectionModel) return
+
+        const nextConnection: SkillConnection = {
+            id: editingSkillConnectionId || `skill-${Date.now()}`,
+            name: skillConnectionName,
+            provider: skillConnectionProvider,
+            model: skillConnectionModel,
+            providerKeyId: skillConnectionKeyId ? parseInt(skillConnectionKeyId, 10) : null,
+            endpointType: skillConnectionEndpointType,
+            skillMode: skillConnectionMode,
+            enabledSkills: skillConnectionSkills
+                .split(',')
+                .map(skill => skill.trim())
+                .filter(Boolean),
+            systemPrompt: skillConnectionPrompt,
+            notes: skillConnectionNotes,
+            enabled: skillConnectionEnabled,
+            supportsSkills: true
+        }
+
+        const nextConnections = editingSkillConnectionId
+            ? (skillConnections || []).map(connection => connection.id === editingSkillConnectionId ? nextConnection : connection)
+            : [...(skillConnections || []), nextConnection]
+
+        saveSkillConnections.mutate(nextConnections)
+        resetSkillConnectionForm()
+    }
+
+    const handleEditSkillConnection = (connection: SkillConnection) => {
+        setEditingSkillConnectionId(connection.id)
+        setSkillConnectionName(connection.name)
+        setSkillConnectionProvider(connection.provider)
+        setSkillConnectionModel(connection.model)
+        setSkillConnectionKeyId(connection.providerKeyId ? String(connection.providerKeyId) : '')
+        setSkillConnectionEndpointType(connection.endpointType || 'native')
+        setSkillConnectionMode(connection.skillMode || 'native_skills')
+        setSkillConnectionSkills((connection.enabledSkills || []).join(', '))
+        setSkillConnectionPrompt(connection.systemPrompt || '')
+        setSkillConnectionNotes(connection.notes || '')
+        setSkillConnectionEnabled(connection.enabled !== false)
+    }
+
+    const handleDeleteSkillConnection = (id: string) => {
+        const nextConnections = (skillConnections || []).filter(connection => connection.id !== id)
+        saveSkillConnections.mutate(nextConnections)
     }
 
     const { data: runs } = useQuery<any[]>({
@@ -519,7 +646,7 @@ export default function Settings() {
             <h1 className="mb-3">Project Settings</h1>
 
             <div className="flex mb-3" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem', overflowX: 'auto' }}>
-                {['general', 'keys', 'channels', 'team', 'agents', 'presets', 'history'].map(tab => (
+                {['general', 'keys', 'dictionary', 'skills', 'channels', 'team', 'agents', 'presets', 'history'].map(tab => (
                     <button
                         key={tab}
                         className={activeTab === tab ? 'btn-primary' : 'btn-secondary'}
@@ -733,6 +860,164 @@ export default function Settings() {
                             </div>
                         ))}
                         {keys?.length === 0 && <p className="text-muted">No keys found.</p>}
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'dictionary' && (
+                <div className="card">
+                    <h2>Content Dictionary</h2>
+                    <p className="text-muted mb-2">Upload or edit a YAML dictionary for project terminology, forbidden variants and style rules. This dictionary is used to validate content consistency.</p>
+
+                    <div className="mb-2">
+                        <label>Dictionary YAML</label>
+                        <textarea
+                            value={dictionaryYaml}
+                            onChange={e => setDictionaryYaml(e.target.value)}
+                            rows={22}
+                            spellCheck={false}
+                            style={{ fontFamily: 'monospace' }}
+                            placeholder={'terms:\n  - canonical: "system analysis"'}
+                        />
+                    </div>
+
+                    <div className="flex" style={{ gap: '0.5rem', marginBottom: '1rem' }}>
+                        <button className="btn-primary" onClick={() => saveContentDictionary.mutate(dictionaryYaml)} disabled={!dictionaryYaml.trim() || saveContentDictionary.isPending}>
+                            {saveContentDictionary.isPending ? 'Saving...' : 'Save Dictionary'}
+                        </button>
+                        {contentDictionary?.updated_at && (
+                            <span className="text-muted" style={{ alignSelf: 'center', fontSize: '0.85rem' }}>
+                                Updated: {new Date(contentDictionary.updated_at).toLocaleString()}
+                            </span>
+                        )}
+                    </div>
+
+                    {contentDictionary?.parsed && (
+                        <div className="p-2" style={{ background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
+                            <strong>Quick Summary</strong>
+                            <div className="text-muted" style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
+                                Terms: {contentDictionary.parsed.terms?.length || 0}
+                                {' • '}
+                                Required phrases: {contentDictionary.parsed.style_rules?.required_phrases?.length || 0}
+                                {' • '}
+                                Forbidden phrases: {contentDictionary.parsed.style_rules?.forbidden_phrases?.length || 0}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'skills' && (
+                <div className="card">
+                    <h2>Skill-Capable LLM Connections</h2>
+                    <p className="text-muted mb-2">Configure Claude and other LLM connections that can work with project skills, tools or MCP-style capabilities.</p>
+
+                    <div className="mb-3 p-2" style={{ border: '1px solid var(--border)', borderRadius: '8px' }}>
+                        <h3>{editingSkillConnectionId ? 'Edit Connection' : 'Add Connection'}</h3>
+                        <div className="grid-2" style={{ gap: '1rem' }}>
+                            <div>
+                                <label>Connection Name</label>
+                                <input value={skillConnectionName} onChange={e => setSkillConnectionName(e.target.value)} placeholder="Claude Skills" />
+                            </div>
+                            <div>
+                                <label>Provider</label>
+                                <select value={skillConnectionProvider} onChange={e => setSkillConnectionProvider(e.target.value)}>
+                                    <option value="Anthropic">Anthropic</option>
+                                    <option value="OpenAI">OpenAI</option>
+                                    <option value="Gemini">Gemini</option>
+                                    <option value="Other">Other</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label>Model</label>
+                                <input value={skillConnectionModel} onChange={e => setSkillConnectionModel(e.target.value)} placeholder="claude-3-7-sonnet-latest" />
+                            </div>
+                            <div>
+                                <label>Provider Key</label>
+                                <select value={skillConnectionKeyId} onChange={e => setSkillConnectionKeyId(e.target.value)}>
+                                    <option value="">No linked key</option>
+                                    {keys?.map(key => (
+                                        <option key={key.id} value={key.id}>{key.name} ({key.provider})</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label>Endpoint Type</label>
+                                <select value={skillConnectionEndpointType} onChange={e => setSkillConnectionEndpointType(e.target.value)}>
+                                    <option value="native">Native API</option>
+                                    <option value="openai_compatible">OpenAI Compatible</option>
+                                    <option value="custom">Custom</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label>Skill Mode</label>
+                                <select value={skillConnectionMode} onChange={e => setSkillConnectionMode(e.target.value)}>
+                                    <option value="native_skills">Native Skills</option>
+                                    <option value="tools">Tools</option>
+                                    <option value="mcp">MCP</option>
+                                </select>
+                            </div>
+                            <div style={{ gridColumn: '1 / -1' }}>
+                                <label>Enabled Skills</label>
+                                <input value={skillConnectionSkills} onChange={e => setSkillConnectionSkills(e.target.value)} placeholder="planning, research, project_bootstrap" />
+                            </div>
+                            <div style={{ gridColumn: '1 / -1' }}>
+                                <label>System Prompt / Guidance</label>
+                                <textarea value={skillConnectionPrompt} onChange={e => setSkillConnectionPrompt(e.target.value)} rows={4} placeholder="When to use skills, how to combine them, safety constraints..." />
+                            </div>
+                            <div style={{ gridColumn: '1 / -1' }}>
+                                <label>Notes</label>
+                                <textarea value={skillConnectionNotes} onChange={e => setSkillConnectionNotes(e.target.value)} rows={2} placeholder="Operational notes for this LLM connection" />
+                            </div>
+                        </div>
+
+                        <div className="flex-center mt-2" style={{ justifyContent: 'space-between' }}>
+                            <label className="flex-center" style={{ gap: '0.5rem' }}>
+                                <input type="checkbox" checked={skillConnectionEnabled} onChange={e => setSkillConnectionEnabled(e.target.checked)} />
+                                <span>Connection enabled</span>
+                            </label>
+                            <div className="flex" style={{ gap: '0.5rem' }}>
+                                {editingSkillConnectionId && (
+                                    <button className="btn-secondary" onClick={resetSkillConnectionForm}>Cancel</button>
+                                )}
+                                <button className="btn-primary" onClick={handleSaveSkillConnection} disabled={!skillConnectionName || !skillConnectionModel || saveSkillConnections.isPending}>
+                                    {saveSkillConnections.isPending ? 'Saving...' : (editingSkillConnectionId ? 'Update Connection' : 'Add Connection')}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid">
+                        {skillConnections?.map(connection => (
+                            <div key={connection.id} className="p-2" style={{ background: 'var(--bg-tertiary)', borderRadius: '6px', marginBottom: '0.5rem' }}>
+                                <div className="flex-between mb-1">
+                                    <div>
+                                        <strong>{connection.name}</strong>
+                                        <span className="badge ml-1" style={{ fontSize: '0.75rem' }}>{connection.provider}</span>
+                                        <span className="badge ml-1" style={{ fontSize: '0.75rem' }}>{connection.skillMode || 'native_skills'}</span>
+                                        {!connection.enabled && <span className="badge ml-1" style={{ fontSize: '0.75rem' }}>disabled</span>}
+                                    </div>
+                                    <div className="flex" style={{ gap: '0.5rem' }}>
+                                        <button className="btn-secondary" onClick={() => handleEditSkillConnection(connection)}>Edit</button>
+                                        <button className="btn-danger" onClick={() => handleDeleteSkillConnection(connection.id)}>Delete</button>
+                                    </div>
+                                </div>
+                                <div className="text-muted" style={{ fontSize: '0.85rem', marginBottom: '0.4rem' }}>
+                                    Model: {connection.model}
+                                    {connection.endpointType ? ` • ${connection.endpointType}` : ''}
+                                    {connection.providerKeyId ? ` • key #${connection.providerKeyId}` : ''}
+                                </div>
+                                <div style={{ fontSize: '0.9rem', marginBottom: '0.4rem' }}>
+                                    Skills: {(connection.enabledSkills || []).length ? connection.enabledSkills.join(', ') : 'No skills selected'}
+                                </div>
+                                {(connection.systemPrompt || connection.notes) && (
+                                    <div className="text-muted" style={{ fontSize: '0.85rem', whiteSpace: 'pre-wrap' }}>
+                                        {[connection.systemPrompt, connection.notes].filter(Boolean).join('\n\n')}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                        {skillConnections?.length === 0 && <p className="text-muted">No skill-capable LLM connections configured yet.</p>}
                     </div>
                 </div>
             )}

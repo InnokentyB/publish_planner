@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
 import { format } from 'date-fns'
 import Markdown from 'markdown-to-jsx'
-import { api, presetsApi } from '../api'
+import { api, presetsApi, contentDictionaryApi } from '../api'
 import CommentSection from '../components/CommentSection'
 
 interface Post {
@@ -34,6 +34,18 @@ interface SocialChannel {
     name: string;
 }
 
+interface DictionaryValidationReport {
+    valid: boolean
+    score: number
+    findings: Array<{
+        severity: 'error' | 'warning' | 'info'
+        type: string
+        message: string
+        matched?: string
+        suggestion?: string
+    }>
+}
+
 import { useAuth } from '../context/AuthContext'
 
 export default function PostEditor() {
@@ -52,6 +64,7 @@ export default function PostEditor() {
     const [imageTimestamp, setImageTimestamp] = useState(Date.now())
     const [channelId, setChannelId] = useState<number | ''>('')
     const [aiPrompt, setAiPrompt] = useState('')
+    const [dictionaryReport, setDictionaryReport] = useState<DictionaryValidationReport | null>(null)
     const textareaRef = useRef<HTMLTextAreaElement>(null)
 
     // Auto-resize textarea
@@ -135,6 +148,14 @@ export default function PostEditor() {
         onError: (err: any) => alert('Failed to upload image: ' + err.message)
     })
 
+    const validateDictionary = useMutation({
+        mutationFn: (content: string) => contentDictionaryApi.validatePost(Number(id), content),
+        onSuccess: (result: DictionaryValidationReport) => {
+            setDictionaryReport(result)
+        },
+        onError: (err: any) => alert('Failed to validate content: ' + err.message)
+    })
+
     useEffect(() => {
         const handlePaste = (e: ClipboardEvent) => {
             const items = e.clipboardData?.items;
@@ -210,6 +231,12 @@ export default function PostEditor() {
                             {post.status}
                         </span>
                         <div className="h-4 w-[1px] bg-outline-variant/20 mx-2"></div>
+                        <button
+                            onClick={() => validateDictionary.mutate(text)}
+                            className="text-xs font-black text-on-surface-variant hover:text-primary"
+                        >
+                            {validateDictionary.isPending ? 'CHECKING...' : 'CHECK DICTIONARY'}
+                        </button>
                         <button onClick={handleSave} className="text-xs font-black text-primary hover:opacity-80">SAVE DRAFT</button>
                         <button 
                             onClick={handleApprove}
@@ -253,6 +280,42 @@ export default function PostEditor() {
                                 </div>
                             )}
                         </div>
+
+                        {dictionaryReport && (
+                            <div className="rounded-2xl border border-outline-variant/10 bg-white p-5 shadow-sm">
+                                <div className="flex items-center justify-between mb-3">
+                                    <div>
+                                        <div className="text-[10px] font-black uppercase tracking-widest text-primary/50">Dictionary Check</div>
+                                        <div className="text-lg font-black text-on-surface">
+                                            {dictionaryReport.valid ? 'Looks consistent' : 'Needs cleanup'}
+                                        </div>
+                                    </div>
+                                    <div className="text-sm font-black text-on-surface-variant">Score: {dictionaryReport.score}</div>
+                                </div>
+
+                                {dictionaryReport.findings.length === 0 ? (
+                                    <div className="text-sm text-on-surface-variant">No issues found against the current project dictionary.</div>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {dictionaryReport.findings.map((finding, index) => (
+                                            <div key={`${finding.type}-${index}`} className="p-3 rounded-xl bg-surface-container-low">
+                                                <div className="text-[10px] font-black uppercase tracking-widest text-on-surface-variant/60 mb-1">
+                                                    {finding.severity} • {finding.type}
+                                                </div>
+                                                <div className="text-sm text-on-surface">{finding.message}</div>
+                                                {(finding.matched || finding.suggestion) && (
+                                                    <div className="text-xs text-on-surface-variant mt-1">
+                                                        {finding.matched ? `Matched: ${finding.matched}` : ''}
+                                                        {finding.matched && finding.suggestion ? ' • ' : ''}
+                                                        {finding.suggestion ? `Suggested: ${finding.suggestion}` : ''}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
 

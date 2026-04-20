@@ -118,6 +118,17 @@ export const keysApi = {
     delete: (id: number) => api.delete(`/api/settings/keys/${id}`)
 };
 
+export const skillConnectionsApi = {
+    getAll: () => api.get('/api/settings/skill-connections'),
+    saveAll: (connections: any[]) => api.put('/api/settings/skill-connections', { connections })
+};
+
+export const contentDictionaryApi = {
+    get: () => api.get('/api/settings/content-dictionary'),
+    save: (yaml: string) => api.put('/api/settings/content-dictionary', { yaml }),
+    validatePost: (postId: number, text: string) => api.post(`/api/posts/${postId}/validate-dictionary`, { text })
+};
+
 export const modelsApi = {
     fetch: (params: { provider?: string; keyId?: string; key?: string }) => {
         const query = new URLSearchParams(params as any).toString();
@@ -127,6 +138,7 @@ export const modelsApi = {
 
 export const projectsApi = {
     create: (data: { name: string; slug?: string; description?: string }) => api.post('/api/projects', data),
+    importConfig: (config: string) => api.post('/api/projects/import', { config }),
     update: (id: number, data: { name: string; description: string }) => api.put(`/api/projects/${id}`, data),
     addMember: (id: number, email: string, role: string) => api.post(`/api/projects/${id}/members`, { email, role }),
     removeMember: (id: number, userId: number) => api.delete(`/api/projects/${id}/members/${userId}`)

@@ -59,17 +59,17 @@ class TelegramService {
             const projectId = await this.getProjectId(ctx);
             if (!projectId)
                 return;
-            // Alias for DALL-E
-            const prompt = await generator_service_1.default.getImagePromptTemplate(projectId, 'dalle');
-            await ctx.reply(`🎨 **Текущий промпт для DALL-E:**\n\n\`${prompt}\``, { parse_mode: 'Markdown' });
-            await ctx.reply('Чтобы изменить, используй: `/set_prompt_dalle ...`');
+            // Alias for GPT-Image
+            const prompt = await generator_service_1.default.getImagePromptTemplate(projectId, 'gpt-image');
+            await ctx.reply(`🎨 **Текущий промпт для GPT-Image:**\n\n\`${prompt}\``, { parse_mode: 'Markdown' });
+            await ctx.reply('Чтобы изменить, используй: `/set_prompt_gpt_image ...`');
         });
-        this.bot.command('prompt_dalle', async (ctx) => {
+        this.bot.command('prompt_gpt_image', async (ctx) => {
             const projectId = await this.getProjectId(ctx);
             if (!projectId)
                 return;
-            const prompt = await generator_service_1.default.getImagePromptTemplate(projectId, 'dalle');
-            await ctx.reply(`🎨 **Текущий промпт для DALL-E:**\n\n\`${prompt}\``, { parse_mode: 'Markdown' });
+            const prompt = await generator_service_1.default.getImagePromptTemplate(projectId, 'gpt-image');
+            await ctx.reply(`🎨 **Текущий промпт для GPT-Image:**\n\n\`${prompt}\``, { parse_mode: 'Markdown' });
         });
         this.bot.command('prompt_nano', async (ctx) => {
             const projectId = await this.getProjectId(ctx);
@@ -89,21 +89,21 @@ class TelegramService {
                 await ctx.reply('Укажите промпт.');
                 return;
             }
-            await generator_service_1.default.updateImagePromptTemplate(projectId, newPrompt, 'dalle');
-            await ctx.reply('✅ Промпт для DALL-E обновлен!');
+            await generator_service_1.default.updateImagePromptTemplate(projectId, newPrompt, 'gpt-image');
+            await ctx.reply('✅ Промпт для GPT-Image обновлен!');
         });
-        this.bot.command('set_prompt_dalle', async (ctx) => {
+        this.bot.command('set_prompt_gpt_image', async (ctx) => {
             const projectId = await this.getProjectId(ctx);
             if (!projectId)
                 return;
             // @ts-ignore
-            const newPrompt = ctx.message.text.replace('/set_prompt_dalle', '').trim();
+            const newPrompt = ctx.message.text.replace('/set_prompt_gpt_image', '').trim();
             if (!newPrompt) {
                 await ctx.reply('Пожалуйста, укажите текст промпта после команды.', { parse_mode: 'Markdown' });
                 return;
             }
-            await generator_service_1.default.updateImagePromptTemplate(projectId, newPrompt, 'dalle');
-            await ctx.reply('✅ Промпт для DALL-E обновлен!');
+            await generator_service_1.default.updateImagePromptTemplate(projectId, newPrompt, 'gpt-image');
+            await ctx.reply('✅ Промпт для GPT-Image обновлен!');
         });
         this.bot.command('set_prompt_nano', async (ctx) => {
             const projectId = await this.getProjectId(ctx);
@@ -338,11 +338,11 @@ class TelegramService {
             const weekId = parseInt(ctx.match[1], 10);
             await this.handleReviewPending(ctx, weekId);
         });
-        this.bot.action(/^gen_img_dalle_(\d+)$/, async (ctx) => {
+        this.bot.action(/^gen_img_gpt_image_(\d+)$/, async (ctx) => {
             await ctx.answerCbQuery();
             // @ts-ignore
             const postId = parseInt(ctx.match[1], 10);
-            await this.handleGenerateImage(ctx, postId, 'dalle');
+            await this.handleGenerateImage(ctx, postId, 'gpt-image');
         });
         this.bot.action(/^gen_img_nano_(\d+)$/, async (ctx) => {
             await ctx.answerCbQuery();
@@ -367,7 +367,7 @@ class TelegramService {
             await ctx.answerCbQuery();
             // @ts-ignore
             const postId = parseInt(ctx.match[1], 10);
-            await this.handleGenerateImage(ctx, postId, 'dalle');
+            await this.handleGenerateImage(ctx, postId, 'gpt-image');
         });
         this.bot.action(/^skip_image_(\d+)$/, async (ctx) => {
             await ctx.answerCbQuery();
@@ -430,12 +430,13 @@ class TelegramService {
                 console.log(`Generating post ${count}/2: ${post.topic}`);
                 const result = await generator_service_1.default.generatePostText(projectId, existingWeek.theme, post.topic, post.id);
                 // Construct full text with hashtags
+                // Strip any leading # from AI-returned tags to avoid ## double-prefix
                 let fullText = result.text;
                 if (result.tags && result.tags.length > 0) {
-                    fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '')}`).join(' ');
+                    fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '').replace(/^#+/, '')}`).join(' ');
                 }
                 else if (result.category) {
-                    fullText += `\n\n#${result.category.replace(/\s+/g, '')}`;
+                    fullText += `\n\n#${result.category.replace(/\s+/g, '').replace(/^#+/, '')}`;
                 }
                 await planner_service_1.default.updatePost(post.id, {
                     generated_text: fullText,
@@ -477,11 +478,11 @@ class TelegramService {
             await ctx.editMessageReplyMarkup({
                 inline_keyboard: [
                     [
-                        { text: '🎨 DALL-E', callback_data: `gen_img_dalle_${postId}` },
+                        { text: '🎨 GPT-Image', callback_data: `gen_img_gpt_image_${postId}` },
                         { text: '🍌 Nano Banana', callback_data: `gen_img_nano_${postId}` }
                     ],
                     [
-                        { text: '🧠 DALL-E -> Critic -> Nano', callback_data: `gen_img_full_chain_${postId}` }
+                        { text: '🧠 GPT-Image -> Critic -> Nano', callback_data: `gen_img_full_chain_${postId}` }
                     ],
                     [{ text: '🚫 Без картинки (В план)', callback_data: `skip_image_${postId}` }]
                 ]
@@ -517,7 +518,7 @@ class TelegramService {
             await ctx.deleteMessage();
         }
         catch (e) { }
-        const providerName = provider === 'nano' ? 'Nano Banana' : 'DALL-E';
+        const providerName = provider === 'nano' ? 'Nano Banana' : 'GPT-Image';
         const loadingMsg = await ctx.reply(`🎨 (${providerName}) Придумываю промпт и рисую... (это займет около 15-30 сек)`);
         const post = await prisma.post.findUnique({
             where: { id: postId, project_id: projectId }
@@ -563,8 +564,8 @@ class TelegramService {
                 caption: `Иллюстрация к посту "${post.topic}" (${providerName})`,
                 ...telegraf_1.Markup.inlineKeyboard([
                     [telegraf_1.Markup.button.callback('👍 Утвердить картинку', `approve_image_${postId}`)],
-                    [telegraf_1.Markup.button.callback('🧠 DALL-E -> Critic -> Nano', `gen_img_full_chain_${postId}`)],
-                    [telegraf_1.Markup.button.callback('🔄 Перерисовать (DALL-E)', `gen_img_dalle_${postId}`)],
+                    [telegraf_1.Markup.button.callback('🧠 GPT-Image -> Critic -> Nano', `gen_img_full_chain_${postId}`)],
+                    [telegraf_1.Markup.button.callback('🔄 Перерисовать (GPT-Image)', `gen_img_gpt_image_${postId}`)],
                     [telegraf_1.Markup.button.callback('🔄 Перерисовать (Nano)', `gen_img_nano_${postId}`)],
                     [telegraf_1.Markup.button.callback('🚫 Отмена (без картинки)', `skip_image_${postId}`)]
                 ])
@@ -577,7 +578,7 @@ class TelegramService {
             }
             catch (error) { }
             await ctx.reply(`Ошибка при генерации картинки (${providerName}): ${e.message}`, telegraf_1.Markup.inlineKeyboard([
-                [telegraf_1.Markup.button.callback('🔄 DALL-E', `gen_img_dalle_${postId}`)],
+                [telegraf_1.Markup.button.callback('🔄 GPT-Image', `gen_img_gpt_image_${postId}`)],
                 [telegraf_1.Markup.button.callback('🔄 Nano Banana', `gen_img_nano_${postId}`)],
                 [telegraf_1.Markup.button.callback('🧠 Полный цикл (Критик)', `gen_img_full_chain_${postId}`)],
                 [telegraf_1.Markup.button.callback('🚫 Без картинки', `skip_image_${postId}`)]
@@ -590,7 +591,7 @@ class TelegramService {
             await ctx.deleteMessage();
         }
         catch (e) { }
-        let loadingMsg = await ctx.reply(`🧠 (Этап 1/3) Анализирую тему и генерирую базовую картинку в DALL-E...`);
+        let loadingMsg = await ctx.reply(`🧠 (Этап 1/3) Анализирую тему и генерирую базовую картинку в GPT-Image...`);
         const post = await prisma.post.findUnique({
             where: { id: postId, project_id: projectId }
         });
@@ -605,16 +606,16 @@ class TelegramService {
             if (!process.env.GOOGLE_API_KEY) {
                 throw new Error('GOOGLE_API_KEY is not configured for Nano Banana.');
             }
-            // Step 1: Base prompt from Visual Architect chain and generate in DALL-E
+            // Step 1: Base prompt from Visual Architect chain and generate in GPT-Image
             const initialPrompt = await multi_agent_service_1.default.runImagePromptingChain(projectId, post.generated_text, post.topic);
             const dalleUrl = await generator_service_1.default.generateImage(initialPrompt);
-            // Show interim DALL-E result
+            // Show interim GPT-Image result
             try {
                 await ctx.telegram.deleteMessage(ctx.chat?.id, loadingMsg.message_id);
             }
             catch (e) { }
             loadingMsg = await ctx.replyWithPhoto(dalleUrl, {
-                caption: `🧠 (Этап 2/3) DALL-E завершил черновик. Критик анализирует его...`
+                caption: `🧠 (Этап 2/3) GPT-Image завершил черновик. Критик анализирует его...`
             });
             // Step 2: Critic analyzes the image
             const criticResult = await multi_agent_service_1.default.runImageCritic(projectId, post.generated_text, dalleUrl);
@@ -645,7 +646,7 @@ class TelegramService {
                 ...telegraf_1.Markup.inlineKeyboard([
                     [telegraf_1.Markup.button.callback('👍 Утвердить картинку', `approve_image_${postId}`)],
                     [telegraf_1.Markup.button.callback('🧠 Повторить весь цикл', `gen_img_full_chain_${postId}`)],
-                    [telegraf_1.Markup.button.callback('🔄 Перерисовать (DALL-E)', `gen_img_dalle_${postId}`)],
+                    [telegraf_1.Markup.button.callback('🔄 Перерисовать (GPT-Image)', `gen_img_gpt_image_${postId}`)],
                     [telegraf_1.Markup.button.callback('🔄 Перерисовать (Nano)', `gen_img_nano_${postId}`)],
                     [telegraf_1.Markup.button.callback('🚫 Отмена (без картинки)', `skip_image_${postId}`)]
                 ])
@@ -659,7 +660,7 @@ class TelegramService {
             catch (error) { }
             await ctx.reply(`Что будем делать дальше?`, telegraf_1.Markup.inlineKeyboard([
                 [telegraf_1.Markup.button.callback('🧠 Повторить', `gen_img_full_chain_${postId}`)],
-                [telegraf_1.Markup.button.callback('🎨 Сгенерировать DALL-E', `gen_img_dalle_${postId}`)],
+                [telegraf_1.Markup.button.callback('🎨 Сгенерировать GPT-Image', `gen_img_gpt_image_${postId}`)],
                 [telegraf_1.Markup.button.callback('🍌 Сгенерировать Nano', `gen_img_nano_${postId}`)],
                 [telegraf_1.Markup.button.callback('🚫 Без картинки', `skip_image_${postId}`)]
             ]));
@@ -679,12 +680,13 @@ class TelegramService {
             return;
         const result = await generator_service_1.default.generatePostText(projectId, post.week.theme, post.topic || '', post.id);
         // Construct full text with hashtags
+        // Strip any leading # from AI-returned tags to avoid ## double-prefix
         let fullText = result.text;
         if (result.tags && result.tags.length > 0) {
-            fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '')}`).join(' ');
+            fullText += '\n\n' + result.tags.map(t => `#${t.replace(/\s+/g, '').replace(/^#+/, '')}`).join(' ');
         }
         else if (result.category) {
-            fullText += `\n\n#${result.category.replace(/\s+/g, '')}`;
+            fullText += `\n\n#${result.category.replace(/\s+/g, '').replace(/^#+/, '')}`;
         }
         await planner_service_1.default.updatePost(postId, {
             generated_text: fullText,

@@ -35,7 +35,7 @@ class V2OrchestratorService {
      * Quarter Strategic Planner (QSP)
      * Generates a QuarterPlan and 3 MonthArcs
      */
-    async planQuarter(projectId, quarterStart, goalHint = "") {
+    async planQuarter(projectId, quarterStart, goalHint = "", plannedChannels) {
         console.log(`[QSP] Planning quarter for project ${projectId} starting ${quarterStart.toISOString()}`);
         // Fetch known FAE preferences
         const prefs = await prisma.projectSettings.findUnique({
@@ -57,16 +57,12 @@ ${strategyShifts}
       "arc_theme": "строка (тема месяца 1)",
       "arc_thesis": "строка (главная мысль / тема месяца: Awareness / Cases / Presale)"
     },
-    {
-      "arc_theme": "строка (тема месяца 2)",
-      "arc_thesis": "строка (главная мысль / тема месяца: Authority / Education / Soft Launch)"
-    },
-    {
-      "arc_theme": "строка (тема месяца 3)",
-      "arc_thesis": "строка (главная мысль / тема месяца: Conversion / Hard Launch / Sales)"
-    }
+    ...
   ]
-}`;
+}
+
+Учитывай, что в рамках этого квартала мы используем следующий набор каналов и их ролей:
+${plannedChannels ? JSON.stringify(plannedChannels, null, 2) : 'Стандартный набор (TG, VK)'}`;
         const quarterEnd = new Date(quarterStart);
         quarterEnd.setMonth(quarterEnd.getMonth() + 3);
         const userPrompt = `Создай план на квартал с ${quarterStart.toISOString().split('T')[0]} по ${quarterEnd.toISOString().split('T')[0]}.
@@ -87,7 +83,8 @@ ${strategyShifts}
                 quarter_end: quarterEnd,
                 strategic_goal: parsed.strategic_goal,
                 primary_pillar: parsed.primary_pillar,
-                monetization_focus: 'systemic step-by-step'
+                monetization_focus: 'systemic step-by-step',
+                planned_channels: plannedChannels || null
             }
         });
         // Create 3 Month Arcs and automatically spawn MTA for each
@@ -124,6 +121,7 @@ ${strategyShifts}
         });
         if (!arc)
             throw new Error("MonthArc not found");
+        const plannedChannels = arc.quarter_plan?.planned_channels || null;
         const systemPrompt = `Ты — Monthly Tactical Agent (MTA).
 Твоя задача — разбить фокус-тему месяца '${arc.arc_theme}' на 4 логичные недели.
 Каждая неделя должна иметь свою тему (theme) и главный тезис (thesis), которые поэтапно ведут аудиторию к главной мысли месяца '${arc.arc_thesis}'.
@@ -145,7 +143,10 @@ ${strategyShifts}
     },
     ... (ровно 4 недели)
   ]
-}`;
+}
+
+ВАЖНО: При формировании 'channel_mix' используй только те каналы, которые указаны в стратегии квартала (если указаны):
+${plannedChannels ? JSON.stringify(plannedChannels, null, 2) : 'Любые доступные (TG, VK, Habr, Video)'}`;
         const userPrompt = `Разбей месяц на 4 недели.`;
         const resultStr = await this.callLLM(systemPrompt, userPrompt);
         const parsed = JSON.parse(resultStr);
@@ -158,12 +159,17 @@ ${strategyShifts}
         for (let i = 0; i < 4; i++) {
             const wEnd = new Date(wStart);
             wEnd.setDate(wEnd.getDate() + 6);
-            const weekData = parsed.weeks[i] || parsed.weeks[0]; // fallback if LLM misses
-            // Note: MTA creates DRAFT week packages. SMO handles the actual narrative arc generation later.
-            // But we can directly call SMO here OR just create shallow drafts for SMO to pick up.
-            // To provide immediate value, we will directly call SMO logic (planWeek helper) using the MTA generated theme.
+            const weekData = parsed.weeks[i] || parsed.weeks[0];
             const smoothHint = `Стратегический фокус недели: ${weekData.week_theme}. Тезис: ${weekData.core_thesis}. Интент: ${weekData.intent_tag}. Месяц: ${arc.arc_theme}`;
             const newlyPlannedWeek = await this.planWeek(arc.project_id, new Date(wStart), new Date(wEnd), smoothHint, arc.id, weekData.channel_mix);
+            // AUTO-ARCHITECT: Immediately slice the week into Content Items (posts)
+            try {
+                console.log(`[MTA] Auto-architecting week ${newlyPlannedWeek.id}`);
+                await this.architectDistribution(newlyPlannedWeek.id, weekData.channel_mix);
+            }
+            catch (ae) {
+                console.error(`[MTA] Auto-architecture failed for week ${newlyPlannedWeek.id}`, ae);
+            }
             weekPackages.push(newlyPlannedWeek);
             // Advance next week
             wStart.setDate(wStart.getDate() + 7);
@@ -225,9 +231,17 @@ ${strategyShifts}
      */
     async architectDistribution(weekPackageId, overrideChannelsSpec) {
         console.log(`[DA] Architecting distribution for week package ${weekPackageId}`);
-        const wp = await prisma.weekPackage.findUnique({ where: { id: weekPackageId } });
+        const wp = await prisma.weekPackage.findUnique({
+            where: { id: weekPackageId },
+            include: {
+                month_arc: {
+                    include: { quarter_plan: true }
+                }
+            }
+        });
         if (!wp)
             throw new Error("WeekPackage not found");
+        const plannedChannels = wp.month_arc?.quarter_plan?.planned_channels || null;
         const systemPrompt = `Ты — Distribution Architect (DA).
 Твоя задача — разложить стратегию 'Week Package' на конкретные единицы контента (Content Items).
 Обязательно соблюдай запрошенную квоту по каналам и форматам, используя правильные 'layers' (азбука, аналитик, pro, community).
@@ -263,7 +277,10 @@ Narrative Arc: ${JSON.stringify(wp.narrative_arc)}
 Requirements (Target Channel Mix Quotas):
 ${JSON.stringify(activeChannelsSpec, null, 2)}
 
-Распредели контент логично по дням недели (day_offset 0-6), чтобы поддержать Narrative Arc.`;
+Strategic Channel Roles (from Quarter Strategy):
+${plannedChannels ? JSON.stringify(plannedChannels, null, 2) : 'No specific roles defined.'}
+
+Распредели контент логично по дням недели (day_offset 0-6), чтобы поддержать Narrative Arc и роли каналов.`;
         const resultStr = await this.callLLM(systemPrompt, userPrompt);
         let parsed = { items: [], cross_links_strategy: [] };
         try {
