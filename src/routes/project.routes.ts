@@ -6,6 +6,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import yaml from 'js-yaml';
 import multiAgentService from '../services/multi_agent.service';
 import contentDictionaryService from '../services/content_dictionary.service';
+import publicationPlanService from '../services/publication_plan.service';
 
 const connectionString = process.env.DATABASE_URL;
 const pool = new Pool({ connectionString });
@@ -443,6 +444,27 @@ export default async function projectRoutes(fastify: FastifyInstance) {
             };
         } catch (error: any) {
             return reply.code(400).send({ error: error.message || 'Failed to import project configuration' });
+        }
+    });
+
+    fastify.post('/api/projects/import-publication-plan', async (request, reply) => {
+        const user = (request as any).user;
+        const { planJson, planPath } = request.body as { planJson?: string; planPath?: string };
+
+        if (!planJson && !planPath) {
+            return reply.code(400).send({ error: 'planJson or planPath is required' });
+        }
+
+        try {
+            const result = await publicationPlanService.importPlan({
+                rawPlan: planJson,
+                planPath,
+                userId: user.id
+            });
+
+            return result;
+        } catch (error: any) {
+            return reply.code(400).send({ error: error.message || 'Failed to import publication plan' });
         }
     });
 

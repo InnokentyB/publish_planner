@@ -14,6 +14,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const navItems = [
     { label: 'Projects', path: '/orchestrator', icon: 'folder_open' },
+    { label: 'Publishing', path: '/publication-tasks', icon: 'publish' },
     { label: 'Guide', path: '/guide', icon: 'help_outline' },
     { label: 'Calendar', path: '/', icon: 'calendar_month' },
     { label: 'Settings', path: '/settings', icon: 'settings' },

@@ -107,9 +107,13 @@ const start = async () => {
         setInterval(async () => {
             try {
                 const count = await publisherService.publishDuePosts();
+                const preparedTasks = await publisherService.processPublicationTasks();
                 await publisherService.scheduleNativePosts();
                 if (count > 0) {
                     console.log(`[Scheduler] Published ${count} posts.`);
+                }
+                if (preparedTasks > 0) {
+                    console.log(`[Scheduler] Prepared ${preparedTasks} publication tasks.`);
                 }
             } catch (e) {
                 console.error('[Scheduler] Error publishing due posts:', e);
@@ -118,6 +122,7 @@ const start = async () => {
 
         // Run once immediately on startup
         publisherService.publishDuePosts().catch(e => console.error('[Scheduler] Initial check failed:', e));
+        publisherService.processPublicationTasks().catch(e => console.error('[Scheduler] Initial publication task check failed:', e));
 
         // Setup metrics collector schedule (run every 12 hours)
         const metricsService = require('./services/metrics.service').default;
