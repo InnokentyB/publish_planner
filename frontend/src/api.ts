@@ -139,7 +139,26 @@ export const modelsApi = {
 export const projectsApi = {
     create: (data: { name: string; slug?: string; description?: string }) => api.post('/api/projects', data),
     importConfig: (config: string) => api.post('/api/projects/import', { config }),
+    importPublicationPlan: (planJson: string) => api.post('/api/projects/import-publication-plan', { planJson }),
     update: (id: number, data: { name: string; description: string }) => api.put(`/api/projects/${id}`, data),
     addMember: (id: number, email: string, role: string) => api.post(`/api/projects/${id}/members`, { email, role }),
     removeMember: (id: number, userId: number) => api.delete(`/api/projects/${id}/members/${userId}`)
+};
+
+export const publicationTasksApi = {
+    list: (params?: { status?: string; manualOnly?: boolean }) => {
+        const query = new URLSearchParams();
+        if (params?.status) query.set('status', params.status);
+        if (params?.manualOnly) query.set('manualOnly', 'true');
+        const suffix = query.toString() ? `?${query.toString()}` : '';
+        return api.get(`/api/publication-tasks${suffix}`);
+    },
+    get: (id: number) => api.get(`/api/publication-tasks/${id}`),
+    prepareHandoff: (id: number) => api.post(`/api/publication-tasks/${id}/prepare-handoff`),
+    confirmPublication: (id: number, data: { publishedLink: string; note?: string }) =>
+        api.post(`/api/publication-tasks/${id}/confirm-publication`, data),
+    recordMetrics: (id: number, metrics: Record<string, any>) =>
+        api.post(`/api/publication-tasks/${id}/record-metrics`, { metrics }),
+    externalCommentAlert: (id: number, data: { text?: string; commentUrl?: string; author?: string }) =>
+        api.post(`/api/publication-tasks/${id}/external-comment-alert`, data)
 };

@@ -42,6 +42,10 @@ const adapter_pg_1 = require("@prisma/adapter-pg");
 const telegram_service_1 = __importDefault(require("./telegram.service"));
 const vk_service_1 = __importDefault(require("./vk.service"));
 const storage_service_1 = __importDefault(require("./storage.service"));
+const publication_plan_service_1 = __importDefault(require("./publication_plan.service"));
+const reddit_service_1 = __importDefault(require("./reddit.service"));
+const gsc_service_1 = __importDefault(require("./gsc.service"));
+const tilda_service_1 = __importDefault(require("./tilda.service"));
 const dotenv_1 = require("dotenv");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
@@ -74,6 +78,210 @@ function logToFile(level, message, data) {
         console.log(message, data || '');
 }
 class PublisherService {
+    async loadPublicationPlanContext(projectId) {
+        const settings = await prisma.projectSettings.findMany({
+            where: {
+                project_id: projectId,
+                key: { in: ['publication_plan_meta', 'publication_plan_assets', 'publication_plan_accounts'] }
+            }
+        });
+        const meta = settings.find((setting) => setting.key === 'publication_plan_meta')?.value;
+        const assets = settings.find((setting) => setting.key === 'publication_plan_assets')?.value;
+        const accounts = settings.find((setting) => setting.key === 'publication_plan_accounts')?.value;
+        if (!meta || !assets || !accounts) {
+            return null;
+        }
+        return {
+            meta: JSON.parse(meta),
+            assets: JSON.parse(assets),
+            accounts: JSON.parse(accounts),
+            actions: []
+        };
+    }
+    async processPublicationTasks() {
+        const now = new Date();
+        const dueTasks = await prisma.contentItem.findMany({
+            where: {
+                schedule_at: { lte: now },
+                status: { in: ['planned', 'ready_for_execution'] },
+                assets: { not: undefined }
+            },
+            include: { channel: true }
+        });
+        if (dueTasks.length === 0) {
+            return 0;
+        }
+        for (const task of dueTasks) {
+            try {
+                const depsSatisfied = await this.areTaskDependenciesSatisfied(task);
+                if (!depsSatisfied) {
+                    continue;
+                }
+                const plan = await this.loadPublicationPlanContext(task.project_id);
+                if (!plan) {
+                    continue;
+                }
+                const action = task.assets?.action;
+                plan.actions = action ? [action] : [];
+                const bundle = publication_plan_service_1.default.buildHandoffBundle(plan, task);
+                const channelConfig = task.channel?.config || {};
+                const executionMode = bundle.mode;
+                if (executionMode === 'manual') {
+                    await prisma.contentItem.update({
+                        where: { id: task.id },
+                        data: {
+                            status: 'awaiting_manual_publication',
+                            quality_report: {
+                                ...(task.quality_report || {}),
+                                handoff_bundle: bundle,
+                                prepared_at: new Date().toISOString()
+                            }
+                        }
+                    });
+                    logToFile('INFO', `[Publisher] Prepared publication task ${task.id} (${bundle.task.action_type}) for manual execution.`);
+                    continue;
+                }
+                const automatedResult = await this.executeAutomatedPublicationTask(task, bundle, channelConfig, plan);
+                const nextStatus = automatedResult.manualFallback ? 'awaiting_manual_publication' : 'published';
+                await prisma.contentItem.update({
+                    where: { id: task.id },
+                    data: {
+                        status: nextStatus,
+                        published_link: automatedResult.publishedLink || task.published_link,
+                        quality_report: {
+                            ...(task.quality_report || {}),
+                            handoff_bundle: bundle,
+                            execution_result: automatedResult,
+                            prepared_at: new Date().toISOString()
+                        },
+                        metrics: {
+                            ...(task.metrics || {}),
+                            last_execution_at: new Date().toISOString(),
+                            ...(automatedResult.metrics ? automatedResult.metrics : {})
+                        }
+                    }
+                });
+                logToFile('INFO', `[Publisher] Processed publication task ${task.id} (${bundle.task.action_type}) via automated adapter.`);
+            }
+            catch (error) {
+                logToFile('ERROR', `[Publisher] Failed to process publication task ${task.id}`, error);
+            }
+        }
+        return dueTasks.length;
+    }
+    async areTaskDependenciesSatisfied(task) {
+        const explicitActionDeps = (task.assets?.action?.dependencies || []);
+        if (explicitActionDeps.length > 0) {
+            const dependencyCount = await prisma.contentItem.count({
+                where: {
+                    project_id: task.project_id,
+                    OR: explicitActionDeps.map((dep) => ({
+                        metrics: {
+                            path: ['task_id'],
+                            equals: dep
+                        }
+                    })),
+                    status: 'published'
+                }
+            });
+            if (dependencyCount < explicitActionDeps.length) {
+                return false;
+            }
+        }
+        const linkedDeps = Array.isArray(task.cross_link_to) ? task.cross_link_to.filter((value) => typeof value === 'number') : [];
+        if (linkedDeps.length > 0) {
+            const linkedCount = await prisma.contentItem.count({
+                where: {
+                    id: { in: linkedDeps },
+                    project_id: task.project_id,
+                    status: 'published'
+                }
+            });
+            if (linkedCount < linkedDeps.length) {
+                return false;
+            }
+        }
+        return true;
+    }
+    async executeAutomatedPublicationTask(task, bundle, channelConfig, plan) {
+        const channelType = task.channel?.type;
+        const action = task.assets?.action || {};
+        if (channelType === 'reddit') {
+            const title = bundle.publication?.html_bundle?.[0]?.asset?.title
+                || action.parameters?.title
+                || task.title
+                || 'Reddit discussion';
+            const subreddit = action.parameters?.subreddit || action.parameters?.sr || action.assets?.subreddit || task.layer;
+            const text = bundle.publication?.body || '';
+            const result = await reddit_service_1.default.submitDiscussionPost(channelConfig.raw_account || channelConfig, {
+                subreddit,
+                title,
+                text
+            });
+            return {
+                adapter: 'reddit',
+                publishedLink: result.url,
+                metrics: {
+                    reddit_post_name: result.name || null
+                }
+            };
+        }
+        if (channelType === 'google_search_console') {
+            const targetUrlRef = task.assets?.gsc_action?.url_ref || task.assets?.target_url_ref;
+            const parentAction = task.assets?.parent_action_id
+                ? plan.actions.find((item) => item.id === task.assets?.parent_action_id)
+                : null;
+            const resolvedTargetUrl = targetUrlRef ? this.resolvePlanRef(plan, targetUrlRef) : null;
+            const fallbackLink = task.published_link || resolvedTargetUrl || parentAction?.parameters?.link_url_ref || null;
+            const inspection = fallbackLink ? await gsc_service_1.default.inspectUrl(channelConfig.raw_account || channelConfig, fallbackLink) : null;
+            const metrics = fallbackLink ? await gsc_service_1.default.queryPageMetrics(channelConfig.raw_account || channelConfig, fallbackLink) : null;
+            return {
+                adapter: 'gsc',
+                publishedLink: fallbackLink,
+                metrics: {
+                    gsc_inspection: inspection,
+                    gsc_page_metrics: metrics
+                }
+            };
+        }
+        if (channelType === 'tilda') {
+            const result = await tilda_service_1.default.executePublish(channelConfig.raw_account || channelConfig, {
+                task,
+                bundle
+            });
+            if (result.mode === 'manual_required') {
+                return {
+                    adapter: 'tilda',
+                    manualFallback: true,
+                    reason: result.reason
+                };
+            }
+            return {
+                adapter: 'tilda',
+                publishedLink: bundle.publication?.link_url || null,
+                metrics: {
+                    tilda_publish_response: result.response || null
+                }
+            };
+        }
+        return {
+            adapter: 'unknown',
+            manualFallback: true,
+            reason: `No automated executor configured for channel type ${channelType}`
+        };
+    }
+    resolvePlanRef(plan, ref) {
+        if (!ref)
+            return null;
+        const parts = ref.split('.');
+        let current = plan;
+        for (const part of parts) {
+            if (current == null)
+                return null;
+            current = current[part];
+        }
+        return current ?? null;
+    }
     async publishDuePosts() {
         const now = new Date();
         const duePosts = await prisma.post.findMany({

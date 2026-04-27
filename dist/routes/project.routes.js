@@ -11,6 +11,7 @@ const adapter_pg_1 = require("@prisma/adapter-pg");
 const js_yaml_1 = __importDefault(require("js-yaml"));
 const multi_agent_service_1 = __importDefault(require("../services/multi_agent.service"));
 const content_dictionary_service_1 = __importDefault(require("../services/content_dictionary.service"));
+const publication_plan_service_1 = __importDefault(require("../services/publication_plan.service"));
 const connectionString = process.env.DATABASE_URL;
 const pool = new pg_1.Pool({ connectionString });
 const adapter = new adapter_pg_1.PrismaPg(pool);
@@ -357,6 +358,24 @@ async function projectRoutes(fastify) {
         }
         catch (error) {
             return reply.code(400).send({ error: error.message || 'Failed to import project configuration' });
+        }
+    });
+    fastify.post('/api/projects/import-publication-plan', async (request, reply) => {
+        const user = request.user;
+        const { planJson, planPath } = request.body;
+        if (!planJson && !planPath) {
+            return reply.code(400).send({ error: 'planJson or planPath is required' });
+        }
+        try {
+            const result = await publication_plan_service_1.default.importPlan({
+                rawPlan: planJson,
+                planPath,
+                userId: user.id
+            });
+            return result;
+        }
+        catch (error) {
+            return reply.code(400).send({ error: error.message || 'Failed to import publication plan' });
         }
     });
     // Update project settings

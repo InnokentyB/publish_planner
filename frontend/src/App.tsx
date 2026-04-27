@@ -10,6 +10,7 @@ import Register from './pages/Register'
 import V2Dashboard from './pages/V2Dashboard'
 import V2WeekDetail from './pages/V2WeekDetail'
 import Guide from './pages/Guide'
+import PublicationTasks from './pages/PublicationTasks'
 import './index.css'
 
 import Layout from './components/Layout'
@@ -43,6 +44,7 @@ function AppContent() {
         <Route path="/posts/:id" element={<PostEditor />} />
 
         <Route path="/settings" element={<Settings />} />
+        <Route path="/publication-tasks" element={<PublicationTasks />} />
         <Route path="/guide" element={<Guide />} />
         <Route path="*" element={<Navigate to="/orchestrator" />} />
       </Routes>

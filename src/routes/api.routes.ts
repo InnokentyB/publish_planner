@@ -18,6 +18,31 @@ import authService from '../services/auth.service';
 import commentService from '../services/comment.service';
 import storageService from '../services/storage.service';
 import contentDictionaryService from '../services/content_dictionary.service';
+import publicationPlanService from '../services/publication_plan.service';
+
+async function loadPublicationPlanContext(projectId: number) {
+    const settings = await prisma.projectSettings.findMany({
+        where: {
+            project_id: projectId,
+            key: { in: ['publication_plan_meta', 'publication_plan_assets', 'publication_plan_accounts'] }
+        }
+    });
+
+    const meta = settings.find((setting) => setting.key === 'publication_plan_meta')?.value;
+    const assets = settings.find((setting) => setting.key === 'publication_plan_assets')?.value;
+    const accounts = settings.find((setting) => setting.key === 'publication_plan_accounts')?.value;
+
+    if (!meta || !assets || !accounts) {
+        return null;
+    }
+
+    return {
+        meta: JSON.parse(meta),
+        assets: JSON.parse(assets),
+        accounts: JSON.parse(accounts),
+        actions: [] as any[]
+    };
+}
 
 export default async function apiRoutes(fastify: FastifyInstance) {
     // Auth and Project context middleware
@@ -568,6 +593,196 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         );
 
         return report;
+    });
+
+    fastify.get('/api/publication-tasks', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { status, manualOnly } = request.query as { status?: string; manualOnly?: string };
+
+        const items = await prisma.contentItem.findMany({
+            where: {
+                project_id: projectId,
+                assets: { not: undefined },
+                ...(status ? { status } : {})
+            },
+            include: { channel: true },
+            orderBy: { schedule_at: 'asc' }
+        });
+
+        const filtered = manualOnly === 'true'
+            ? items.filter((item) => (item.quality_report as any)?.execution_mode === 'manual')
+            : items;
+
+        return filtered;
+    });
+
+    fastify.get('/api/publication-tasks/:id', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { id } = request.params as { id: string };
+        const item = await prisma.contentItem.findFirst({
+            where: { id: parseInt(id), project_id: projectId },
+            include: { channel: true }
+        });
+
+        if (!item) {
+            return reply.code(404).send({ error: 'Publication task not found' });
+        }
+
+        return item;
+    });
+
+    fastify.post('/api/publication-tasks/:id/prepare-handoff', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { id } = request.params as { id: string };
+        const item = await prisma.contentItem.findFirst({
+            where: { id: parseInt(id), project_id: projectId },
+            include: { channel: true }
+        });
+
+        if (!item) {
+            return reply.code(404).send({ error: 'Publication task not found' });
+        }
+
+        const plan = await loadPublicationPlanContext(projectId);
+        if (!plan) {
+            return reply.code(400).send({ error: 'Project has no imported publication plan context' });
+        }
+
+        const action = (item.assets as any)?.action;
+        plan.actions = action ? [action] : [];
+        const bundle = publicationPlanService.buildHandoffBundle(plan as any, item);
+
+        const updated = await prisma.contentItem.update({
+            where: { id: item.id },
+            data: {
+                status: bundle.mode === 'manual' ? 'awaiting_manual_publication' : 'ready_for_execution',
+                quality_report: {
+                    ...((item.quality_report as any) || {}),
+                    handoff_bundle: bundle,
+                    prepared_at: new Date().toISOString()
+                } as any
+            }
+        });
+
+        return {
+            item: updated,
+            bundle
+        };
+    });
+
+    fastify.post('/api/publication-tasks/:id/confirm-publication', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { id } = request.params as { id: string };
+        const { publishedLink, note } = request.body as { publishedLink?: string; note?: string };
+
+        if (!publishedLink) {
+            return reply.code(400).send({ error: 'publishedLink is required' });
+        }
+
+        const item = await prisma.contentItem.findFirst({
+            where: { id: parseInt(id), project_id: projectId }
+        });
+
+        if (!item) {
+            return reply.code(404).send({ error: 'Publication task not found' });
+        }
+
+        const monitoring = (item.metrics as any)?.monitoring || {};
+        const updated = await prisma.contentItem.update({
+            where: { id: item.id },
+            data: {
+                status: 'published',
+                published_link: publishedLink,
+                metrics: {
+                    ...((item.metrics as any) || {}),
+                    manual_confirmation_at: new Date().toISOString(),
+                    monitoring: {
+                        ...monitoring,
+                        awaiting_analytics: true,
+                        awaiting_comment_alerts: monitoring.needs_comment_monitoring === true
+                    }
+                } as any,
+                quality_report: {
+                    ...((item.quality_report as any) || {}),
+                    manual_publication_note: note || null
+                } as any
+            }
+        });
+
+        return updated;
+    });
+
+    fastify.post('/api/publication-tasks/:id/record-metrics', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { id } = request.params as { id: string };
+        const { metrics } = request.body as { metrics?: Record<string, any> };
+
+        const item = await prisma.contentItem.findFirst({
+            where: { id: parseInt(id), project_id: projectId }
+        });
+
+        if (!item) {
+            return reply.code(404).send({ error: 'Publication task not found' });
+        }
+
+        const updated = await prisma.contentItem.update({
+            where: { id: item.id },
+            data: {
+                metrics: {
+                    ...((item.metrics as any) || {}),
+                    collected_metrics: metrics || {},
+                    metrics_updated_at: new Date().toISOString()
+                } as any
+            }
+        });
+
+        return updated;
+    });
+
+    fastify.post('/api/publication-tasks/:id/external-comment-alert', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { id } = request.params as { id: string };
+        const { text, commentUrl, author } = request.body as { text?: string; commentUrl?: string; author?: string };
+
+        const item = await prisma.contentItem.findFirst({
+            where: { id: parseInt(id), project_id: projectId }
+        });
+
+        if (!item) {
+            return reply.code(404).send({ error: 'Publication task not found' });
+        }
+
+        const composed = [
+            author ? `Author: ${author}` : null,
+            text ? `Comment: ${text}` : null,
+            commentUrl ? `URL: ${commentUrl}` : null
+        ].filter(Boolean).join('\n');
+
+        const comment = await commentService.createComment(projectId, 'content_item', item.id, composed || 'External comment alert received', 'assistant');
+
+        await prisma.contentItem.update({
+            where: { id: item.id },
+            data: {
+                metrics: {
+                    ...((item.metrics as any) || {}),
+                    last_comment_alert_at: new Date().toISOString()
+                } as any
+            }
+        });
+
+        return comment;
     });
 
     // Settings
