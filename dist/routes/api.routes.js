@@ -22,6 +22,7 @@ const comment_service_1 = __importDefault(require("../services/comment.service")
 const storage_service_1 = __importDefault(require("../services/storage.service"));
 const content_dictionary_service_1 = __importDefault(require("../services/content_dictionary.service"));
 const publication_plan_service_1 = __importDefault(require("../services/publication_plan.service"));
+const metrics_service_1 = __importDefault(require("../services/metrics.service"));
 async function loadPublicationPlanContext(projectId) {
     const settings = await prisma.projectSettings.findMany({
         where: {
@@ -650,6 +651,17 @@ async function apiRoutes(fastify) {
             }
         });
         return updated;
+    });
+    fastify.post('/api/publication-tasks/:id/collect-metrics', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const { id } = request.params;
+        const result = await metrics_service_1.default.collectMetricsForContentItem(parseInt(id), projectId);
+        if (!result.found) {
+            return reply.code(404).send({ error: 'Publication task not found' });
+        }
+        return result;
     });
     fastify.post('/api/publication-tasks/:id/external-comment-alert', async (request, reply) => {
         const projectId = request.projectId;

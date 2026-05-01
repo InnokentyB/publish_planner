@@ -19,6 +19,7 @@ import commentService from '../services/comment.service';
 import storageService from '../services/storage.service';
 import contentDictionaryService from '../services/content_dictionary.service';
 import publicationPlanService from '../services/publication_plan.service';
+import metricsService from '../services/metrics.service';
 
 async function loadPublicationPlanContext(projectId: number) {
     const settings = await prisma.projectSettings.findMany({
@@ -747,6 +748,20 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         });
 
         return updated;
+    });
+
+    fastify.post('/api/publication-tasks/:id/collect-metrics', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { id } = request.params as { id: string };
+        const result = await metricsService.collectMetricsForContentItem(parseInt(id), projectId);
+
+        if (!result.found) {
+            return reply.code(404).send({ error: 'Publication task not found' });
+        }
+
+        return result;
     });
 
     fastify.post('/api/publication-tasks/:id/external-comment-alert', async (request, reply) => {

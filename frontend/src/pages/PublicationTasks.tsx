@@ -79,6 +79,8 @@ export default function PublicationTasks() {
     const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null)
     const [planJson, setPlanJson] = useState(PUBLICATION_PLAN_TEMPLATE)
     const [planMessage, setPlanMessage] = useState<string | null>(null)
+    const [taskMessage, setTaskMessage] = useState<string | null>(null)
+    const [showPlanModal, setShowPlanModal] = useState(false)
 
     const [publishedLink, setPublishedLink] = useState('')
     const [publicationNote, setPublicationNote] = useState('')
@@ -125,6 +127,7 @@ export default function PublicationTasks() {
         setCommentAuthor('')
         setCommentUrl('')
         setCommentText('')
+        setTaskMessage(null)
     }, [selectedTask?.id])
 
     const refreshTasks = () => {
@@ -161,7 +164,10 @@ export default function PublicationTasks() {
 
     const prepareHandoff = useMutation({
         mutationFn: (taskId: number) => publicationTasksApi.prepareHandoff(taskId),
-        onSuccess: () => refreshTasks()
+        onSuccess: () => {
+            setTaskMessage('Handoff bundle prepared.')
+            refreshTasks()
+        }
     })
 
     const confirmPublication = useMutation({
@@ -172,7 +178,23 @@ export default function PublicationTasks() {
                 note: publicationNote || undefined
             })
         },
-        onSuccess: () => refreshTasks()
+        onSuccess: () => {
+            setTaskMessage('Publication confirmed. You can now fetch metrics from the channel or save them manually.')
+            refreshTasks()
+        }
+    })
+
+    const collectMetrics = useMutation({
+        mutationFn: () => {
+            if (!selectedTaskId) throw new Error('No task selected')
+            return publicationTasksApi.collectMetrics(selectedTaskId)
+        },
+        onSuccess: (result: any) => {
+            setTaskMessage(result?.updated
+                ? `Metrics fetched from channel${result?.reason ? `. ${result.reason}` : '.'}`
+                : (result?.reason || 'Metrics were not updated.'))
+            refreshTasks()
+        }
     })
 
     const recordMetrics = useMutation({
@@ -180,7 +202,10 @@ export default function PublicationTasks() {
             if (!selectedTaskId) throw new Error('No task selected')
             return publicationTasksApi.recordMetrics(selectedTaskId, JSON.parse(metricsJson))
         },
-        onSuccess: () => refreshTasks()
+        onSuccess: () => {
+            setTaskMessage('Metrics snapshot saved manually.')
+            refreshTasks()
+        }
     })
 
     const sendCommentAlert = useMutation({
@@ -196,6 +221,7 @@ export default function PublicationTasks() {
             setCommentAuthor('')
             setCommentUrl('')
             setCommentText('')
+            setTaskMessage('External comment alert saved.')
             refreshTasks()
         }
     })
@@ -203,72 +229,34 @@ export default function PublicationTasks() {
     const activeTask = selectedTask || selectedFromList
     const handoffBundle = activeTask?.quality_report?.handoff_bundle as JsonRecord | undefined
     const executionMode = handoffBundle?.mode || activeTask?.quality_report?.execution_mode || 'manual'
+    const isTaskOverdue = !!activeTask?.schedule_at
+        && ['planned', 'ready_for_execution', 'awaiting_manual_publication'].includes(activeTask.status)
+        && new Date(activeTask.schedule_at).getTime() < Date.now()
 
     return (
         <div className="flex-1 w-full p-8 lg:p-10 space-y-8 overflow-y-auto">
-            <section className="grid grid-cols-1 xl:grid-cols-[1.15fr_1.85fr] gap-8">
-                <div className="bg-white rounded-[2rem] border border-outline-variant/10 p-7 shadow-sm space-y-5">
-                    <div className="flex items-start justify-between gap-4">
-                        <div>
-                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Plan Import</div>
-                            <h1 className="text-3xl font-headline font-black tracking-tight text-on-surface mt-2">Publishing Console</h1>
-                            <p className="text-sm text-on-surface-variant mt-2 leading-relaxed">
-                                Загрузи или обнови внешний `publication-plan.json`, а дальше веди ручные публикации, ссылки, аналитику и comment alerts в одном месте.
-                            </p>
-                        </div>
-                        <div className="w-14 h-14 rounded-2xl ai-gradient text-white flex items-center justify-center shadow-lg shadow-primary/20 shrink-0">
-                            <span className="material-symbols-outlined text-2xl">hub</span>
-                        </div>
-                    </div>
-
-                    <textarea
-                        value={planJson}
-                        onChange={(event) => setPlanJson(event.target.value)}
-                        rows={16}
-                        spellCheck={false}
-                        className="w-full bg-surface-container-low border-none rounded-[1.5rem] p-5 text-xs font-mono leading-6 focus:ring-4 focus:ring-primary/10 transition-all outline-none"
-                        placeholder="Paste publication-plan.json here"
-                    />
-
-                    {planMessage && (
-                        <div className="rounded-2xl bg-success/10 text-success px-4 py-3 text-sm font-medium">
-                            {planMessage}
-                        </div>
-                    )}
-
-                    {importPlan.error && (
-                        <div className="rounded-2xl bg-error-container/30 text-error px-4 py-3 text-sm font-medium">
-                            {(importPlan.error as Error).message}
-                        </div>
-                    )}
-
-                    <div className="flex flex-wrap gap-3 justify-between items-center">
-                        <div className="text-xs text-on-surface-variant">
-                            {currentProject ? `Current project: ${currentProject.name}` : 'Import will create or update the mapped project.'}
-                        </div>
-                        <button
-                            onClick={() => {
-                                setPlanMessage(null)
-                                importPlan.mutate()
-                            }}
-                            disabled={!planJson.trim() || importPlan.isPending}
-                            className="bg-primary text-white font-black text-sm px-6 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
-                        >
-                            {importPlan.isPending ? 'Syncing Plan...' : 'Sync Publication Plan'}
-                        </button>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-[380px_minmax(0,1fr)] gap-6 min-h-[720px]">
+            <section className="grid grid-cols-1 lg:grid-cols-[380px_minmax(0,1fr)] gap-6 min-h-[720px]">
                     <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden">
                         <div className="p-6 border-b border-outline-variant/10 space-y-4">
                             <div className="flex items-center justify-between gap-3">
                                 <div>
-                                    <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Queue</div>
+                                    <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Publishing Console</div>
                                     <h2 className="text-xl font-headline font-black text-on-surface mt-2">Publication Tasks</h2>
+                                    <p className="text-xs text-on-surface-variant mt-2">
+                                        {currentProject ? `Project: ${currentProject.name}` : 'Choose or import a publication plan project.'}
+                                    </p>
                                 </div>
-                                <div className="text-xs text-on-surface-variant">
-                                    {tasks?.length || 0} items
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <div className="text-xs text-on-surface-variant">
+                                        {tasks?.length || 0} items
+                                    </div>
+                                    <button
+                                        onClick={() => setShowPlanModal(true)}
+                                        className="w-11 h-11 rounded-2xl ai-gradient text-white flex items-center justify-center shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                                        title="Import or update publication plan"
+                                    >
+                                        <span className="material-symbols-outlined text-xl">hub</span>
+                                    </button>
                                 </div>
                             </div>
 
@@ -323,12 +311,23 @@ export default function PublicationTasks() {
                             {tasks?.map((task) => {
                                 const isSelected = task.id === activeTask?.id
                                 const mode = task.quality_report?.execution_mode || 'manual'
+                                const isOverdue = !!task.schedule_at
+                                    && ['planned', 'ready_for_execution', 'awaiting_manual_publication'].includes(task.status)
+                                    && new Date(task.schedule_at).getTime() < Date.now()
 
                                 return (
                                     <button
                                         key={task.id}
                                         onClick={() => setSelectedTaskId(task.id)}
-                                        className={`w-full text-left px-5 py-4 border-b border-outline-variant/10 transition-all ${isSelected ? 'bg-primary/5' : 'hover:bg-surface-container-lowest'}`}
+                                        className={`w-full text-left px-5 py-4 border-b transition-all ${
+                                            isOverdue
+                                                ? isSelected
+                                                    ? 'bg-error-container/35 border-error/20'
+                                                    : 'bg-error-container/20 border-error/10 hover:bg-error-container/30'
+                                                : isSelected
+                                                    ? 'bg-primary/5 border-outline-variant/10'
+                                                    : 'border-outline-variant/10 hover:bg-surface-container-lowest'
+                                        }`}
                                     >
                                         <div className="flex items-start justify-between gap-3">
                                             <div className="min-w-0">
@@ -341,6 +340,11 @@ export default function PublicationTasks() {
                                                 <div className="text-xs text-on-surface-variant mt-2">
                                                     {formatDate(task.schedule_at)}
                                                 </div>
+                                                {isOverdue && (
+                                                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-error mt-2">
+                                                        Overdue
+                                                    </div>
+                                                )}
                                             </div>
                                             <div className="flex flex-col items-end gap-2 shrink-0">
                                                 <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${statusTone(task.status)}`}>
@@ -387,6 +391,11 @@ export default function PublicationTasks() {
                                                 <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${statusTone(activeTask.status)}`}>
                                                     {activeTask.status}
                                                 </span>
+                                                {isTaskOverdue && (
+                                                    <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-error text-white">
+                                                        overdue
+                                                    </span>
+                                                )}
                                                 <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-surface-container-high text-on-surface-variant">
                                                     {executionMode}
                                                 </span>
@@ -410,17 +419,25 @@ export default function PublicationTasks() {
                                         </button>
                                     </div>
 
-                                    {(prepareHandoff.error || confirmPublication.error || recordMetrics.error || sendCommentAlert.error) && (
+                                    {taskMessage && (
+                                        <div className="mt-4 rounded-2xl bg-success/10 text-success px-4 py-3 text-sm font-medium">
+                                            {taskMessage}
+                                        </div>
+                                    )}
+
+                                    {(prepareHandoff.error || confirmPublication.error || collectMetrics.error || recordMetrics.error || sendCommentAlert.error) && (
                                         <div className="mt-4 rounded-2xl bg-error-container/30 text-error px-4 py-3 text-sm font-medium">
                                             {[
                                                 prepareHandoff.error,
                                                 confirmPublication.error,
+                                                collectMetrics.error,
                                                 recordMetrics.error,
                                                 sendCommentAlert.error
                                             ].find(Boolean) instanceof Error
                                                 ? (([
                                                     prepareHandoff.error,
                                                     confirmPublication.error,
+                                                    collectMetrics.error,
                                                     recordMetrics.error,
                                                     sendCommentAlert.error
                                                 ].find(Boolean) as Error).message)
@@ -546,6 +563,11 @@ export default function PublicationTasks() {
 
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
                                             <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Record Metrics</div>
+                                            <div className="rounded-2xl bg-white px-4 py-3 text-xs leading-6 text-on-surface-variant">
+                                                {activeTask.channel?.type === 'linkedin'
+                                                    ? 'For LinkedIn we can fetch likes and comments from the connected channel. View counts for personal posts are not available in the current API flow, so `views` may stay 0.'
+                                                    : 'Use channel fetch when the adapter supports analytics, or save a manual snapshot if the platform is manual-only.'}
+                                            </div>
                                             <textarea
                                                 value={metricsJson}
                                                 onChange={(event) => setMetricsJson(event.target.value)}
@@ -553,13 +575,22 @@ export default function PublicationTasks() {
                                                 spellCheck={false}
                                                 className="w-full bg-white border-none rounded-2xl p-4 text-xs font-mono leading-6 focus:ring-2 focus:ring-primary/20 outline-none"
                                             />
-                                            <button
-                                                onClick={() => recordMetrics.mutate()}
-                                                disabled={recordMetrics.isPending}
-                                                className="w-full bg-surface-container-highest text-on-surface font-black text-sm px-5 py-3 rounded-2xl hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50"
-                                            >
-                                                {recordMetrics.isPending ? 'Saving Metrics...' : 'Save Metrics Snapshot'}
-                                            </button>
+                                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                                                <button
+                                                    onClick={() => collectMetrics.mutate()}
+                                                    disabled={collectMetrics.isPending || !activeTask.published_link}
+                                                    className="w-full bg-primary text-white font-black text-sm px-5 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all disabled:opacity-50"
+                                                >
+                                                    {collectMetrics.isPending ? 'Fetching...' : 'Fetch From Channel'}
+                                                </button>
+                                                <button
+                                                    onClick={() => recordMetrics.mutate()}
+                                                    disabled={recordMetrics.isPending}
+                                                    className="w-full bg-surface-container-highest text-on-surface font-black text-sm px-5 py-3 rounded-2xl hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50"
+                                                >
+                                                    {recordMetrics.isPending ? 'Saving Metrics...' : 'Save Metrics Snapshot'}
+                                                </button>
+                                            </div>
                                         </div>
                                     </section>
 
@@ -600,8 +631,76 @@ export default function PublicationTasks() {
                             </div>
                         )}
                     </div>
-                </div>
             </section>
+
+            {showPlanModal && (
+                <div className="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm flex items-center justify-center p-6">
+                    <div className="w-full max-w-4xl bg-white rounded-[2rem] border border-outline-variant/10 shadow-2xl overflow-hidden">
+                        <div className="p-6 border-b border-outline-variant/10 flex items-start justify-between gap-4">
+                            <div>
+                                <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Plan Import</div>
+                                <h2 className="text-2xl font-headline font-black tracking-tight text-on-surface mt-2">Sync Publication Plan</h2>
+                                <p className="text-sm text-on-surface-variant mt-2 leading-relaxed">
+                                    Загрузи или обнови внешний `publication-plan.json`, не занимая место на основной рабочей странице.
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowPlanModal(false)}
+                                className="w-11 h-11 rounded-2xl bg-surface-container-low text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-all"
+                            >
+                                <span className="material-symbols-outlined">close</span>
+                            </button>
+                        </div>
+
+                        <div className="p-6 space-y-5">
+                            <textarea
+                                value={planJson}
+                                onChange={(event) => setPlanJson(event.target.value)}
+                                rows={18}
+                                spellCheck={false}
+                                className="w-full bg-surface-container-low border-none rounded-[1.5rem] p-5 text-xs font-mono leading-6 focus:ring-4 focus:ring-primary/10 transition-all outline-none"
+                                placeholder="Paste publication-plan.json here"
+                            />
+
+                            {planMessage && (
+                                <div className="rounded-2xl bg-success/10 text-success px-4 py-3 text-sm font-medium">
+                                    {planMessage}
+                                </div>
+                            )}
+
+                            {importPlan.error && (
+                                <div className="rounded-2xl bg-error-container/30 text-error px-4 py-3 text-sm font-medium">
+                                    {(importPlan.error as Error).message}
+                                </div>
+                            )}
+
+                            <div className="flex flex-wrap gap-3 justify-between items-center">
+                                <div className="text-xs text-on-surface-variant">
+                                    {currentProject ? `Current project: ${currentProject.name}` : 'Import will create or update the mapped project.'}
+                                </div>
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={() => setShowPlanModal(false)}
+                                        className="bg-surface-container-high text-on-surface font-black text-sm px-5 py-3 rounded-2xl hover:bg-surface-container-highest transition-all"
+                                    >
+                                        Close
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setPlanMessage(null)
+                                            importPlan.mutate()
+                                        }}
+                                        disabled={!planJson.trim() || importPlan.isPending}
+                                        className="bg-primary text-white font-black text-sm px-6 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
+                                    >
+                                        {importPlan.isPending ? 'Syncing Plan...' : 'Sync Publication Plan'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

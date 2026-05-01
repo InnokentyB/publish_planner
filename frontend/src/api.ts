@@ -157,6 +157,7 @@ export const publicationTasksApi = {
     prepareHandoff: (id: number) => api.post(`/api/publication-tasks/${id}/prepare-handoff`),
     confirmPublication: (id: number, data: { publishedLink: string; note?: string }) =>
         api.post(`/api/publication-tasks/${id}/confirm-publication`, data),
+    collectMetrics: (id: number) => api.post(`/api/publication-tasks/${id}/collect-metrics`),
     recordMetrics: (id: number, metrics: Record<string, any>) =>
         api.post(`/api/publication-tasks/${id}/record-metrics`, { metrics }),
     externalCommentAlert: (id: number, data: { text?: string; commentUrl?: string; author?: string }) =>

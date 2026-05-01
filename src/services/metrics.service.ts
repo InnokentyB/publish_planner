@@ -14,6 +14,122 @@ const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 export class MetricsService {
+    private async fetchPublicationTaskMetrics(item: any): Promise<{ metrics: any | null; reason?: string }> {
+        const channel = item.channel;
+        if (!channel) {
+            return { metrics: null, reason: 'Task has no connected channel.' };
+        }
+
+        if (!item.published_link && channel.type !== 'google_search_console') {
+            return { metrics: null, reason: 'Task has no published URL yet.' };
+        }
+
+        if (channel.type === 'reddit' && item.published_link) {
+            return { metrics: await redditService.getPostMetrics(item.published_link) };
+        }
+
+        if (channel.type === 'google_search_console') {
+            const config: any = channel.config;
+            const targetUrl = item.published_link || (item.metrics as any)?.target_url || null;
+            if (!targetUrl) {
+                return { metrics: null, reason: 'No target URL is available for GSC metrics.' };
+            }
+
+            const inspection = await gscService.inspectUrl(config.raw_account || config, targetUrl).catch(() => null);
+            const pageMetrics = await gscService.queryPageMetrics(config.raw_account || config, targetUrl).catch(() => null);
+            return {
+                metrics: {
+                    inspection,
+                    pageMetrics
+                }
+            };
+        }
+
+        if (channel.type === 'tilda') {
+            const gscChannel = item.project?.channels?.find((candidate: any) => candidate.type === 'google_search_console');
+            const targetUrl = item.published_link || (item.metrics as any)?.target_url || null;
+            if (!gscChannel || !targetUrl) {
+                return { metrics: null, reason: 'Tilda metrics require a linked Google Search Console channel and a live URL.' };
+            }
+
+            return {
+                metrics: await gscService.queryPageMetrics((gscChannel.config as any).raw_account || gscChannel.config, targetUrl).catch(() => null),
+                reason: 'Metrics were derived from the linked Google Search Console channel.'
+            };
+        }
+
+        if (channel.type === 'linkedin') {
+            const config: any = channel.config;
+            if (!config.linkedin_urn || !config.access_token || !item.published_link) {
+                return { metrics: null, reason: 'LinkedIn channel is missing `linkedin_urn`, `access_token`, or the post URL.' };
+            }
+
+            const linkedinMetrics = await linkedinService.getMetrics(config.linkedin_urn, config.access_token, item.published_link).catch(() => null);
+            if (!linkedinMetrics) {
+                return { metrics: null, reason: 'LinkedIn API did not return metrics for this post.' };
+            }
+
+            return {
+                metrics: {
+                    ...linkedinMetrics,
+                    views_supported: false,
+                    views_note: 'LinkedIn personal post views are not exposed by the current API integration; likes and comments are available.'
+                }
+            };
+        }
+
+        return { metrics: null, reason: `Automatic metrics are not implemented for channel type \`${channel.type}\`.` };
+    }
+
+    async collectMetricsForContentItem(itemId: number, projectId?: number) {
+        const item = await prisma.contentItem.findFirst({
+            where: {
+                id: itemId,
+                ...(projectId ? { project_id: projectId } : {})
+            },
+            include: {
+                channel: true,
+                project: {
+                    include: {
+                        channels: true
+                    }
+                }
+            }
+        });
+
+        if (!item) {
+            return { found: false, updated: false, reason: 'Publication task not found.' };
+        }
+
+        const result = await this.fetchPublicationTaskMetrics(item);
+        if (!result.metrics) {
+            return {
+                found: true,
+                updated: false,
+                reason: result.reason || 'No metrics were collected.',
+                metrics: (item.metrics as any)?.collected_metrics || null
+            };
+        }
+
+        const mergedMetrics = {
+            ...((item.metrics as any) || {}),
+            collected_metrics: result.metrics,
+            metrics_updated_at: new Date().toISOString()
+        } as any;
+
+        await prisma.contentItem.update({
+            where: { id: item.id },
+            data: { metrics: mergedMetrics }
+        });
+
+        return {
+            found: true,
+            updated: true,
+            reason: result.reason || null,
+            metrics: result.metrics
+        };
+    }
+
     /**
      * Loops through all recently published posts and collects metrics from APIs.
      * We'll query posts published in the last 30 days to avoid fetching very old posts continuously.
@@ -110,37 +226,9 @@ export class MetricsService {
             console.log(`[MetricsService] Found ${contentItems.length} publication tasks to fetch metrics for.`);
 
             for (const item of contentItems) {
-                const channel = item.channel;
-                if (!channel) continue;
-
-                let newMetrics: any = null;
-
                 try {
-                    if (channel.type === 'reddit' && item.published_link) {
-                        newMetrics = await redditService.getPostMetrics(item.published_link);
-                    } else if (channel.type === 'google_search_console') {
-                        const config: any = channel.config;
-                        const targetUrl = item.published_link || (item.metrics as any)?.target_url || null;
-                        if (targetUrl) {
-                            const inspection = await gscService.inspectUrl(config.raw_account || config, targetUrl).catch(() => null);
-                            const pageMetrics = await gscService.queryPageMetrics(config.raw_account || config, targetUrl).catch(() => null);
-                            newMetrics = {
-                                inspection,
-                                pageMetrics
-                            };
-                        }
-                    } else if (channel.type === 'tilda') {
-                        const gscChannel = item.project?.channels?.find((candidate: any) => candidate.type === 'google_search_console');
-                        const targetUrl = item.published_link || (item.metrics as any)?.target_url || null;
-                        if (gscChannel && targetUrl) {
-                            newMetrics = await gscService.queryPageMetrics((gscChannel.config as any).raw_account || gscChannel.config, targetUrl).catch(() => null);
-                        }
-                    } else if (channel.type === 'linkedin') {
-                        const config: any = channel.config;
-                        if (config.linkedin_urn && config.access_token && item.published_link) {
-                            newMetrics = await linkedinService.getMetrics(config.linkedin_urn, config.access_token, item.published_link).catch(() => null);
-                        }
-                    }
+                    const result = await this.fetchPublicationTaskMetrics(item);
+                    const newMetrics = result.metrics;
 
                     if (newMetrics) {
                         await prisma.contentItem.update({
@@ -154,7 +242,7 @@ export class MetricsService {
                             }
                         });
                         updateCount++;
-                        console.log(`[MetricsService] Updated metrics for publication task ${item.id} (${channel.type})`);
+                        console.log(`[MetricsService] Updated metrics for publication task ${item.id} (${item.channel?.type})`);
                     }
                 } catch (innerErr) {
                     console.error(`[MetricsService] Failed to fetch metrics for publication task ${item.id}:`, innerErr);
