@@ -2,6 +2,10 @@ import fs from 'fs';
 import path from 'path';
 
 class LinkedInService {
+    private getApiVersion(): string {
+        return process.env.LINKEDIN_API_VERSION || '202603';
+    }
+
     private getClientId(): string {
         return process.env.LINKEDIN_CLIENT_ID || '';
     }
@@ -24,10 +28,8 @@ class LinkedInService {
         const redirectUri = encodeURIComponent(this.getRedirectUri());
         const state = encodeURIComponent(JSON.stringify({ projectId }));
         
-        // r_liteprofile was replaced by profile or r_basicprofile, and w_member_social/w_organization_social
-        // Now it's typically "openid profile email w_member_social" for user accounts.
-        // Let's request what's needed for member social posting.
-        const scope = encodeURIComponent('w_member_social openid profile email');
+        // Request both publishing and member post analytics permissions.
+        const scope = encodeURIComponent('w_member_social r_member_postAnalytics openid profile email');
         
         return `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&state=${state}&scope=${scope}`;
     }
@@ -250,34 +252,108 @@ class LinkedInService {
         const shareUrn = match[1];
 
         try {
-            // LinkedIn provides socialActions to get likes/comments count for a share
-            const response = await fetch(`https://api.linkedin.com/v2/socialActions/${shareUrn}`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'X-Restli-Protocol-Version': '2.0.0'
-                }
+            const socialMetrics = await this.getSocialActionMetrics(token, shareUrn).catch((err) => {
+                console.warn(`[LinkedInService] socialActions metrics unavailable for ${shareUrn}`, err);
+                return null;
             });
+            const memberAnalytics = urn.startsWith('urn:li:person:')
+                ? await this.getMemberPostAnalytics(token, shareUrn).catch((err) => {
+                    console.warn(`[LinkedInService] memberCreatorPostAnalytics unavailable for ${shareUrn}`, err);
+                    return null;
+                })
+                : null;
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`LinkedIn socialActions failed: ${response.status} ${errorText}`);
+            if (!socialMetrics && !memberAnalytics) {
+                return null;
             }
 
-            const data: any = await response.json();
-            
             return {
-                likes: data.likesSummary?.totalLikes || 0,
-                comments: data.commentsSummary?.totalFirstDegreeComments || 0,
-                // Views are only available via organizational page statistics API (networkSizes, organizationalEntityShareStatistics)
-                // They aren't universally available for individual profiles via basic APIs.
-                views: 0, 
-                reposts: 0,
+                likes: socialMetrics?.likes ?? memberAnalytics?.reactions ?? 0,
+                comments: socialMetrics?.comments ?? memberAnalytics?.comments ?? 0,
+                views: memberAnalytics?.impressions ?? 0,
+                impressions: memberAnalytics?.impressions ?? 0,
+                members_reached: memberAnalytics?.membersReached ?? 0,
+                clicks: memberAnalytics?.linkClicks ?? 0,
+                reposts: memberAnalytics?.reshares ?? 0,
+                views_supported: Boolean(memberAnalytics),
+                analytics_scope_required: 'r_member_postAnalytics',
                 retrieved_at: new Date().toISOString()
             };
         } catch (err: any) {
             console.error(`[LinkedInService] Failed to get metrics for share ${shareUrn}:`, err);
             return null;
         }
+    }
+
+    private async getSocialActionMetrics(token: string, shareUrn: string): Promise<{ likes: number; comments: number }> {
+        const response = await fetch(`https://api.linkedin.com/v2/socialActions/${shareUrn}`, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'X-Restli-Protocol-Version': '2.0.0'
+            }
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`LinkedIn socialActions failed: ${response.status} ${errorText}`);
+        }
+
+        const data: any = await response.json();
+        return {
+            likes: data.likesSummary?.totalLikes || 0,
+            comments: data.commentsSummary?.totalFirstDegreeComments || 0
+        };
+    }
+
+    private async getMemberPostAnalytics(token: string, shareUrn: string): Promise<{
+        impressions: number;
+        membersReached: number;
+        reactions: number;
+        comments: number;
+        reshares: number;
+        linkClicks: number;
+    }> {
+        const metrics = await Promise.all([
+            this.fetchMemberAnalyticsMetric(token, shareUrn, 'IMPRESSION'),
+            this.fetchMemberAnalyticsMetric(token, shareUrn, 'MEMBERS_REACHED'),
+            this.fetchMemberAnalyticsMetric(token, shareUrn, 'REACTION'),
+            this.fetchMemberAnalyticsMetric(token, shareUrn, 'COMMENT'),
+            this.fetchMemberAnalyticsMetric(token, shareUrn, 'RESHARE'),
+            this.fetchMemberAnalyticsMetric(token, shareUrn, 'LINK_CLICKS')
+        ]);
+
+        return {
+            impressions: metrics[0],
+            membersReached: metrics[1],
+            reactions: metrics[2],
+            comments: metrics[3],
+            reshares: metrics[4],
+            linkClicks: metrics[5]
+        };
+    }
+
+    private async fetchMemberAnalyticsMetric(token: string, shareUrn: string, queryType: string): Promise<number> {
+        const entityType = shareUrn.includes(':ugcPost:') ? 'ugc' : 'share';
+        const encodedEntity = encodeURIComponent(`${entityType}:${shareUrn}`);
+        const url = `https://api.linkedin.com/rest/memberCreatorPostAnalytics?q=entity&entity=(${encodedEntity})&queryType=${encodeURIComponent(queryType)}&aggregation=TOTAL`;
+
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'X-Restli-Protocol-Version': '2.0.0',
+                'Linkedin-Version': this.getApiVersion(),
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`LinkedIn memberCreatorPostAnalytics failed for ${queryType}: ${response.status} ${errorText}`);
+        }
+
+        const data: any = await response.json();
+        const firstElement = Array.isArray(data?.elements) ? data.elements[0] : null;
+        return Number(firstElement?.count || 0);
     }
 }
 

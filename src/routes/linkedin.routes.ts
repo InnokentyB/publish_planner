@@ -54,18 +54,46 @@ export default async function linkedinRoutes(fastify: FastifyInstance) {
             // 2. Fetch User Profile to get URN and Name
             const { urn, name } = await linkedinService.getUserProfile(token);
 
-            // 3. Save as SocialChannel in the project
-            await prisma.socialChannel.create({
-                data: {
+            const existingChannel = await prisma.socialChannel.findFirst({
+                where: {
                     project_id: projectId,
                     type: 'linkedin',
-                    name: `LinkedIn: ${name}`,
                     config: {
-                        linkedin_urn: urn,
-                        access_token: token
+                        path: ['linkedin_urn'],
+                        equals: urn
                     }
                 }
             });
+
+            if (existingChannel) {
+                await prisma.socialChannel.update({
+                    where: { id: existingChannel.id },
+                    data: {
+                        name: `LinkedIn: ${name}`,
+                        config: {
+                            ...(existingChannel.config as any),
+                            linkedin_urn: urn,
+                            access_token: token,
+                            analytics_scope_enabled: true,
+                            last_reconnected_at: new Date().toISOString()
+                        } as any
+                    }
+                });
+            } else {
+                await prisma.socialChannel.create({
+                    data: {
+                        project_id: projectId,
+                        type: 'linkedin',
+                        name: `LinkedIn: ${name}`,
+                        config: {
+                            linkedin_urn: urn,
+                            access_token: token,
+                            analytics_scope_enabled: true,
+                            last_reconnected_at: new Date().toISOString()
+                        }
+                    }
+                });
+            }
 
             // Redirect back to frontend settings page on success
             reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/settings`);

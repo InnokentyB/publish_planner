@@ -767,14 +767,19 @@ export default function Settings() {
                                 <div style={{ gridColumn: '1 / -1' }}>
                                     <label>Connect to LinkedIn</label>
                                     <p className="text-muted" style={{ fontSize: '0.8rem', marginBottom: '1rem' }}>
-                                        To publish on LinkedIn, you must connect your account or company page securely via LinkedIn OAuth.
+                                        Connect LinkedIn via OAuth for publishing. After Community Management approval, reconnect once to issue a token with `r_member_postAnalytics`.
                                     </p>
+                                    {linkedinError && (
+                                        <div className="mb-2 p-2" style={{ background: 'rgba(255,0,0,0.08)', color: '#b42318', borderRadius: '8px', fontSize: '0.8rem' }}>
+                                            LinkedIn OAuth returned: {linkedinError}
+                                        </div>
+                                    )}
                                     <button
                                         className="btn-secondary"
                                         onClick={() => window.location.href = `${import.meta.env.VITE_API_URL || 'http://localhost:3003'}/api/auth/linkedin/connect?projectId=${currentProject?.id}`}
                                         style={{ width: '100%' }}
                                     >
-                                        🔗 Connect LinkedIn
+                                        🔗 Connect / Reconnect LinkedIn
                                     </button>
                                 </div>
                             )}
@@ -800,11 +805,23 @@ export default function Settings() {
                                     <div className="flex-center">
                                         <strong>{channel.name}</strong>
                                         <span className="badge" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>{channel.type}</span>
+                                        {channel.type === 'linkedin' && (
+                                            <span className="badge ml-1" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>
+                                                {channel.config?.analytics_scope_enabled ? 'analytics ready' : 'reconnect for analytics'}
+                                            </span>
+                                        )}
                                     </div>
                                     <div className="text-muted" style={{ fontSize: '0.8rem' }}>
                                         ID: {channel.config?.telegram_channel_id || channel.config?.vk_id || channel.config?.linkedin_urn}
                                         {channel.config?.channel_username && ` • @${channel.config.channel_username}`}
                                     </div>
+                                    {channel.type === 'linkedin' && (
+                                        <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
+                                            {channel.config?.analytics_scope_enabled
+                                                ? 'This channel token is ready for member post analytics.'
+                                                : 'Reconnect this channel after approval to enable LinkedIn post analytics.'}
+                                        </div>
+                                    )}
                                 </div>
                                 {/* <button className="btn-danger">Disconnect</button> */ /* Delete endpoint not yet implemented */}
                             </div>
@@ -1165,3 +1182,5 @@ export default function Settings() {
         </div>
     )
 }
+    const queryParams = new URLSearchParams(window.location.search)
+    const linkedinError = queryParams.get('error')

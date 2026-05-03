@@ -66,8 +66,10 @@ class MetricsService {
             return {
                 metrics: {
                     ...linkedinMetrics,
-                    views_supported: false,
-                    views_note: 'LinkedIn personal post views are not exposed by the current API integration; likes and comments are available.'
+                    reconnect_required: config.analytics_scope_enabled !== true,
+                    reconnect_note: config.analytics_scope_enabled === true
+                        ? null
+                        : 'Reconnect the LinkedIn channel after Community Management approval so the token includes `r_member_postAnalytics`.'
                 }
             };
         }

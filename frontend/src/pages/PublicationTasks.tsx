@@ -70,6 +70,20 @@ function taskChannel(task: PublicationTask) {
     return task.channel?.name || task.layer || task.type
 }
 
+function supportsAutoMetrics(task: PublicationTask | null | undefined) {
+    if (!task) return false
+
+    if (task.channel?.type === 'reddit' || task.channel?.type === 'linkedin' || task.channel?.type === 'google_search_console') {
+        return true
+    }
+
+    if (task.channel?.type === 'tilda') {
+        return Boolean(task.metrics?.monitoring?.needs_analytics_collection)
+    }
+
+    return false
+}
+
 export default function PublicationTasks() {
     const queryClient = useQueryClient()
     const { currentProject, projects, createProject, setCurrentProject } = useAuth()
@@ -232,6 +246,8 @@ export default function PublicationTasks() {
     const isTaskOverdue = !!activeTask?.schedule_at
         && ['planned', 'ready_for_execution', 'awaiting_manual_publication'].includes(activeTask.status)
         && new Date(activeTask.schedule_at).getTime() < Date.now()
+    const canPrepareHandoff = !!activeTask && !['published', 'skipped'].includes(activeTask.status)
+    const canFetchMetrics = !!activeTask?.published_link && supportsAutoMetrics(activeTask)
 
     return (
         <div className="flex-1 w-full p-8 lg:p-10 space-y-8 overflow-y-auto">
@@ -410,13 +426,15 @@ export default function PublicationTasks() {
                                             )}
                                         </div>
 
-                                        <button
-                                            onClick={() => prepareHandoff.mutate(activeTask.id)}
-                                            disabled={prepareHandoff.isPending || isLoadingTask}
-                                            className="bg-primary text-white font-black text-sm px-5 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
-                                        >
-                                            {prepareHandoff.isPending ? 'Preparing...' : 'Prepare Handoff'}
-                                        </button>
+                                        {canPrepareHandoff && (
+                                            <button
+                                                onClick={() => prepareHandoff.mutate(activeTask.id)}
+                                                disabled={prepareHandoff.isPending || isLoadingTask}
+                                                className="bg-primary text-white font-black text-sm px-5 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
+                                            >
+                                                {prepareHandoff.isPending ? 'Preparing...' : 'Prepare Handoff'}
+                                            </button>
+                                        )}
                                     </div>
 
                                     {taskMessage && (
@@ -565,7 +583,9 @@ export default function PublicationTasks() {
                                             <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Record Metrics</div>
                                             <div className="rounded-2xl bg-white px-4 py-3 text-xs leading-6 text-on-surface-variant">
                                                 {activeTask.channel?.type === 'linkedin'
-                                                    ? 'For LinkedIn we can fetch likes and comments from the connected channel. View counts for personal posts are not available in the current API flow, so `views` may stay 0.'
+                                                    ? 'For LinkedIn we fetch analytics from the connected channel. If the token was issued before the new analytics scope, reconnect LinkedIn first.'
+                                                    : activeTask.channel?.type === 'tilda'
+                                                        ? 'Tilda does not expose post analytics directly here. Automatic fetch works only when this project also has a linked Google Search Console property for the published URL.'
                                                     : 'Use channel fetch when the adapter supports analytics, or save a manual snapshot if the platform is manual-only.'}
                                             </div>
                                             <textarea
@@ -578,7 +598,7 @@ export default function PublicationTasks() {
                                             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
                                                 <button
                                                     onClick={() => collectMetrics.mutate()}
-                                                    disabled={collectMetrics.isPending || !activeTask.published_link}
+                                                    disabled={collectMetrics.isPending || !canFetchMetrics}
                                                     className="w-full bg-primary text-white font-black text-sm px-5 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all disabled:opacity-50"
                                                 >
                                                     {collectMetrics.isPending ? 'Fetching...' : 'Fetch From Channel'}

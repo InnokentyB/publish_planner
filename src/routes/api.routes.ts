@@ -650,9 +650,23 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             return reply.code(404).send({ error: 'Publication task not found' });
         }
 
+        const existingBundle = (item.quality_report as any)?.handoff_bundle;
+        if (existingBundle) {
+            return {
+                item,
+                bundle: existingBundle,
+                reused: true
+            };
+        }
+
         const plan = await loadPublicationPlanContext(projectId);
         if (!plan) {
-            return reply.code(400).send({ error: 'Project has no imported publication plan context' });
+            return reply.code(200).send({
+                item,
+                bundle: null,
+                reused: false,
+                warning: 'No imported publication plan context is available for this task.'
+            });
         }
 
         const action = (item.assets as any)?.action;
