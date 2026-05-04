@@ -614,7 +614,7 @@ async function apiRoutes(fastify) {
         if (!projectId)
             return reply.code(400).send({ error: 'Project ID required' });
         const { id } = request.params;
-        const { publishedLink, note } = request.body;
+        const { publishedLink, note, outcome } = request.body;
         if (!publishedLink) {
             return reply.code(400).send({ error: 'publishedLink is required' });
         }
@@ -625,6 +625,7 @@ async function apiRoutes(fastify) {
             return reply.code(404).send({ error: 'Publication task not found' });
         }
         const monitoring = item.metrics?.monitoring || {};
+        const publicationOutcome = outcome || 'published';
         const updated = await prisma.contentItem.update({
             where: { id: item.id },
             data: {
@@ -633,6 +634,7 @@ async function apiRoutes(fastify) {
                 metrics: {
                     ...(item.metrics || {}),
                     manual_confirmation_at: new Date().toISOString(),
+                    publication_outcome: publicationOutcome,
                     monitoring: {
                         ...monitoring,
                         awaiting_analytics: true,
@@ -641,7 +643,8 @@ async function apiRoutes(fastify) {
                 },
                 quality_report: {
                     ...(item.quality_report || {}),
-                    manual_publication_note: note || null
+                    manual_publication_note: note || null,
+                    publication_outcome: publicationOutcome
                 }
             }
         });

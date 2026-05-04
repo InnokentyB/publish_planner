@@ -25,7 +25,16 @@ export class MetricsService {
         }
 
         if (channel.type === 'reddit' && item.published_link) {
-            return { metrics: await redditService.getPostMetrics(item.published_link) };
+            const redditMetrics = await redditService.getPostMetrics(item.published_link);
+            return {
+                metrics: {
+                    ...redditMetrics,
+                    publication_outcome: (item.metrics as any)?.publication_outcome || (item.quality_report as any)?.publication_outcome || 'published'
+                },
+                reason: redditMetrics?.unavailable
+                    ? 'Reddit post URL was saved, but live metrics are unavailable for this link right now. The task remains confirmed.'
+                    : undefined
+            };
         }
 
         if (channel.type === 'google_search_console') {

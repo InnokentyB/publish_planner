@@ -77,7 +77,13 @@ class RedditService {
             }
         });
         if (!response.ok) {
-            throw new Error(`Reddit metrics fetch failed: ${response.status}`);
+            return {
+                permalink: postUrl,
+                unavailable: true,
+                fetch_status: response.status,
+                removed: response.status === 403 || response.status === 404,
+                retrieved_at: new Date().toISOString()
+            };
         }
         const data = await response.json();
         const post = data?.[0]?.data?.children?.[0]?.data;

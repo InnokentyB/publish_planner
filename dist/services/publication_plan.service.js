@@ -360,7 +360,9 @@ class PublicationPlanService {
             }
             const fullPath = asset.path ? path.join(pipelineRoot, asset.path) : null;
             let content = null;
+            let exists = false;
             if (fullPath && fs.existsSync(fullPath)) {
+                exists = true;
                 const rawContent = fs.readFileSync(fullPath, 'utf8');
                 content = asset.section_marker ? resolveSection(rawContent, asset.section_marker) : rawContent;
             }
@@ -368,6 +370,10 @@ class PublicationPlanService {
                 ref,
                 asset,
                 full_path: fullPath,
+                file_name: asset.path ? path.basename(asset.path) : null,
+                relative_path: asset.path || null,
+                section_marker: asset.section_marker || null,
+                exists,
                 content
             };
         });
@@ -393,6 +399,16 @@ class PublicationPlanService {
                 link_url: linkUrl,
                 visuals: resolvedAssets.filter((entry) => entry.asset?.visual_style || entry.asset?.gamma_source)
             },
+            resource_files: resolvedAssets.map((entry) => ({
+                ref: entry.ref,
+                type: entry.asset?.type || null,
+                file_name: entry.file_name || null,
+                relative_path: entry.relative_path || null,
+                full_path: entry.full_path || null,
+                section_marker: entry.section_marker || null,
+                exists: entry.exists === true,
+                content: entry.content || null
+            })),
             manual_checklist: publication_adapter_service_1.default.buildManualChecklist(action, {
                 linkUrl,
                 accountRef

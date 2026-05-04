@@ -26,7 +26,16 @@ class MetricsService {
             return { metrics: null, reason: 'Task has no published URL yet.' };
         }
         if (channel.type === 'reddit' && item.published_link) {
-            return { metrics: await reddit_service_1.default.getPostMetrics(item.published_link) };
+            const redditMetrics = await reddit_service_1.default.getPostMetrics(item.published_link);
+            return {
+                metrics: {
+                    ...redditMetrics,
+                    publication_outcome: item.metrics?.publication_outcome || item.quality_report?.publication_outcome || 'published'
+                },
+                reason: redditMetrics?.unavailable
+                    ? 'Reddit post URL was saved, but live metrics are unavailable for this link right now. The task remains confirmed.'
+                    : undefined
+            };
         }
         if (channel.type === 'google_search_console') {
             const config = channel.config;

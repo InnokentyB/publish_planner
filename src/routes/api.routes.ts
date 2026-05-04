@@ -702,7 +702,15 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
 
         const { id } = request.params as { id: string };
-        const { publishedLink, note } = request.body as { publishedLink?: string; note?: string };
+        const {
+            publishedLink,
+            note,
+            outcome
+        } = request.body as {
+            publishedLink?: string;
+            note?: string;
+            outcome?: 'published' | 'blocked' | 'removed' | 'restricted';
+        };
 
         if (!publishedLink) {
             return reply.code(400).send({ error: 'publishedLink is required' });
@@ -717,6 +725,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         }
 
         const monitoring = (item.metrics as any)?.monitoring || {};
+        const publicationOutcome = outcome || 'published';
         const updated = await prisma.contentItem.update({
             where: { id: item.id },
             data: {
@@ -725,6 +734,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
                 metrics: {
                     ...((item.metrics as any) || {}),
                     manual_confirmation_at: new Date().toISOString(),
+                    publication_outcome: publicationOutcome,
                     monitoring: {
                         ...monitoring,
                         awaiting_analytics: true,
@@ -733,7 +743,8 @@ export default async function apiRoutes(fastify: FastifyInstance) {
                 } as any,
                 quality_report: {
                     ...((item.quality_report as any) || {}),
-                    manual_publication_note: note || null
+                    manual_publication_note: note || null,
+                    publication_outcome: publicationOutcome
                 } as any
             }
         });

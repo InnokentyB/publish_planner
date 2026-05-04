@@ -26,6 +26,8 @@ interface PublicationTask {
     } | null
 }
 
+type PublicationOutcome = 'published' | 'blocked' | 'removed' | 'restricted'
+
 const PUBLICATION_PLAN_TEMPLATE = `{
   "meta": {
     "plan_id": "distribution-cycle-2026-04-24",
@@ -99,6 +101,7 @@ export default function PublicationTasks() {
 
     const [publishedLink, setPublishedLink] = useState('')
     const [publicationNote, setPublicationNote] = useState('')
+    const [publicationOutcome, setPublicationOutcome] = useState<PublicationOutcome>('published')
     const [metricsJson, setMetricsJson] = useState('{\n  "views": 0,\n  "clicks": 0,\n  "comments": 0\n}')
     const [commentAuthor, setCommentAuthor] = useState('')
     const [commentUrl, setCommentUrl] = useState('')
@@ -138,6 +141,7 @@ export default function PublicationTasks() {
     useEffect(() => {
         setPublishedLink(selectedTask?.published_link || '')
         setPublicationNote(selectedTask?.quality_report?.manual_publication_note || '')
+        setPublicationOutcome((selectedTask?.quality_report?.publication_outcome || selectedTask?.metrics?.publication_outcome || 'published') as PublicationOutcome)
         setMetricsJson(prettyJson(selectedTask?.metrics?.collected_metrics || { views: 0, clicks: 0, comments: 0 }))
         setCommentAuthor('')
         setCommentUrl('')
@@ -190,11 +194,14 @@ export default function PublicationTasks() {
             if (!selectedTaskId) throw new Error('No task selected')
             return publicationTasksApi.confirmPublication(selectedTaskId, {
                 publishedLink,
-                note: publicationNote || undefined
+                note: publicationNote || undefined,
+                outcome: publicationOutcome
             })
         },
         onSuccess: () => {
-            setTaskMessage('Publication confirmed. You can now fetch metrics from the channel or save them manually.')
+            setTaskMessage(publicationOutcome === 'published'
+                ? 'Publication confirmed. You can now fetch metrics from the channel or save them manually.'
+                : `Publication link saved with outcome: ${publicationOutcome}. The task stays confirmed even if the post is blocked or restricted.`)
             refreshTasks()
         }
     })
@@ -243,7 +250,14 @@ export default function PublicationTasks() {
 
     const activeTask = selectedTask || selectedFromList
     const handoffBundle = activeTask?.quality_report?.handoff_bundle as JsonRecord | undefined
+    const sourceFiles = (handoffBundle?.resource_files as JsonRecord[] | undefined)
+        || (activeTask?.assets?.resolved_assets as JsonRecord[] | undefined)
+        || []
+    const primarySourceContent = (handoffBundle?.resource_files as JsonRecord[] | undefined)?.find((entry) =>
+        typeof entry?.content === 'string' && entry.content.trim().length > 0
+    )?.content || ''
     const executionMode = handoffBundle?.mode || activeTask?.quality_report?.execution_mode || 'manual'
+    const activeOutcome = (activeTask?.quality_report?.publication_outcome || activeTask?.metrics?.publication_outcome || 'published') as PublicationOutcome
     const isTaskOverdue = !!activeTask?.schedule_at
         && ['planned', 'ready_for_execution', 'awaiting_manual_publication'].includes(activeTask.status)
         && new Date(activeTask.schedule_at).getTime() < Date.now()
@@ -420,6 +434,11 @@ export default function PublicationTasks() {
                                                 <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-surface-container-high text-on-surface-variant">
                                                     {formatDate(activeTask.schedule_at)}
                                                 </span>
+                                                {activeTask.published_link && activeOutcome !== 'published' && (
+                                                    <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-yellow-200 text-yellow-950">
+                                                        {activeOutcome}
+                                                    </span>
+                                                )}
                                             </div>
                                             {activeTask.brief && (
                                                 <p className="text-sm text-on-surface-variant max-w-3xl leading-relaxed">
@@ -475,6 +494,9 @@ export default function PublicationTasks() {
                                                 <div><span className="font-bold text-on-surface">Adapter:</span> {activeTask.channel?.type || activeTask.layer || 'n/a'}</div>
                                                 <div><span className="font-bold text-on-surface">Account:</span> {activeTask.channel?.name || activeTask.metrics?.account_ref || 'n/a'}</div>
                                                 <div><span className="font-bold text-on-surface">Published:</span> {activeTask.published_link ? 'yes' : 'no'}</div>
+                                                {activeTask.published_link && (
+                                                    <div><span className="font-bold text-on-surface">Outcome:</span> {activeOutcome}</div>
+                                                )}
                                             </div>
                                             {activeTask.published_link && (
                                                 <a
@@ -529,6 +551,57 @@ export default function PublicationTasks() {
                                         </div>
                                     </section>
 
+                                    <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                                        <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
+                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Source Files</div>
+                                            <div className="space-y-3">
+                                                {sourceFiles.length > 0 ? sourceFiles.map((entry, index) => {
+                                                    const fileName = entry.file_name || entry.asset?.path?.split('/').pop() || entry.ref || `asset-${index + 1}`
+                                                    const relativePath = entry.relative_path || entry.asset?.path || null
+                                                    const sectionMarker = entry.section_marker || entry.asset?.section_marker || null
+                                                    const exists = typeof entry.exists === 'boolean' ? entry.exists : null
+
+                                                    return (
+                                                        <div key={`${entry.ref || fileName}-${index}`} className="rounded-2xl bg-white px-4 py-3 text-sm space-y-1">
+                                                            <div className="font-bold text-on-surface">{fileName}</div>
+                                                            {relativePath && (
+                                                                <div className="text-xs text-on-surface-variant break-all">{relativePath}</div>
+                                                            )}
+                                                            {sectionMarker && (
+                                                                <div className="text-xs text-on-surface-variant">Section: {sectionMarker}</div>
+                                                            )}
+                                                            {exists === false && (
+                                                                <div className="text-xs font-bold text-error">File not found from pipeline root.</div>
+                                                            )}
+                                                        </div>
+                                                    )
+                                                }) : (
+                                                    <div className="rounded-2xl bg-white px-4 py-3 text-sm text-on-surface-variant">
+                                                        No resource files were attached to this task.
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Source Content</div>
+                                                {!handoffBundle && (
+                                                    <span className="text-xs text-on-surface-variant">Prepare handoff to load file content</span>
+                                                )}
+                                            </div>
+                                            <textarea
+                                                readOnly
+                                                value={primarySourceContent}
+                                                rows={14}
+                                                className="w-full bg-white border-none rounded-2xl p-4 text-sm leading-6 focus:outline-none resize-none"
+                                                placeholder={handoffBundle
+                                                    ? 'No readable source text was found in the linked resource files.'
+                                                    : 'Prepare handoff to pull text from the linked resource file or section marker.'}
+                                            />
+                                        </div>
+                                    </section>
+
                                     <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-3">
                                             <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Verification Rules</div>
@@ -558,6 +631,19 @@ export default function PublicationTasks() {
                                     <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
                                             <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Confirm Publication</div>
+                                            <div className="rounded-2xl bg-white px-4 py-3 text-xs leading-6 text-on-surface-variant">
+                                                Save the permalink even if the platform later blocks, removes, or restricts the post. For Reddit this keeps the task confirmed and lets us track whatever metrics remain available.
+                                            </div>
+                                            <select
+                                                value={publicationOutcome}
+                                                onChange={(event) => setPublicationOutcome(event.target.value as PublicationOutcome)}
+                                                className="w-full bg-white border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                                            >
+                                                <option value="published">Published normally</option>
+                                                <option value="blocked">Blocked but URL exists</option>
+                                                <option value="removed">Removed but URL exists</option>
+                                                <option value="restricted">Restricted / limited visibility</option>
+                                            </select>
                                             <input
                                                 type="url"
                                                 value={publishedLink}
