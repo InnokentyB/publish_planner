@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import prisma from '../db';
 import publicationAdapterService from './publication_adapter.service';
+import { mapActionStatus, resolveActionTitle } from './publication_runtime.helpers';
 
 type PublicationPlan = {
     meta: {
@@ -18,6 +19,9 @@ type PublicationPlan = {
     accounts: Record<string, any>;
     assets: Record<string, any>;
     actions: Array<any>;
+    ongoing_rules?: Array<any>;
+    measurement?: any;
+    dependencies_matrix_visualized?: Record<string, any>;
 };
 
 function slugify(value: string) {
@@ -174,6 +178,21 @@ class PublicationPlanService {
                     project_id: project.id,
                     key: 'publication_plan_accounts',
                     value: JSON.stringify(plan.accounts)
+                },
+                {
+                    project_id: project.id,
+                    key: 'publication_plan_ongoing_rules',
+                    value: JSON.stringify(plan.ongoing_rules || [])
+                },
+                {
+                    project_id: project.id,
+                    key: 'publication_plan_measurement',
+                    value: JSON.stringify(plan.measurement || {})
+                },
+                {
+                    project_id: project.id,
+                    key: 'publication_plan_dependencies_matrix',
+                    value: JSON.stringify(plan.dependencies_matrix_visualized || {})
                 }
             ];
 
@@ -237,6 +256,7 @@ class PublicationPlanService {
                 }));
                 const account = plan.accounts[action.account_ref] || {};
                 const executionMode = publicationAdapterService.inferExecutionMode(account, action);
+                const mappedStatus = mapActionStatus(action.status);
 
                 const createdItem = await tx.contentItem.create({
                     data: {
@@ -245,7 +265,7 @@ class PublicationPlanService {
                         channel_id: channelMap.get(action.account_ref) || null,
                         type: `${action.channel}:${action.action_type}`,
                         layer: action.channel,
-                        title: `${action.id} · ${action.action_type}`,
+                        title: resolveActionTitle(action),
                         brief: action.notes || action.human_review_reason || null,
                         key_points: resolvedAssets as any,
                         cta: action.parameters?.link_url_ref || null,
@@ -257,11 +277,7 @@ class PublicationPlanService {
                             asset_refs: action.asset_refs || [],
                             resolved_assets: resolvedAssets
                         } as any,
-                        status: action.status === 'completed'
-                            ? 'published'
-                            : action.status === 'skipped'
-                                ? 'skipped'
-                                : 'planned',
+                        status: mappedStatus,
                         schedule_at: schedule?.scheduled_at || null,
                         quality_report: {
                             execution_mode: executionMode,
@@ -269,11 +285,17 @@ class PublicationPlanService {
                             post_actions: action.post_actions || [],
                             human_review: action.human_review === true,
                             human_review_reason: action.human_review_reason || null,
-                            blocking_conditions: action.blocking_conditions || []
+                            blocking_conditions: action.blocking_conditions || [],
+                            display_name: action.display_name || null,
+                            deferred_reason: action.deferred_reason || null,
+                            blocked_by: action.blocked_by || [],
+                            reactivation_trigger: action.reactivation_trigger || null,
+                            target_cycle_after_unblock: action.target_cycle_after_unblock || null
                         } as any,
                         metrics: {
                             publication_plan_id: plan.meta.plan_id,
                             task_id: action.id,
+                            task_display_name: action.display_name || null,
                             timezone: schedule?.timezone || plan.meta.timezone_default || null,
                             account_ref: action.account_ref,
                             monitoring: publicationAdapterService.deriveMonitoringPlan(action)
@@ -296,10 +318,10 @@ class PublicationPlanService {
                             channel_id: gscChannel.id,
                             type: `google_search_console:${postAction.type}`,
                             layer: 'google_search_console',
-                            title: `${action.id} · ${postAction.type}`,
+                            title: `${resolveActionTitle(action)} · ${postAction.type}`,
                             brief: `Follow-up GSC action for ${action.id}`,
                             cross_link_to: [createdItem.id],
-                            status: 'planned',
+                            status: mappedStatus === 'deferred' ? 'deferred' : mappedStatus === 'skipped' ? 'skipped' : 'planned',
                             schedule_at: schedule?.scheduled_at || null,
                             assets: {
                                 source: 'external_publication_plan',
@@ -316,6 +338,7 @@ class PublicationPlanService {
                             metrics: {
                                 publication_plan_id: plan.meta.plan_id,
                                 task_id: `${action.id}:${postAction.type}`,
+                                task_display_name: action.display_name ? `${action.display_name} · ${postAction.type}` : null,
                                 account_ref: gscChannel.name,
                                 monitoring: {
                                     needs_analytics_collection: true
@@ -332,6 +355,7 @@ class PublicationPlanService {
                     accounts: channels.length,
                     actions: plan.actions.length,
                     assets: Object.keys(plan.assets).length,
+                    ongoingRules: (plan.ongoing_rules || []).length,
                     updatedExistingProject: Boolean(existingProject)
                 }
             };
@@ -376,6 +400,7 @@ class PublicationPlanService {
             },
             task: {
                 id: action.id || item.id,
+                display_name: action.display_name || item.title || null,
                 channel: action.channel || item.layer,
                 action_type: action.action_type || item.type,
                 scheduled_date: action.scheduled_date || item.schedule_at,

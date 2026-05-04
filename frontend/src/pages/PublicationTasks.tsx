@@ -61,6 +61,7 @@ function prettyJson(value: unknown) {
 function statusTone(status: string) {
     if (status === 'published') return 'bg-success text-white'
     if (status === 'awaiting_manual_publication') return 'bg-primary text-white'
+    if (status === 'deferred') return 'bg-yellow-200 text-yellow-950'
     if (status === 'ready_for_execution' || status === 'scheduled') return 'bg-primary/10 text-primary'
     if (status === 'failed') return 'bg-error text-white'
     return 'bg-surface-container-high text-on-surface-variant'
@@ -103,7 +104,7 @@ export default function PublicationTasks() {
     const [commentUrl, setCommentUrl] = useState('')
     const [commentText, setCommentText] = useState('')
 
-    const resolvedStatusFilter = statusFilter === 'active' ? undefined : statusFilter
+    const resolvedStatusFilter = statusFilter
 
     const { data: tasks, isLoading, error } = useQuery<PublicationTask[]>({
         queryKey: ['publication_tasks', currentProject?.id, resolvedStatusFilter || 'active', manualOnly],
@@ -286,6 +287,7 @@ export default function PublicationTasks() {
                                     <option value="planned">Planned</option>
                                     <option value="awaiting_manual_publication">Awaiting Manual</option>
                                     <option value="ready_for_execution">Ready</option>
+                                    <option value="deferred">Deferred</option>
                                     <option value="published">Published</option>
                                     <option value="failed">Failed</option>
                                 </select>

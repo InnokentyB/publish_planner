@@ -107,10 +107,22 @@ const start = async () => {
         setInterval(async () => {
             try {
                 const count = await publisherService.publishDuePosts();
+                const createdRuleTasks = await publisherService.processPublicationOngoingRules();
+                const processedOperationalTasks = await publisherService.processOperationalTasks();
+                const reactivatedDeferred = await publisherService.processDeferredPublicationTasks();
                 const preparedTasks = await publisherService.processPublicationTasks();
                 await publisherService.scheduleNativePosts();
                 if (count > 0) {
                     console.log(`[Scheduler] Published ${count} posts.`);
+                }
+                if (createdRuleTasks > 0) {
+                    console.log(`[Scheduler] Created ${createdRuleTasks} ongoing rule tasks.`);
+                }
+                if (processedOperationalTasks > 0) {
+                    console.log(`[Scheduler] Processed ${processedOperationalTasks} internal operational tasks.`);
+                }
+                if (reactivatedDeferred > 0) {
+                    console.log(`[Scheduler] Reactivated ${reactivatedDeferred} deferred publication tasks.`);
                 }
                 if (preparedTasks > 0) {
                     console.log(`[Scheduler] Prepared ${preparedTasks} publication tasks.`);
@@ -122,6 +134,9 @@ const start = async () => {
 
         // Run once immediately on startup
         publisherService.publishDuePosts().catch(e => console.error('[Scheduler] Initial check failed:', e));
+        publisherService.processPublicationOngoingRules().catch(e => console.error('[Scheduler] Initial ongoing-rules check failed:', e));
+        publisherService.processOperationalTasks().catch(e => console.error('[Scheduler] Initial operational-task check failed:', e));
+        publisherService.processDeferredPublicationTasks().catch(e => console.error('[Scheduler] Initial deferred-task check failed:', e));
         publisherService.processPublicationTasks().catch(e => console.error('[Scheduler] Initial publication task check failed:', e));
 
         // Setup metrics collector schedule (run every 12 hours)

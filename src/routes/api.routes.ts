@@ -601,13 +601,19 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
 
         const { status, manualOnly } = request.query as { status?: string; manualOnly?: string };
+        const where: any = {
+            project_id: projectId,
+            assets: { not: undefined }
+        };
+
+        if (status === 'active') {
+            where.status = { in: ['planned', 'ready_for_execution', 'awaiting_manual_publication', 'published', 'failed'] };
+        } else if (status) {
+            where.status = status;
+        }
 
         const items = await prisma.contentItem.findMany({
-            where: {
-                project_id: projectId,
-                assets: { not: undefined },
-                ...(status ? { status } : {})
-            },
+            where,
             include: { channel: true },
             orderBy: { schedule_at: 'asc' }
         });
