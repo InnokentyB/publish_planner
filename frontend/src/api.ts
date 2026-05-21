@@ -140,6 +140,11 @@ export const projectsApi = {
     create: (data: { name: string; slug?: string; description?: string }) => api.post('/api/projects', data),
     importConfig: (config: string) => api.post('/api/projects/import', { config }),
     importPublicationPlan: (planJson: string) => api.post('/api/projects/import-publication-plan', { planJson }),
+    saveManualChannelContent: (
+        projectId: number,
+        channelId: number,
+        data: { fileName: string; fileType: 'markdown' | 'html' | 'unknown'; content: string; note?: string }
+    ) => api.post(`/api/projects/${projectId}/channels/${channelId}/manual-content`, data),
     update: (id: number, data: { name: string; description: string }) => api.put(`/api/projects/${id}`, data),
     addMember: (id: number, email: string, role: string) => api.post(`/api/projects/${id}/members`, { email, role }),
     removeMember: (id: number, userId: number) => api.delete(`/api/projects/${id}/members/${userId}`)

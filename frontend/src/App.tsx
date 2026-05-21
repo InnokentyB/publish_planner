@@ -11,6 +11,8 @@ import V2Dashboard from './pages/V2Dashboard'
 import V2WeekDetail from './pages/V2WeekDetail'
 import Guide from './pages/Guide'
 import PublicationTasks from './pages/PublicationTasks'
+import ProjectWorkspace from './pages/ProjectWorkspace'
+import Parsers from './pages/Parsers'
 import './index.css'
 
 import Layout from './components/Layout'
@@ -34,19 +36,23 @@ function AppContent() {
   return (
     <Layout>
       <Routes>
+        <Route path="/projects" element={<ProjectWorkspace />} />
+        <Route path="/parsers" element={<Parsers />} />
+
         {/* V2 Orchestrator Routes */}
         <Route path="/orchestrator" element={<V2Dashboard />} />
         <Route path="/v2/weeks/:id" element={<V2WeekDetail />} />
 
         {/* V1 Routes */}
-        <Route path="/" element={<WeeksList />} />
+        <Route path="/" element={<Navigate to="/projects" />} />
         <Route path="/weeks/:id" element={<WeekDetail />} />
         <Route path="/posts/:id" element={<PostEditor />} />
 
         <Route path="/settings" element={<Settings />} />
         <Route path="/publication-tasks" element={<PublicationTasks />} />
         <Route path="/guide" element={<Guide />} />
-        <Route path="*" element={<Navigate to="/orchestrator" />} />
+        <Route path="/calendar" element={<WeeksList />} />
+        <Route path="*" element={<Navigate to="/projects" />} />
       </Routes>
     </Layout>
   )

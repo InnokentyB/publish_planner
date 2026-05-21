@@ -118,6 +118,16 @@ function detectProviderFromKey(key: string) {
     return 'Other';
 }
 
+function inferManualContentType(channelType: string, fileType?: string | null) {
+    if (channelType === 'linkedin') return 'linkedin:manual_content';
+    if (channelType === 'reddit') return 'reddit:manual_content';
+    if (channelType === 'tilda') return 'tilda:manual_content';
+    if (channelType === 'medium') return 'medium:manual_content';
+    if (channelType === 'indiehackers') return 'indiehackers:manual_content';
+    if (fileType === 'html') return `${channelType}:manual_html`;
+    return `${channelType}:manual_markdown`;
+}
+
 function createConnectionId(name: string) {
     const base = slugifyProjectName(name) || 'skill-connection';
     return `${base}-${Math.random().toString(36).slice(2, 8)}`;
@@ -552,6 +562,121 @@ export default async function projectRoutes(fastify: FastifyInstance) {
 
         return channel;
     });
+
+    fastify.post('/api/projects/:id/channels/:channelId/manual-content', async (request, reply) => {
+        const user = (request as any).user;
+        const { id, channelId } = request.params as any;
+        const {
+            fileName,
+            fileType,
+            content,
+            note
+        } = request.body as {
+            fileName?: string;
+            fileType?: 'markdown' | 'html' | 'unknown';
+            content?: string;
+            note?: string;
+        };
+
+        const projectId = parseInt(id);
+        const parsedChannelId = parseInt(channelId);
+
+        const hasAccess = await authService.hasProjectAccess(user.id, projectId, 'editor');
+        if (!hasAccess) {
+            reply.code(403).send({ error: 'No access' });
+            return;
+        }
+
+        if (!content?.trim()) {
+            return reply.code(400).send({ error: 'content is required' });
+        }
+
+        const channel = await prisma.socialChannel.findFirst({
+            where: {
+                id: parsedChannelId,
+                project_id: projectId
+            }
+        });
+
+        if (!channel) {
+            return reply.code(404).send({ error: 'Channel not found' });
+        }
+
+        const safeFileName = (fileName || 'manual-content').trim();
+        const title = safeFileName.replace(/\.(md|markdown|html|htm)$/i, '').replace(/[-_]+/g, ' ').trim() || safeFileName;
+
+        const item = await prisma.contentItem.create({
+            data: {
+                project_id: projectId,
+                channel_id: channel.id,
+                type: inferManualContentType(channel.type, fileType || null),
+                layer: channel.type,
+                title,
+                brief: note?.trim() || `Manual ${fileType || 'text'} upload for ${channel.name}`,
+                draft_text: content,
+                status: 'drafted',
+                assets: {
+                    source: 'manual_upload',
+                    manual_upload: {
+                        file_name: safeFileName,
+                        file_type: fileType || 'unknown',
+                        note: note || null
+                    }
+                } as any,
+                quality_report: {
+                    execution_mode: 'manual',
+                    content_origin: 'manual_upload',
+                    handoff_bundle: {
+                        mode: 'manual',
+                        account: {
+                            ref: channel.name,
+                            details: channel.config || null
+                        },
+                        task: {
+                            id: `manual-${Date.now()}`,
+                            display_name: title,
+                            channel: channel.type,
+                            action_type: 'manual_upload'
+                        },
+                        publication: {
+                            body: content,
+                            html_bundle: fileType === 'html' ? [{ file_name: safeFileName }] : [],
+                            link_url: null,
+                            visuals: []
+                        },
+                        resource_files: [
+                            {
+                                role: 'manual_upload',
+                                purpose: 'User-provided channel content',
+                                file_name: safeFileName,
+                                relative_path: null,
+                                full_path: null,
+                                section_marker: null,
+                                exists: true,
+                                url: null,
+                                content
+                            }
+                        ],
+                        manual_checklist: ['Review the uploaded content and continue the channel workflow.'],
+                        verification: [],
+                        post_actions: [],
+                        dependencies: []
+                    }
+                } as any,
+                metrics: {
+                    content_origin: 'manual_upload',
+                    channel_ref: channel.name,
+                    uploaded_at: new Date().toISOString()
+                } as any
+            },
+            include: {
+                channel: true
+            }
+        });
+
+        return item;
+    });
+
     fastify.put('/api/projects/:id', async (request, reply) => {
         const user = (request as any).user;
         const { id } = request.params as any;

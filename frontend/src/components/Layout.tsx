@@ -13,10 +13,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const isActive = (path: string) => location.pathname === path;
 
   const navItems = [
-    { label: 'Projects', path: '/orchestrator', icon: 'folder_open' },
+    { label: 'Projects', path: '/projects', icon: 'folder_open' },
+    { label: 'Parsers', path: '/parsers', icon: 'hub' },
     { label: 'Publishing', path: '/publication-tasks', icon: 'publish' },
     { label: 'Guide', path: '/guide', icon: 'help_outline' },
-    { label: 'Calendar', path: '/', icon: 'calendar_month' },
+    { label: 'Calendar', path: '/calendar', icon: 'calendar_month' },
     { label: 'Settings', path: '/settings', icon: 'settings' },
   ];
 
@@ -25,7 +26,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       {/* SideNavBar */}
       <aside className="bg-surface-container-low w-64 h-full flex flex-col py-8 px-4 border-r-0 shrink-0 border-outline-variant/10">
         <div className="mb-10 px-2 space-y-4">
-          <Link to="/" className="block hover:opacity-80 transition-opacity">
+          <Link to="/projects" className="block hover:opacity-80 transition-opacity">
             <h1 className="text-2xl font-black text-primary tracking-tighter font-headline">Project Alpha</h1>
             <p className="text-xs text-on-surface-variant font-label mt-1">Status Tracking Beta</p>
           </Link>
@@ -117,15 +118,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             </div>
           </div>
           <nav className="flex items-center gap-8 h-full">
-            <Link to="/orchestrator" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Dashboard</Link>
-            <Link to="/" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Weekly</Link>
+            <Link to="/projects" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Project</Link>
+            <Link to="/publication-tasks" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Channels</Link>
+            <Link to="/calendar" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Calendar</Link>
             <div className="flex items-center gap-4 ml-4">
               <button className="p-2 text-on-surface-variant hover:opacity-80 transition-opacity">
                 <span className="material-symbols-outlined">notifications_active</span>
               </button>
-              <button className="bg-primary text-white px-5 py-2 rounded-full font-bold text-sm shadow-sm hover:opacity-90 transition-opacity">
-                Generate AI
-              </button>
+              <Link to="/projects" className="bg-primary text-white px-5 py-2 rounded-full font-bold text-sm shadow-sm hover:opacity-90 transition-opacity">
+                Open Workspace
+              </Link>
             </div>
           </nav>
         </header>
