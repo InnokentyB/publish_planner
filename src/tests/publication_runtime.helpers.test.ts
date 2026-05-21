@@ -4,6 +4,7 @@ import { mapActionStatus, parseRecurringTrigger, resolveActionTitle } from '../s
 
 test('mapActionStatus maps plan statuses into runtime statuses', () => {
     assert.equal(mapActionStatus('completed'), 'published');
+    assert.equal(mapActionStatus('completed_with_negative_outcome'), 'published');
     assert.equal(mapActionStatus('skipped'), 'skipped');
     assert.equal(mapActionStatus('deferred'), 'deferred');
     assert.equal(mapActionStatus('planned'), 'planned');

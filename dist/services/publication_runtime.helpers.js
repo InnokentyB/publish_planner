@@ -6,6 +6,8 @@ exports.parseRecurringTrigger = parseRecurringTrigger;
 function mapActionStatus(actionStatus) {
     if (actionStatus === 'completed')
         return 'published';
+    if (actionStatus === 'completed_with_negative_outcome')
+        return 'published';
     if (actionStatus === 'skipped')
         return 'skipped';
     if (actionStatus === 'deferred')

@@ -70,14 +70,46 @@ function resolveSection(content, marker) {
 function resolveRef(plan, ref) {
     if (!ref)
         return null;
+    const resolveParts = (parts) => {
+        let current = plan;
+        for (const part of parts) {
+            if (current == null)
+                return null;
+            current = current[part];
+        }
+        return current ?? null;
+    };
     const parts = ref.split('.');
-    let current = plan;
-    for (const part of parts) {
-        if (current == null)
-            return null;
-        current = current[part];
+    const direct = resolveParts(parts);
+    if (direct != null) {
+        return direct;
     }
-    return current ?? null;
+    const root = parts[0];
+    if (plan.assets && root in plan.assets) {
+        return resolveParts(['assets', ...parts]);
+    }
+    if (plan.accounts && root in plan.accounts) {
+        return resolveParts(['accounts', ...parts]);
+    }
+    if (plan.meta && root in plan.meta) {
+        return resolveParts(['meta', ...parts]);
+    }
+    return null;
+}
+function dedupeResourceFiles(entries) {
+    const seen = new Set();
+    return entries.filter((entry) => {
+        const key = [
+            entry.relative_path || '',
+            entry.url || '',
+            entry.section_marker || ''
+        ].join('|');
+        if (seen.has(key)) {
+            return false;
+        }
+        seen.add(key);
+        return true;
+    });
 }
 function computeSchedule(action, fallbackTimezone) {
     if (!action.scheduled_date)
@@ -88,6 +120,19 @@ function computeSchedule(action, fallbackTimezone) {
         scheduled_at: new Date(`${action.scheduled_date}T${start}:00`),
         timezone
     };
+}
+function derivePublicationOutcome(action) {
+    if (action?.status !== 'completed_with_negative_outcome') {
+        return null;
+    }
+    const result = String(action?.outcome?.result || '').toLowerCase();
+    if (result.includes('ban') || result.includes('block'))
+        return 'blocked';
+    if (result.includes('remove'))
+        return 'removed';
+    if (result.includes('restrict'))
+        return 'restricted';
+    return 'blocked';
 }
 class PublicationPlanService {
     parsePlan(raw) {
@@ -249,6 +294,7 @@ class PublicationPlanService {
                 const account = plan.accounts[action.account_ref] || {};
                 const executionMode = publication_adapter_service_1.default.inferExecutionMode(account, action);
                 const mappedStatus = (0, publication_runtime_helpers_1.mapActionStatus)(action.status);
+                const publicationOutcome = derivePublicationOutcome(action);
                 const createdItem = await tx.contentItem.create({
                     data: {
                         project_id: project.id,
@@ -281,7 +327,10 @@ class PublicationPlanService {
                             deferred_reason: action.deferred_reason || null,
                             blocked_by: action.blocked_by || [],
                             reactivation_trigger: action.reactivation_trigger || null,
-                            target_cycle_after_unblock: action.target_cycle_after_unblock || null
+                            target_cycle_after_unblock: action.target_cycle_after_unblock || null,
+                            publication_outcome: publicationOutcome,
+                            plan_outcome: action.outcome || null,
+                            skip_reason: action.skip_reason || null
                         },
                         metrics: {
                             publication_plan_id: plan.meta.plan_id,
@@ -289,6 +338,7 @@ class PublicationPlanService {
                             task_display_name: action.display_name || null,
                             timezone: schedule?.timezone || plan.meta.timezone_default || null,
                             account_ref: action.account_ref,
+                            publication_outcome: publicationOutcome,
                             monitoring: publication_adapter_service_1.default.deriveMonitoringPlan(action)
                         },
                         published_link: action.status === 'completed' ? action.verification?.find((item) => item.type === 'post_live_check')?.url || null : null
@@ -377,8 +427,50 @@ class PublicationPlanService {
                 content
             };
         });
-        const primaryTextAsset = resolvedAssets.find((entry) => typeof entry.content === 'string' && entry.content.trim());
+        const contentFiles = Array.isArray(action.content_files) ? action.content_files : [];
+        const resolvedContentFiles = contentFiles.map((file, index) => {
+            const relativePath = file.path || null;
+            const fullPath = relativePath ? path.join(pipelineRoot, relativePath) : null;
+            const resolvedUrl = file.url_ref ? resolveRef(plan, file.url_ref) : file.url || null;
+            let content = null;
+            let exists = false;
+            if (fullPath && fs.existsSync(fullPath)) {
+                exists = true;
+                const rawContent = fs.readFileSync(fullPath, 'utf8');
+                content = file.section_marker ? resolveSection(rawContent, file.section_marker) : rawContent;
+            }
+            return {
+                ref: `content_file_${index + 1}`,
+                type: 'content_file',
+                role: file.role || null,
+                purpose: file.purpose || null,
+                file_name: relativePath ? path.basename(relativePath) : null,
+                relative_path: relativePath,
+                full_path: fullPath,
+                section_marker: file.section_marker || null,
+                exists,
+                url: resolvedUrl,
+                content
+            };
+        });
+        const primaryTextAsset = [...resolvedContentFiles, ...resolvedAssets].find((entry) => typeof entry.content === 'string' && entry.content.trim());
         const linkUrl = resolveRef(plan, action.parameters?.link_url_ref || item.cta || null);
+        const resourceFiles = dedupeResourceFiles([
+            ...resolvedContentFiles,
+            ...resolvedAssets.map((entry) => ({
+                ref: entry.ref,
+                type: entry.asset?.type || null,
+                role: null,
+                purpose: null,
+                file_name: entry.file_name || null,
+                relative_path: entry.relative_path || null,
+                full_path: entry.full_path || null,
+                section_marker: entry.section_marker || null,
+                exists: entry.exists === true,
+                url: null,
+                content: entry.content || null
+            }))
+        ]);
         return {
             mode: publication_adapter_service_1.default.inferExecutionMode(account || {}, action),
             account: {
@@ -399,16 +491,7 @@ class PublicationPlanService {
                 link_url: linkUrl,
                 visuals: resolvedAssets.filter((entry) => entry.asset?.visual_style || entry.asset?.gamma_source)
             },
-            resource_files: resolvedAssets.map((entry) => ({
-                ref: entry.ref,
-                type: entry.asset?.type || null,
-                file_name: entry.file_name || null,
-                relative_path: entry.relative_path || null,
-                full_path: entry.full_path || null,
-                section_marker: entry.section_marker || null,
-                exists: entry.exists === true,
-                content: entry.content || null
-            })),
+            resource_files: resourceFiles,
             manual_checklist: publication_adapter_service_1.default.buildManualChecklist(action, {
                 linkUrl,
                 accountRef

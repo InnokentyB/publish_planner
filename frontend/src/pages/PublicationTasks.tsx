@@ -560,15 +560,27 @@ export default function PublicationTasks() {
                                                     const relativePath = entry.relative_path || entry.asset?.path || null
                                                     const sectionMarker = entry.section_marker || entry.asset?.section_marker || null
                                                     const exists = typeof entry.exists === 'boolean' ? entry.exists : null
+                                                    const purpose = entry.purpose || null
+                                                    const role = entry.role || null
+                                                    const url = entry.url || null
 
                                                     return (
                                                         <div key={`${entry.ref || fileName}-${index}`} className="rounded-2xl bg-white px-4 py-3 text-sm space-y-1">
                                                             <div className="font-bold text-on-surface">{fileName}</div>
+                                                            {role && (
+                                                                <div className="text-xs text-on-surface-variant">Role: {role}</div>
+                                                            )}
                                                             {relativePath && (
                                                                 <div className="text-xs text-on-surface-variant break-all">{relativePath}</div>
                                                             )}
+                                                            {url && (
+                                                                <div className="text-xs text-on-surface-variant break-all">{url}</div>
+                                                            )}
                                                             {sectionMarker && (
                                                                 <div className="text-xs text-on-surface-variant">Section: {sectionMarker}</div>
+                                                            )}
+                                                            {purpose && (
+                                                                <div className="text-xs text-on-surface-variant">{purpose}</div>
                                                             )}
                                                             {exists === false && (
                                                                 <div className="text-xs font-bold text-error">File not found from pipeline root.</div>

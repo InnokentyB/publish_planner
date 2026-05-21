@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+require("./bootstrap-env");
 const dotenv_1 = require("dotenv");
 (0, dotenv_1.config)();
 const fastify_1 = __importDefault(require("fastify"));
@@ -15,6 +16,7 @@ const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
 const project_routes_1 = __importDefault(require("./routes/project.routes"));
 const linkedin_routes_1 = __importDefault(require("./routes/linkedin.routes"));
 const path_1 = __importDefault(require("path"));
+const health_service_1 = __importDefault(require("./services/health.service"));
 // Crash Logging
 process.on('uncaughtException', (err) => {
     const fs = require('fs');
@@ -35,7 +37,9 @@ const server = (0, fastify_1.default)({
     logger: true
 });
 server.addHook('onRequest', (request, reply, done) => {
-    console.log(`[Server] Incoming request: ${request.method} ${request.url}`);
+    if (process.env.REQUEST_LOGGING_ENABLED === 'true') {
+        console.log(`[Server] Incoming request: ${request.method} ${request.url}`);
+    }
     done();
 });
 server.register(require('@fastify/cors'), {
@@ -58,7 +62,14 @@ server.register(require('@fastify/static'), {
 });
 // Public health-check endpoint – used by Playwright webServer to probe readiness
 server.get('/api/health', async (_request, _reply) => {
-    return { status: 'ok', ts: new Date().toISOString() };
+    return health_service_1.default.getBasicHealth();
+});
+server.get('/api/health/deep', async (_request, reply) => {
+    const result = await health_service_1.default.getDeepHealth();
+    if (result.status === 'error') {
+        return reply.code(503).send(result);
+    }
+    return result;
 });
 server.register(require('@fastify/static'), {
     root: path_1.default.join(__dirname, '../uploads'),
@@ -83,10 +94,25 @@ const publisher_service_1 = __importDefault(require("./services/publisher.servic
 const start = async () => {
     try {
         // Initialize Telegram Bot
-        await telegram_service_1.default.launch();
+        try {
+            await telegram_service_1.default.launch();
+        }
+        catch (error) {
+            console.error('[Startup] Telegram initialization failed:', error);
+        }
         // Initialize Storage
         const storageService = require('./services/storage.service').default;
-        await storageService.ensureBucketExists();
+        try {
+            await storageService.ensureBucketExists();
+        }
+        catch (error) {
+            console.error('[Startup] Storage initialization failed:', error);
+        }
+        const startupHealth = await health_service_1.default.getDeepHealth().catch((error) => ({
+            status: 'error',
+            message: error?.message || 'Startup health check failed'
+        }));
+        console.log('[Startup] Dependency health snapshot:', JSON.stringify(startupHealth));
         const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3003;
         await server.listen({ port: PORT, host: '0.0.0.0' });
         console.log(`Server is running on port ${PORT}`);

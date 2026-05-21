@@ -8,6 +8,7 @@ const strict_1 = __importDefault(require("node:assert/strict"));
 const publication_runtime_helpers_1 = require("../services/publication_runtime.helpers");
 (0, node_test_1.default)('mapActionStatus maps plan statuses into runtime statuses', () => {
     strict_1.default.equal((0, publication_runtime_helpers_1.mapActionStatus)('completed'), 'published');
+    strict_1.default.equal((0, publication_runtime_helpers_1.mapActionStatus)('completed_with_negative_outcome'), 'published');
     strict_1.default.equal((0, publication_runtime_helpers_1.mapActionStatus)('skipped'), 'skipped');
     strict_1.default.equal((0, publication_runtime_helpers_1.mapActionStatus)('deferred'), 'deferred');
     strict_1.default.equal((0, publication_runtime_helpers_1.mapActionStatus)('planned'), 'planned');

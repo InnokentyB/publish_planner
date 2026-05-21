@@ -1,5 +1,6 @@
 export function mapActionStatus(actionStatus?: string | null) {
     if (actionStatus === 'completed') return 'published';
+    if (actionStatus === 'completed_with_negative_outcome') return 'published';
     if (actionStatus === 'skipped') return 'skipped';
     if (actionStatus === 'deferred') return 'deferred';
     return 'planned';
