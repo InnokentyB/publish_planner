@@ -143,7 +143,15 @@ export const projectsApi = {
     saveManualChannelContent: (
         projectId: number,
         channelId: number,
-        data: { fileName: string; fileType: 'markdown' | 'html' | 'unknown'; content: string; note?: string }
+        data: {
+            fileName: string;
+            fileType: 'markdown' | 'html' | 'unknown';
+            content: string;
+            note?: string;
+            publishedLink?: string;
+            publishNow?: boolean;
+            outcome?: 'published' | 'blocked' | 'removed' | 'restricted';
+        }
     ) => api.post(`/api/projects/${projectId}/channels/${channelId}/manual-content`, data),
     update: (id: number, data: { name: string; description: string }) => api.put(`/api/projects/${id}`, data),
     addMember: (id: number, email: string, role: string) => api.post(`/api/projects/${id}/members`, { email, role }),

@@ -52,6 +52,8 @@ type ResourceFile = {
     content?: string | null
 }
 
+type PublicationOutcome = 'published' | 'blocked' | 'removed' | 'restricted'
+
 const PUBLICATION_PLAN_TEMPLATE = `{
   "meta": {
     "plan_id": "distribution-cycle-2026-05-20",
@@ -95,6 +97,9 @@ export default function ProjectWorkspace() {
     const [manualFileContent, setManualFileContent] = useState('')
     const [manualFileType, setManualFileType] = useState<'markdown' | 'html' | 'unknown'>('unknown')
     const [manualNote, setManualNote] = useState('')
+    const [manualPublishedLink, setManualPublishedLink] = useState('')
+    const [manualPublishNow, setManualPublishNow] = useState(false)
+    const [manualOutcome, setManualOutcome] = useState<PublicationOutcome>('published')
 
     const { data: projectData } = useQuery<ProjectDetails>({
         queryKey: ['project_workspace', currentProject?.id],
@@ -156,11 +161,16 @@ export default function ProjectWorkspace() {
                 fileName: manualFileName || 'manual-content',
                 fileType: manualFileType,
                 content: manualFileContent,
-                note: manualNote || undefined
+                note: manualNote || undefined,
+                publishedLink: manualPublishedLink || undefined,
+                publishNow: manualPublishNow,
+                outcome: manualOutcome
             })
         },
         onSuccess: () => {
-            setManualMessage(`Saved to channel ${selectedChannel?.name}.`)
+            setManualMessage(manualPublishNow
+                ? `Saved to channel ${selectedChannel?.name} and linked to the already published content.`
+                : `Saved to channel ${selectedChannel?.name}.`)
             queryClient.invalidateQueries({ queryKey: ['project_workspace_tasks'] })
             queryClient.invalidateQueries({ queryKey: ['publication_tasks'] })
         }
@@ -471,9 +481,39 @@ export default function ProjectWorkspace() {
                                                     className="mt-4 w-full bg-white border-none rounded-2xl p-4 text-sm leading-6 focus:ring-2 focus:ring-primary/20 outline-none"
                                                     placeholder="Optional note for this channel content item"
                                                 />
+                                                <label className="mt-4 flex items-center gap-3 rounded-2xl bg-white px-4 py-3 text-sm font-medium text-on-surface">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={manualPublishNow}
+                                                        onChange={(event) => setManualPublishNow(event.target.checked)}
+                                                        className="w-4 h-4 rounded border-outline-variant/20 text-primary focus:ring-primary/20"
+                                                    />
+                                                    This content is already published
+                                                </label>
+                                                {manualPublishNow && (
+                                                    <div className="mt-4 space-y-4">
+                                                        <input
+                                                            type="url"
+                                                            value={manualPublishedLink}
+                                                            onChange={(event) => setManualPublishedLink(event.target.value)}
+                                                            className="w-full bg-white border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                                                            placeholder="https://..."
+                                                        />
+                                                        <select
+                                                            value={manualOutcome}
+                                                            onChange={(event) => setManualOutcome(event.target.value as PublicationOutcome)}
+                                                            className="w-full bg-white border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                                                        >
+                                                            <option value="published">Published normally</option>
+                                                            <option value="blocked">Blocked but URL exists</option>
+                                                            <option value="removed">Removed but URL exists</option>
+                                                            <option value="restricted">Restricted / limited visibility</option>
+                                                        </select>
+                                                    </div>
+                                                )}
                                                 <button
                                                     onClick={() => saveManualContent.mutate()}
-                                                    disabled={saveManualContent.isPending || !manualFileContent.trim()}
+                                                    disabled={saveManualContent.isPending || !manualFileContent.trim() || (manualPublishNow && !manualPublishedLink.trim())}
                                                     className="mt-4 w-full rounded-2xl bg-primary text-white px-5 py-4 text-sm font-black shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all disabled:opacity-50"
                                                 >
                                                     {saveManualContent.isPending ? 'Saving To Channel...' : 'Save To Channel'}

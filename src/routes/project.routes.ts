@@ -570,12 +570,18 @@ export default async function projectRoutes(fastify: FastifyInstance) {
             fileName,
             fileType,
             content,
-            note
+            note,
+            publishedLink,
+            publishNow,
+            outcome
         } = request.body as {
             fileName?: string;
             fileType?: 'markdown' | 'html' | 'unknown';
             content?: string;
             note?: string;
+            publishedLink?: string;
+            publishNow?: boolean;
+            outcome?: 'published' | 'blocked' | 'removed' | 'restricted';
         };
 
         const projectId = parseInt(id);
@@ -604,6 +610,9 @@ export default async function projectRoutes(fastify: FastifyInstance) {
 
         const safeFileName = (fileName || 'manual-content').trim();
         const title = safeFileName.replace(/\.(md|markdown|html|htm)$/i, '').replace(/[-_]+/g, ' ').trim() || safeFileName;
+        const normalizedPublishedLink = publishedLink?.trim() || null;
+        const publicationOutcome = outcome || 'published';
+        const shouldMarkPublished = publishNow === true && Boolean(normalizedPublishedLink);
 
         const item = await prisma.contentItem.create({
             data: {
@@ -614,18 +623,21 @@ export default async function projectRoutes(fastify: FastifyInstance) {
                 title,
                 brief: note?.trim() || `Manual ${fileType || 'text'} upload for ${channel.name}`,
                 draft_text: content,
-                status: 'drafted',
+                status: shouldMarkPublished ? 'published' : 'drafted',
                 assets: {
                     source: 'manual_upload',
                     manual_upload: {
                         file_name: safeFileName,
                         file_type: fileType || 'unknown',
-                        note: note || null
+                        note: note || null,
+                        published_link: normalizedPublishedLink
                     }
                 } as any,
                 quality_report: {
                     execution_mode: 'manual',
                     content_origin: 'manual_upload',
+                    manual_publication_note: note || null,
+                    publication_outcome: shouldMarkPublished ? publicationOutcome : null,
                     handoff_bundle: {
                         mode: 'manual',
                         account: {
@@ -641,7 +653,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
                         publication: {
                             body: content,
                             html_bundle: fileType === 'html' ? [{ file_name: safeFileName }] : [],
-                            link_url: null,
+                            link_url: normalizedPublishedLink,
                             visuals: []
                         },
                         resource_files: [
@@ -666,8 +678,12 @@ export default async function projectRoutes(fastify: FastifyInstance) {
                 metrics: {
                     content_origin: 'manual_upload',
                     channel_ref: channel.name,
-                    uploaded_at: new Date().toISOString()
+                    uploaded_at: new Date().toISOString(),
+                    publication_outcome: shouldMarkPublished ? publicationOutcome : null,
+                    manual_confirmation_at: shouldMarkPublished ? new Date().toISOString() : null
                 } as any
+                ,
+                published_link: normalizedPublishedLink
             },
             include: {
                 channel: true
