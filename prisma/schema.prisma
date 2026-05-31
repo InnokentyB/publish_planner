@@ -4,6 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  schemas  = ["planner"]
 }
 
 // ============================================
@@ -21,6 +22,7 @@ model User {
   memberships      ProjectMember[]
   sent_invitations ProjectInvitation[]
 
+  @@schema("planner")
   @@map("users")
 }
 
@@ -56,6 +58,7 @@ model Project {
   provider_keys     ProviderKey[]
   telegram_accounts TelegramAccount[]
 
+  @@schema("planner")
   @@map("projects")
 }
 
@@ -70,6 +73,7 @@ model ProjectMember {
   user    User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@unique([project_id, user_id])
+  @@schema("planner")
   @@map("project_members")
 }
 
@@ -88,6 +92,7 @@ model ProjectInvitation {
 
   @@index([email])
   @@index([token])
+  @@schema("planner")
   @@map("project_invitations")
 }
 
@@ -101,6 +106,7 @@ model ProjectSettings {
   project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
   @@unique([project_id, key])
+  @@schema("planner")
   @@map("project_settings")
 }
 
@@ -122,6 +128,7 @@ model SocialChannel {
   posts         Post[]
   content_items ContentItem[]
 
+  @@schema("planner")
   @@map("social_channels")
 }
 
@@ -145,6 +152,7 @@ model Week {
   week_memory WeekMemory?
 
   @@unique([project_id, week_start, week_end])
+  @@schema("planner")
   @@map("weeks")
 }
 
@@ -189,6 +197,7 @@ model Post {
   @@index([week_id])
   @@index([publish_at])
   @@index([status])
+  @@schema("planner")
   @@map("posts")
 }
 
@@ -202,6 +211,7 @@ model WeekMemory {
   banned_takeaways  Json // Array of strings
   updated_at        DateTime @updatedAt
 
+  @@schema("planner")
   @@map("week_memories")
 }
 
@@ -217,6 +227,7 @@ model Event {
   event_type  String
   payload     Json?
 
+  @@schema("planner")
   @@map("events")
 }
 
@@ -242,6 +253,7 @@ model AgentRun {
 
   @@index([project_id])
   @@index([type])
+  @@schema("planner")
   @@map("agent_runs")
 }
 
@@ -260,6 +272,7 @@ model AgentIteration {
   run AgentRun @relation(fields: [run_id], references: [id], onDelete: Cascade)
 
   @@index([run_id])
+  @@schema("planner")
   @@map("agent_iterations")
 }
 
@@ -274,6 +287,7 @@ model PromptSettings {
   value      String
   updated_at DateTime @updatedAt
 
+  @@schema("planner")
   @@map("prompt_settings")
 }
 
@@ -292,6 +306,7 @@ model PromptPreset {
 
   project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
+  @@schema("planner")
   @@map("prompt_presets")
 }
 
@@ -307,6 +322,7 @@ model Comment {
   project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
   @@index([project_id, entity_type, entity_id])
+  @@schema("planner")
   @@map("comments")
 }
 
@@ -320,6 +336,7 @@ model ProviderKey {
 
   project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
+  @@schema("planner")
   @@map("provider_keys")
 }
 
@@ -336,6 +353,7 @@ model TelegramAccount {
   updated_at     DateTime @updatedAt
 
   @@unique([project_id, phone_number])
+  @@schema("planner")
   @@map("telegram_accounts")
 }
 
@@ -358,6 +376,7 @@ model QuarterPlan {
   project    Project    @relation(fields: [project_id], references: [id], onDelete: Cascade)
   month_arcs MonthArc[]
 
+  @@schema("planner")
   @@map("quarter_plans")
 }
 
@@ -378,6 +397,7 @@ model MonthArc {
   quarter_plan  QuarterPlan?  @relation(fields: [quarter_plan_id], references: [id], onDelete: SetNull)
   week_packages WeekPackage[]
 
+  @@schema("planner")
   @@map("month_arcs")
 }
 
@@ -404,6 +424,7 @@ model WeekPackage {
   month_arc     MonthArc?     @relation(fields: [month_arc_id], references: [id], onDelete: SetNull)
   content_items ContentItem[]
 
+  @@schema("planner")
   @@map("week_packages")
 }
 
@@ -437,6 +458,7 @@ model ContentItem {
   @@index([project_id])
   @@index([week_package_id])
   @@index([status])
+  @@schema("planner")
   @@map("content_items")
 }
 
@@ -455,5 +477,6 @@ model FeedbackPackage {
 
   project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
+  @@schema("planner")
   @@map("feedback_packages")
 }

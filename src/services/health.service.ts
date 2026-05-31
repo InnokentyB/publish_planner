@@ -3,6 +3,7 @@ import prisma from '../db';
 import { connection as redisConnection } from '../queue';
 import { supabase } from './supabase';
 import { getDatabaseRuntimeInfo } from '../bootstrap-env';
+import schemaPlanService from './schema_plan.service';
 
 type HealthStatus = 'ok' | 'degraded' | 'error';
 
@@ -130,7 +131,8 @@ class HealthService {
             status: 'ok',
             ts: new Date().toISOString(),
             uptime_s: Math.round(process.uptime()),
-            database: getDatabaseRuntimeInfo()
+            database: getDatabaseRuntimeInfo(),
+            schema_plan: schemaPlanService.getPlan()
         };
     }
 
@@ -154,6 +156,7 @@ class HealthService {
             status: overall,
             ts: new Date().toISOString(),
             uptime_s: Math.round(process.uptime()),
+            schema_plan: schemaPlanService.getPlan(),
             components
         };
     }

@@ -9,9 +9,11 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    // Prefer an explicit direct URL for Supabase migrations, otherwise fall back to the runtime DATABASE_URL.
-    url: process.env["DIRECT_DATABASE_URL"]
+    // Prefer the unified APP_* direct URL, then planner legacy names, then derive from runtime.
+    url: process.env["APP_DIRECT_DATABASE_URL"]
+      || process.env["DIRECT_DATABASE_URL"]
       || process.env["SUPABASE_DIRECT_URL"]
+      || process.env["APP_DATABASE_URL"]?.replace(':6543', ':5432')
       || process.env["DATABASE_URL"]?.replace(':6543', ':5432'),
   },
 });
