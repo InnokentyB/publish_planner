@@ -11,12 +11,22 @@ const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 export class FaeService {
-    private openai: OpenAI;
+    private openai: OpenAI | null = null;
 
     constructor() {
-        this.openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY
-        });
+        if (process.env.OPENAI_API_KEY) {
+            this.openai = new OpenAI({
+                apiKey: process.env.OPENAI_API_KEY
+            });
+        }
+    }
+
+    private getOpenAIClient(): OpenAI {
+        if (!this.openai) {
+            throw new Error('OPENAI_API_KEY is required for feedback adaptation flows');
+        }
+
+        return this.openai;
     }
 
     /**
@@ -50,7 +60,7 @@ export class FaeService {
 
 Предложи корректировки стратегии.`;
 
-        const responseStr = await this.openai.chat.completions.create({
+        const responseStr = await this.getOpenAIClient().chat.completions.create({
             model: 'gpt-4o',
             messages: [
                 { role: 'system', content: systemPrompt },
