@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, projectsApi, publicationTasksApi } from '../api'
 import { useAuth } from '../context/AuthContext'
+import ContentMarkupRenderer from '../components/ContentMarkupRenderer'
 
 type JsonRecord = Record<string, any>
 
@@ -417,11 +418,11 @@ export default function ProjectWorkspace() {
                                                                     {file.exists === false ? 'Not available in current runtime path' : 'Available'}
                                                                 </div>
                                                                 {file.content && (
-                                                                    <textarea
-                                                                        readOnly
-                                                                        value={file.content}
-                                                                        rows={8}
-                                                                        className="w-full bg-surface-container-low border-none rounded-2xl p-4 text-xs leading-6 focus:outline-none resize-none"
+                                                                    <ContentMarkupRenderer
+                                                                        content={file.content}
+                                                                        contentType="auto"
+                                                                        title={file.file_name || file.ref || `resource-${index}`}
+                                                                        className="mt-3"
                                                                     />
                                                                 )}
                                                             </div>
@@ -537,12 +538,11 @@ export default function ProjectWorkspace() {
                                                         <span className="text-xs text-on-surface-variant">{manualFileName}</span>
                                                     )}
                                                 </div>
-                                                <textarea
-                                                    readOnly
-                                                    value={manualFileContent}
-                                                    rows={18}
-                                                    className="w-full bg-white border-none rounded-2xl p-4 text-sm leading-6 focus:outline-none resize-none"
-                                                    placeholder="Upload a markdown or HTML file to preview channel content here."
+                                                <ContentMarkupRenderer
+                                                    content={manualFileContent}
+                                                    contentType={manualFileType === 'unknown' ? 'auto' : manualFileType}
+                                                    title={manualFileName || 'manual-upload-preview'}
+                                                    emptyMessage="Upload a markdown or HTML file to preview channel content here."
                                                 />
                                             </div>
                                         </section>

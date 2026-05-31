@@ -176,3 +176,49 @@ export const publicationTasksApi = {
     externalCommentAlert: (id: number, data: { text?: string; commentUrl?: string; author?: string }) =>
         api.post(`/api/publication-tasks/${id}/external-comment-alert`, data)
 };
+
+export const parserApi = {
+    health: (projectId: number) => api.get(`/api/projects/${projectId}/parser/health`),
+    createSearchJob: (
+        projectId: number,
+        data: {
+            source?: 'reddit' | 'indie_hackers';
+            query: string;
+            subreddit?: string;
+            subreddits?: string[];
+            intent?: string;
+            cluster?: string;
+            priority?: number;
+            matchMustIncludeAny?: string[];
+            excludeIfContains?: string[];
+            excludeRegexes?: string[];
+            limit?: number;
+            minScore?: number;
+            dateFrom?: string;
+            dateTo?: string;
+            includeComments?: boolean;
+            enrich?: boolean;
+        }
+    ) => api.post(`/api/projects/${projectId}/parser/search`, data),
+    getSearchJob: (projectId: number, jobId: string) => api.get(`/api/projects/${projectId}/parser/search/${jobId}`),
+    refreshSearchJob: (projectId: number, jobId: string) => api.post(`/api/projects/${projectId}/parser/search/${jobId}/refresh`),
+    listPosts: (projectId: number, params?: { limit?: number; offset?: number }) => {
+        const query = new URLSearchParams();
+        if (params?.limit !== undefined) query.set('limit', String(params.limit));
+        if (params?.offset !== undefined) query.set('offset', String(params.offset));
+        const suffix = query.toString() ? `?${query.toString()}` : '';
+        return api.get(`/api/projects/${projectId}/parser/posts${suffix}`);
+    },
+    getInsights: (projectId: number, params?: { limit?: number; offset?: number; jobId?: string; type?: string }) => {
+        const query = new URLSearchParams();
+        if (params?.limit !== undefined) query.set('limit', String(params.limit));
+        if (params?.offset !== undefined) query.set('offset', String(params.offset));
+        if (params?.jobId) query.set('jobId', params.jobId);
+        if (params?.type) query.set('type', params.type);
+        const suffix = query.toString() ? `?${query.toString()}` : '';
+        return api.get(`/api/projects/${projectId}/parser/insights${suffix}`);
+    },
+    getSummary: (projectId: number, jobId: string) => api.get(`/api/projects/${projectId}/parser/summaries/${jobId}`),
+    listTemplates: (projectId: number) => api.get(`/api/projects/${projectId}/parser/templates`),
+    runTemplate: (projectId: number, templateId: string) => api.post(`/api/projects/${projectId}/parser/templates/${templateId}/run`)
+};

@@ -2,9 +2,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
 import { format } from 'date-fns'
-import Markdown from 'markdown-to-jsx'
 import { api, presetsApi, contentDictionaryApi } from '../api'
 import CommentSection from '../components/CommentSection'
+import ContentMarkupRenderer from '../components/ContentMarkupRenderer'
 
 interface Post {
     id: number
@@ -500,9 +500,12 @@ export default function PostEditor() {
                     <div className="space-y-4">
                         <h3 className="text-xs font-black uppercase tracking-[0.2em] text-on-surface/40">Synthesized Preview</h3>
                         <div className="p-8 bg-[#F8F9FB] rounded-[2rem] border border-outline-variant/10 min-h-[400px]">
-                            <div className="prose prose-sm prose-slate max-w-none prose-p:leading-relaxed prose-strong:text-primary prose-a:text-primary">
-                                {text ? <Markdown>{text}</Markdown> : <p className="italic opacity-20">Awaiting content for synthesis...</p>}
-                            </div>
+                            <ContentMarkupRenderer
+                                content={text}
+                                contentType="markdown"
+                                title={`post-${post.id}-preview`}
+                                emptyMessage="Awaiting content for synthesis..."
+                            />
                         </div>
                     </div>
 
