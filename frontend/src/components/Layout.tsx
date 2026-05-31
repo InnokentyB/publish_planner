@@ -10,11 +10,19 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { user, projects, currentProject, setCurrentProject, logout } = useAuth();
   const location = useLocation();
 
-  const isActive = (path: string) => location.pathname === path;
+  const isActive = (path: string) => {
+    if (path === '/projects') {
+      return location.pathname === '/projects' || location.pathname.startsWith('/channels/');
+    }
+
+    return location.pathname === path;
+  };
 
   const navItems = [
     { label: 'Projects', path: '/projects', icon: 'folder_open' },
+    { label: 'Analytics', path: '/analytics', icon: 'monitoring' },
     { label: 'Parsers', path: '/parsers', icon: 'hub' },
+    { label: 'Recipes', path: '/recipes', icon: 'book_2' },
     { label: 'Publishing', path: '/publication-tasks', icon: 'publish' },
     { label: 'Guide', path: '/guide', icon: 'help_outline' },
     { label: 'Calendar', path: '/calendar', icon: 'calendar_month' },
@@ -119,7 +127,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
           <nav className="flex items-center gap-8 h-full">
             <Link to="/projects" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Project</Link>
-            <Link to="/publication-tasks" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Channels</Link>
+            <Link to="/publication-tasks" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Publishing</Link>
+            <Link to="/analytics" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Analytics</Link>
+            <Link to="/recipes" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Recipes</Link>
             <Link to="/calendar" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Calendar</Link>
             <div className="flex items-center gap-4 ml-4">
               <button className="p-2 text-on-surface-variant hover:opacity-80 transition-opacity">

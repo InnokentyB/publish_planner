@@ -13,6 +13,9 @@ import Guide from './pages/Guide'
 import PublicationTasks from './pages/PublicationTasks'
 import ProjectWorkspace from './pages/ProjectWorkspace'
 import Parsers from './pages/Parsers'
+import ChannelWorkspace from './pages/ChannelWorkspace'
+import PostPublicationAnalytics from './pages/PostPublicationAnalytics'
+import SavedRecipesLibrary from './pages/SavedRecipesLibrary'
 import './index.css'
 
 import Layout from './components/Layout'
@@ -37,7 +40,10 @@ function AppContent() {
     <Layout>
       <Routes>
         <Route path="/projects" element={<ProjectWorkspace />} />
+        <Route path="/channels/:channelId" element={<ChannelWorkspace />} />
         <Route path="/parsers" element={<Parsers />} />
+        <Route path="/recipes" element={<SavedRecipesLibrary />} />
+        <Route path="/analytics" element={<PostPublicationAnalytics />} />
 
         {/* V2 Orchestrator Routes */}
         <Route path="/orchestrator" element={<V2Dashboard />} />
