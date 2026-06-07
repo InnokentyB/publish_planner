@@ -7,7 +7,6 @@ import { config } from 'dotenv';
 import plannerService from './planner.service';
 import generatorService from './generator.service';
 import publisherService from './publisher.service';
-import agentService from './agent.service';
 import multiAgentService from './multi_agent.service';
 
 config();
@@ -347,6 +346,7 @@ class TelegramService {
 
             // Delegate everything else to the AI Agent
             try {
+                const { default: agentService } = await import('./agent.service');
                 const response = await agentService.processMessage(text);
                 await ctx.reply(response, { parse_mode: 'Markdown' });
             } catch (err: any) {
