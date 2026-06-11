@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import prisma from '../db';
 import publicationAdapterService from './publication_adapter.service';
 import { mapActionStatus, resolveActionTitle } from './publication_runtime.helpers';
@@ -22,6 +23,21 @@ type PublicationPlan = {
     ongoing_rules?: Array<any>;
     measurement?: any;
     dependencies_matrix_visualized?: Record<string, any>;
+    asset_snapshots?: Record<string, any>;
+};
+
+type AssetSnapshot = {
+    ref: string;
+    relative_path: string | null;
+    file_name: string | null;
+    section_marker: string | null;
+    content: string | null;
+    content_type: string | null;
+    content_length: number;
+    checksum: string | null;
+    source: 'filesystem' | 'inline' | 'mcp' | 'preserved';
+    source_available: boolean;
+    captured_at: string;
 };
 
 function slugify(value: string) {
@@ -104,6 +120,21 @@ function dedupeResourceFiles(entries: any[]) {
     });
 }
 
+function inferContentType(relativePath?: string | null) {
+    if (!relativePath) return 'text/plain';
+    const normalized = relativePath.toLowerCase();
+    if (normalized.endsWith('.md') || normalized.endsWith('.markdown')) return 'text/markdown';
+    if (normalized.endsWith('.html') || normalized.endsWith('.htm')) return 'text/html';
+    if (normalized.endsWith('.json')) return 'application/json';
+    if (normalized.endsWith('.yaml') || normalized.endsWith('.yml')) return 'application/yaml';
+    return 'text/plain';
+}
+
+function checksumContent(content: string | null) {
+    if (typeof content !== 'string') return null;
+    return createHash('sha256').update(content).digest('hex');
+}
+
 function computeSchedule(action: any, fallbackTimezone?: string) {
     if (!action.scheduled_date) return null;
 
@@ -169,6 +200,11 @@ class PublicationPlanService {
             }
         }
 
+        const existingSnapshots = existingProject
+            ? await this.loadAssetSnapshots(existingProject.id)
+            : {};
+        const assetSnapshots = this.buildAssetSnapshots(plan, existingSnapshots);
+
         return prisma.$transaction(async (tx) => {
             const project = existingProject
                 ? await tx.project.update({
@@ -228,6 +264,11 @@ class PublicationPlanService {
                     project_id: project.id,
                     key: 'publication_plan_accounts',
                     value: JSON.stringify(plan.accounts)
+                },
+                {
+                    project_id: project.id,
+                    key: 'publication_plan_asset_snapshots',
+                    value: JSON.stringify(assetSnapshots)
                 },
                 {
                     project_id: project.id,
@@ -410,6 +451,7 @@ class PublicationPlanService {
                     accounts: channels.length,
                     actions: plan.actions.length,
                     assets: Object.keys(plan.assets).length,
+                    assetSnapshots: Object.keys(assetSnapshots).length,
                     ongoingRules: (plan.ongoing_rules || []).length,
                     updatedExistingProject: Boolean(existingProject)
                 }
@@ -417,50 +459,218 @@ class PublicationPlanService {
         });
     }
 
+    private readAssetContent(plan: PublicationPlan, asset: any, relativePath: string) {
+        const pipelineRoot = plan.meta.pipeline_root || '';
+        if (!pipelineRoot) {
+            return null;
+        }
+
+        const fullPath = path.resolve(pipelineRoot, relativePath);
+        const normalizedRoot = path.resolve(pipelineRoot);
+        if (!fullPath.startsWith(normalizedRoot)) {
+            return null;
+        }
+
+        if (!fs.existsSync(fullPath)) {
+            return null;
+        }
+
+        const rawContent = fs.readFileSync(fullPath, 'utf8');
+        return {
+            fullPath,
+            content: asset.section_marker ? resolveSection(rawContent, asset.section_marker) : rawContent
+        };
+    }
+
+    buildAssetSnapshots(plan: PublicationPlan, existingSnapshots: Record<string, AssetSnapshot> = {}, overrides: Record<string, Partial<AssetSnapshot> & { content?: string | null }> = {}) {
+        const snapshots: Record<string, AssetSnapshot> = {};
+
+        for (const [ref, asset] of Object.entries(plan.assets || {})) {
+            const relativePath = typeof (asset as any)?.path === 'string' ? (asset as any).path : null;
+            const sectionMarker = (asset as any)?.section_marker || null;
+            const previous = existingSnapshots[ref];
+            const override = overrides[ref];
+
+            if (override && typeof override.content === 'string') {
+                snapshots[ref] = {
+                    ref,
+                    relative_path: relativePath,
+                    file_name: relativePath ? path.basename(relativePath) : null,
+                    section_marker: sectionMarker,
+                    content: override.content,
+                    content_type: override.content_type || inferContentType(relativePath),
+                    content_length: override.content.length,
+                    checksum: checksumContent(override.content),
+                    source: 'mcp',
+                    source_available: true,
+                    captured_at: new Date().toISOString()
+                };
+                continue;
+            }
+
+            const inlineContent = typeof (asset as any)?.content === 'string' ? (asset as any).content : null;
+            if (inlineContent) {
+                snapshots[ref] = {
+                    ref,
+                    relative_path: relativePath,
+                    file_name: relativePath ? path.basename(relativePath) : ref,
+                    section_marker: sectionMarker,
+                    content: inlineContent,
+                    content_type: inferContentType(relativePath),
+                    content_length: inlineContent.length,
+                    checksum: checksumContent(inlineContent),
+                    source: 'inline',
+                    source_available: true,
+                    captured_at: new Date().toISOString()
+                };
+                continue;
+            }
+
+            if (!relativePath) {
+                continue;
+            }
+
+            const resolved = this.readAssetContent(plan, asset, relativePath);
+            if (resolved) {
+                snapshots[ref] = {
+                    ref,
+                    relative_path: relativePath,
+                    file_name: path.basename(relativePath),
+                    section_marker: sectionMarker,
+                    content: resolved.content,
+                    content_type: inferContentType(relativePath),
+                    content_length: resolved.content.length,
+                    checksum: checksumContent(resolved.content),
+                    source: 'filesystem',
+                    source_available: true,
+                    captured_at: new Date().toISOString()
+                };
+                continue;
+            }
+
+            if (previous?.content) {
+                snapshots[ref] = {
+                    ...previous,
+                    ref,
+                    relative_path: relativePath,
+                    file_name: path.basename(relativePath),
+                    section_marker: sectionMarker,
+                    source: previous.source === 'mcp' ? 'mcp' : 'preserved',
+                    source_available: false
+                };
+            }
+        }
+
+        return snapshots;
+    }
+
+    resolveAssetRuntime(plan: PublicationPlan, assetRef: string, maxChars?: number) {
+        const asset = plan.assets?.[assetRef];
+        if (!asset) {
+            return {
+                ref: assetRef,
+                missing: true
+            };
+        }
+
+        const relativePath = typeof asset.path === 'string' ? asset.path : null;
+        const snapshot = plan.asset_snapshots?.[assetRef] || null;
+        const runtimeRead = relativePath ? this.readAssetContent(plan, asset, relativePath) : null;
+        const inlineContent = typeof asset.content === 'string' ? asset.content : null;
+        const snapshotContent = typeof snapshot?.content === 'string' ? snapshot.content : null;
+        const content = runtimeRead?.content ?? inlineContent ?? snapshotContent;
+        const truncated = typeof maxChars === 'number' && typeof content === 'string' && content.length > maxChars;
+
+        return {
+            ref: assetRef,
+            asset,
+            full_path: runtimeRead?.fullPath || (relativePath && plan.meta.pipeline_root ? path.resolve(plan.meta.pipeline_root, relativePath) : null),
+            file_name: relativePath ? path.basename(relativePath) : (inlineContent ? assetRef : null),
+            relative_path: relativePath,
+            section_marker: asset.section_marker || null,
+            exists: Boolean(content),
+            content: typeof content === 'string'
+                ? (truncated ? `${content.slice(0, maxChars)}\n...[truncated]` : content)
+                : null,
+            truncated: Boolean(truncated),
+            snapshot_available: Boolean(snapshotContent),
+            content_source: runtimeRead?.content ? 'filesystem' : (inlineContent ? 'inline' : (snapshotContent ? (snapshot?.source || 'snapshot') : null)),
+            snapshot
+        };
+    }
+
+    async loadAssetSnapshots(projectId: number) {
+        const snapshots = await prisma.projectSettings.findFirst({
+            where: {
+                project_id: projectId,
+                key: 'publication_plan_asset_snapshots'
+            }
+        });
+
+        if (!snapshots?.value) {
+            return {};
+        }
+
+        try {
+            return JSON.parse(snapshots.value);
+        } catch {
+            return {};
+        }
+    }
+
+    async saveAssetSnapshots(projectId: number, snapshots: Record<string, AssetSnapshot>) {
+        await prisma.projectSettings.upsert({
+            where: {
+                project_id_key: {
+                    project_id: projectId,
+                    key: 'publication_plan_asset_snapshots'
+                }
+            },
+            update: {
+                value: JSON.stringify(snapshots)
+            },
+            create: {
+                project_id: projectId,
+                key: 'publication_plan_asset_snapshots',
+                value: JSON.stringify(snapshots)
+            }
+        });
+
+        return snapshots;
+    }
+
+    async refreshAssetSnapshots(projectId: number, plan: PublicationPlan, overrides: Record<string, Partial<AssetSnapshot> & { content?: string | null }> = {}) {
+        const existing = await this.loadAssetSnapshots(projectId);
+        const snapshots = this.buildAssetSnapshots(plan, existing, overrides);
+        await this.saveAssetSnapshots(projectId, snapshots);
+        return snapshots;
+    }
+
     buildHandoffBundle(plan: PublicationPlan, item: any) {
         const action = item.assets?.action || {};
         const accountRef = item.assets?.account_ref || null;
         const account = accountRef ? plan.accounts[accountRef] : null;
-        const pipelineRoot = plan.meta.pipeline_root || '';
         const assetRefs = item.assets?.asset_refs || [];
-        const resolvedAssets = assetRefs.map((ref: string) => {
-            const asset = plan.assets[ref];
-            if (!asset) {
-                return { ref, missing: true };
-            }
-
-            const fullPath = asset.path ? path.join(pipelineRoot, asset.path) : null;
-            let content: string | null = null;
-            let exists = false;
-            if (fullPath && fs.existsSync(fullPath)) {
-                exists = true;
-                const rawContent = fs.readFileSync(fullPath, 'utf8');
-                content = asset.section_marker ? resolveSection(rawContent, asset.section_marker) : rawContent;
-            }
-
-            return {
-                ref,
-                asset,
-                full_path: fullPath,
-                file_name: asset.path ? path.basename(asset.path) : null,
-                relative_path: asset.path || null,
-                section_marker: asset.section_marker || null,
-                exists,
-                content
-            };
-        });
+        const resolvedAssets = assetRefs.map((ref: string) => this.resolveAssetRuntime(plan, ref));
         const contentFiles = Array.isArray(action.content_files) ? action.content_files : [];
         const resolvedContentFiles = contentFiles.map((file: any, index: number) => {
             const relativePath = file.path || null;
-            const fullPath = relativePath ? path.join(pipelineRoot, relativePath) : null;
             const resolvedUrl = file.url_ref ? resolveRef(plan, file.url_ref) : file.url || null;
             let content: string | null = null;
             let exists = false;
+            let fullPath: string | null = null;
 
-            if (fullPath && fs.existsSync(fullPath)) {
-                exists = true;
-                const rawContent = fs.readFileSync(fullPath, 'utf8');
-                content = file.section_marker ? resolveSection(rawContent, file.section_marker) : rawContent;
+            if (relativePath) {
+                const syntheticAsset = {
+                    path: relativePath,
+                    section_marker: file.section_marker || null
+                };
+                const resolved = this.readAssetContent(plan, syntheticAsset, relativePath);
+                fullPath = resolved?.fullPath || (plan.meta.pipeline_root ? path.resolve(plan.meta.pipeline_root, relativePath) : null);
+                if (resolved?.content) {
+                    exists = true;
+                    content = resolved.content;
+                }
             }
 
             return {

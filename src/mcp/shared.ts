@@ -331,6 +331,20 @@ export function registerPlannerTools(server: McpServer) {
         return asToolResult(result);
     });
 
+    server.registerTool('ba_refresh_publication_plan_asset_snapshots', {
+        description: 'Refresh stored publication-plan asset snapshots from the runtime filesystem and optional inline content overrides.',
+        inputSchema: {
+            projectId: z.number().int().positive(),
+            assetContents: z.record(z.string(), z.object({
+                content: z.string(),
+                contentType: z.string().optional()
+            })).optional().describe('Optional assetRef -> content map used when files are not available in the current runtime.')
+        }
+    }, async ({ projectId, assetContents }) => {
+        const result = await mcpPublicationService.refreshPublicationPlanAssetSnapshots(projectId, assetContents || {});
+        return asToolResult(result);
+    });
+
     server.registerTool('ba_read_publication_plan_ref', {
         description: 'Resolve a publication plan reference such as article_knowledge.target_url or an asset ref and return its value.',
         annotations: {

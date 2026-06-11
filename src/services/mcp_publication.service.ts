@@ -571,18 +571,18 @@ class McpPublicationService {
             plan_id: plan.meta.plan_id,
             pipeline_root: pipelineRoot,
             assets: Object.entries(plan.assets || {}).map(([ref, asset]) => {
-                const relativePath = typeof (asset as any)?.path === 'string' ? (asset as any).path : null;
-                const fullPath = relativePath && pipelineRoot ? this.resolvePlanPath(pipelineRoot, relativePath) : null;
-                const exists = fullPath ? fs.existsSync(fullPath) : false;
+                const runtime = publicationPlanService.resolveAssetRuntime(plan as any, ref);
 
                 return {
                     ref,
                     type: (asset as any)?.type || null,
-                    relative_path: relativePath,
-                    full_path: fullPath,
+                    relative_path: runtime.relative_path || null,
+                    full_path: runtime.full_path || null,
                     section_marker: (asset as any)?.section_marker || null,
                     target_url: (asset as any)?.target_url || null,
-                    exists
+                    exists: runtime.exists === true,
+                    snapshot_available: runtime.snapshot_available === true,
+                    content_source: runtime.content_source || null
                 };
             })
         };
@@ -599,53 +599,46 @@ class McpPublicationService {
             throw new Error(`Asset '${assetRef}' not found in imported publication plan`);
         }
 
-        const relativePath = typeof asset.path === 'string' ? asset.path : null;
-        if (!relativePath) {
-            return {
-                project_id: projectId,
-                plan_id: plan.meta.plan_id,
-                asset_ref: assetRef,
-                asset,
-                relative_path: null,
-                full_path: null,
-                exists: false,
-                content: null,
-                truncated: false
-            };
-        }
-
-        const pipelineRoot = path.resolve(plan.meta.pipeline_root || '');
-        const fullPath = this.resolvePlanPath(pipelineRoot, relativePath);
-        const exists = fs.existsSync(fullPath);
-        if (!exists) {
-            return {
-                project_id: projectId,
-                plan_id: plan.meta.plan_id,
-                asset_ref: assetRef,
-                asset,
-                relative_path: relativePath,
-                full_path: fullPath,
-                exists: false,
-                content: null,
-                truncated: false
-            };
-        }
-
-        const rawContent = fs.readFileSync(fullPath, 'utf8');
-        const resolvedContent = asset.section_marker ? resolveSection(rawContent, asset.section_marker) : rawContent;
-        const truncated = resolvedContent.length > maxChars;
+        const runtime = publicationPlanService.resolveAssetRuntime(plan as any, assetRef, maxChars);
 
         return {
             project_id: projectId,
             plan_id: plan.meta.plan_id,
             asset_ref: assetRef,
             asset,
-            relative_path: relativePath,
-            full_path: fullPath,
-            exists: true,
-            section_marker: asset.section_marker || null,
-            truncated,
-            content: truncated ? `${resolvedContent.slice(0, maxChars)}\n...[truncated]` : resolvedContent
+            relative_path: runtime.relative_path || null,
+            full_path: runtime.full_path || null,
+            exists: runtime.exists === true,
+            section_marker: runtime.section_marker || null,
+            truncated: runtime.truncated === true,
+            snapshot_available: runtime.snapshot_available === true,
+            content_source: runtime.content_source || null,
+            content: runtime.content || null
+        };
+    }
+
+    async refreshPublicationPlanAssetSnapshots(projectId: number, assetContents: Record<string, { content: string; contentType?: string }> = {}) {
+        const plan = await this.loadPublicationPlanContext(projectId);
+        if (!plan) {
+            throw new Error(`No imported publication plan found for project ${projectId}`);
+        }
+
+        const overrides = Object.fromEntries(
+            Object.entries(assetContents).map(([ref, value]) => [
+                ref,
+                {
+                    content: value.content,
+                    content_type: value.contentType || null
+                }
+            ])
+        );
+
+        const snapshots = await publicationPlanService.refreshAssetSnapshots(projectId, plan as any, overrides);
+        return {
+            project_id: projectId,
+            plan_id: plan.meta.plan_id,
+            snapshots_count: Object.keys(snapshots).length,
+            asset_refs: Object.keys(snapshots)
         };
     }
 
@@ -787,7 +780,20 @@ class McpPublicationService {
             throw new Error(`Publication task ${taskId} not found for project ${projectId}`);
         }
 
-        return item;
+        const plan = await this.loadPublicationPlanContext(projectId);
+        const action = (item.assets as any)?.action;
+        if (!plan || !action) {
+            return item;
+        }
+
+        const bundle = publicationPlanService.buildHandoffBundle({ ...plan, actions: [action] } as any, item);
+        return {
+            ...item,
+            quality_report: {
+                ...((item.quality_report as any) || {}),
+                handoff_bundle: bundle
+            }
+        };
     }
 
     async preparePublicationTask(projectId: number, taskId: number) {
@@ -798,15 +804,6 @@ class McpPublicationService {
 
         if (!item) {
             throw new Error(`Publication task ${taskId} not found for project ${projectId}`);
-        }
-
-        const existingBundle = (item.quality_report as any)?.handoff_bundle;
-        if (existingBundle) {
-            return {
-                item,
-                bundle: existingBundle,
-                reused: true
-            };
         }
 
         const plan = await this.loadPublicationPlanContext(projectId);
@@ -1176,7 +1173,7 @@ class McpPublicationService {
         const settings = await prisma.projectSettings.findMany({
             where: {
                 project_id: projectId,
-                key: { in: ['publication_plan_meta', 'publication_plan_assets', 'publication_plan_accounts'] }
+                key: { in: ['publication_plan_meta', 'publication_plan_assets', 'publication_plan_accounts', 'publication_plan_asset_snapshots'] }
             }
         });
 
@@ -1192,6 +1189,9 @@ class McpPublicationService {
             meta: JSON.parse(meta),
             assets: JSON.parse(assets),
             accounts: JSON.parse(accounts),
+            asset_snapshots: settings.find((setting) => setting.key === 'publication_plan_asset_snapshots')?.value
+                ? JSON.parse(settings.find((setting) => setting.key === 'publication_plan_asset_snapshots')!.value)
+                : {},
             actions: [] as any[]
         };
     }

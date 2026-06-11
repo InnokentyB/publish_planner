@@ -25,13 +25,14 @@ async function loadPublicationPlanContext(projectId: number) {
     const settings = await prisma.projectSettings.findMany({
         where: {
             project_id: projectId,
-            key: { in: ['publication_plan_meta', 'publication_plan_assets', 'publication_plan_accounts'] }
+            key: { in: ['publication_plan_meta', 'publication_plan_assets', 'publication_plan_accounts', 'publication_plan_asset_snapshots'] }
         }
     });
 
     const meta = settings.find((setting) => setting.key === 'publication_plan_meta')?.value;
     const assets = settings.find((setting) => setting.key === 'publication_plan_assets')?.value;
     const accounts = settings.find((setting) => setting.key === 'publication_plan_accounts')?.value;
+    const assetSnapshots = settings.find((setting) => setting.key === 'publication_plan_asset_snapshots')?.value;
 
     if (!meta || !assets || !accounts) {
         return null;
@@ -41,6 +42,7 @@ async function loadPublicationPlanContext(projectId: number) {
         meta: JSON.parse(meta),
         assets: JSON.parse(assets),
         accounts: JSON.parse(accounts),
+        asset_snapshots: assetSnapshots ? JSON.parse(assetSnapshots) : {},
         actions: [] as any[]
     };
 }
@@ -622,7 +624,26 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             ? items.filter((item) => (item.quality_report as any)?.execution_mode === 'manual')
             : items;
 
-        return filtered;
+        const plan = await loadPublicationPlanContext(projectId);
+        if (!plan) {
+            return filtered;
+        }
+
+        return filtered.map((item) => {
+            const action = (item.assets as any)?.action;
+            if (!action) {
+                return item;
+            }
+
+            const bundle = publicationPlanService.buildHandoffBundle({ ...plan, actions: [action] } as any, item);
+            return {
+                ...item,
+                quality_report: {
+                    ...((item.quality_report as any) || {}),
+                    handoff_bundle: bundle
+                }
+            };
+        });
     });
 
     fastify.get('/api/publication-tasks/:id', async (request, reply) => {
@@ -639,7 +660,20 @@ export default async function apiRoutes(fastify: FastifyInstance) {
             return reply.code(404).send({ error: 'Publication task not found' });
         }
 
-        return item;
+        const plan = await loadPublicationPlanContext(projectId);
+        const action = (item.assets as any)?.action;
+        if (!plan || !action) {
+            return item;
+        }
+
+        const bundle = publicationPlanService.buildHandoffBundle({ ...plan, actions: [action] } as any, item);
+        return {
+            ...item,
+            quality_report: {
+                ...((item.quality_report as any) || {}),
+                handoff_bundle: bundle
+            }
+        };
     });
 
     fastify.post('/api/publication-tasks/:id/prepare-handoff', async (request, reply) => {
@@ -654,15 +688,6 @@ export default async function apiRoutes(fastify: FastifyInstance) {
 
         if (!item) {
             return reply.code(404).send({ error: 'Publication task not found' });
-        }
-
-        const existingBundle = (item.quality_report as any)?.handoff_bundle;
-        if (existingBundle) {
-            return {
-                item,
-                bundle: existingBundle,
-                reused: true
-            };
         }
 
         const plan = await loadPublicationPlanContext(projectId);
