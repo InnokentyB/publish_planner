@@ -35,13 +35,13 @@ export default function SavedRecipesLibrary() {
     const runTemplate = useMutation({
         mutationFn: (templateId: string) => {
             if (!currentProject?.id) {
-                throw new Error('Select a project first')
+                throw new Error('Сначала выбери проект')
             }
             return parserApi.runTemplate(currentProject.id, templateId)
         },
         onSuccess: (result: any, templateId: string) => {
             const jobId = result?.parser_response?.job_id || result?.job_id
-            setMessage(`Recipe ${templateId} queued${jobId ? ` as ${jobId}` : ''}.`)
+            setMessage(`Рецепт ${templateId} поставлен в очередь${jobId ? ` как ${jobId}` : ''}.`)
             queryClient.invalidateQueries({ queryKey: ['parser_job', currentProject?.id] })
             queryClient.invalidateQueries({ queryKey: ['parser_posts', currentProject?.id] })
         }
@@ -55,21 +55,21 @@ export default function SavedRecipesLibrary() {
                 <section className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm p-8 lg:p-10">
                     <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-8">
                         <div className="max-w-4xl">
-                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Saved Recipes Library</div>
+                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Библиотека сохранённых рецептов</div>
                             <h1 className="mt-3 text-4xl lg:text-5xl font-headline font-black tracking-tight text-on-surface">
-                                Reusable parser patterns for the project
+                                Переиспользуемые parser-паттерны проекта
                             </h1>
                             <p className="mt-4 text-sm leading-7 text-on-surface-variant max-w-3xl">
-                                Use recipes as repeatable discovery assets. This is where the project keeps its research playbooks before they turn into parser jobs, channel inputs, or publication candidates.
+                                Используй рецепты как повторяемые discovery-активы. Здесь проект хранит исследовательские playbook до того, как они превратятся в parser jobs, входы каналов или кандидатов на публикацию.
                             </p>
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 min-w-[320px]">
                             <Link to="/parsers" className="rounded-2xl ai-gradient text-white px-5 py-4 text-sm font-black text-center shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all">
-                                Open Parser Lab
+                                Открыть лабораторию парсеров
                             </Link>
                             <Link to="/projects" className="rounded-2xl bg-surface-container-high px-5 py-4 text-sm font-black text-on-surface text-center hover:bg-primary/10 hover:text-primary transition-all">
-                                Back to Project
+                                Назад к проекту
                             </Link>
                         </div>
                     </div>
@@ -84,8 +84,8 @@ export default function SavedRecipesLibrary() {
                 <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-6">
                     <div className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm overflow-hidden">
                         <div className="p-6 border-b border-outline-variant/10">
-                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Recipes</div>
-                            <h2 className="mt-2 text-2xl font-headline font-black text-on-surface">Reusable search setups</h2>
+                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Рецепты</div>
+                            <h2 className="mt-2 text-2xl font-headline font-black text-on-surface">Переиспользуемые поисковые настройки</h2>
                         </div>
 
                         <div className="p-6 grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -93,7 +93,7 @@ export default function SavedRecipesLibrary() {
                                 const recipeId = String(recipe.template_id || recipe.id || recipe.slug || `recipe-${index}`)
                                 const recipeName = normalizeText(recipe.name || recipe.title || recipe.template_name || recipeId)
                                 const source = normalizeText(recipe.source || recipe.platform || recipe.kind || 'parser')
-                                const description = normalizeText(recipe.description || recipe.summary || recipe.intent || 'Reusable discovery pattern for this content system.')
+                                const description = normalizeText(recipe.description || recipe.summary || recipe.intent || 'Переиспользуемый discovery-паттерн для этой контентной системы.')
                                 const communities = Array.isArray(recipe.subreddits || recipe.groups || recipe.communities)
                                     ? (recipe.subreddits || recipe.groups || recipe.communities)
                                     : []
@@ -113,7 +113,7 @@ export default function SavedRecipesLibrary() {
                                                 disabled={runTemplate.isPending}
                                                 className="rounded-2xl bg-white px-4 py-3 text-sm font-black text-primary hover:bg-primary hover:text-white transition-all disabled:opacity-50"
                                             >
-                                                {runTemplate.isPending && activeTemplateId === recipeId ? 'Running...' : 'Run'}
+                                                {runTemplate.isPending && activeTemplateId === recipeId ? 'Запуск...' : 'Запустить'}
                                             </button>
                                         </div>
 
@@ -132,7 +132,7 @@ export default function SavedRecipesLibrary() {
                                 )
                             }) : (
                                 <div className="rounded-[1.5rem] bg-surface-container-low p-5 text-sm text-on-surface-variant lg:col-span-2">
-                                    No parser recipes were returned for this project yet.
+                                    Для этого проекта пока не найдено ни одного рецепта парсера.
                                 </div>
                             )}
                         </div>
@@ -140,20 +140,20 @@ export default function SavedRecipesLibrary() {
 
                     <div className="space-y-6">
                         <div className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm p-6">
-                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">How To Use</div>
+                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Как использовать</div>
                             <div className="mt-4 space-y-3 text-sm leading-7 text-on-surface-variant">
-                                <p>1. Keep repeatable discovery logic here instead of rebuilding filters in every parser session.</p>
-                                <p>2. Run the recipe, inspect results in Parser Lab, and only then hand off the strongest signals to a channel workspace.</p>
-                                <p>3. Use different recipes for different content network roles: pain research, founder conversations, channel-specific trend sweeps, or gated-platform warmup.</p>
+                                <p>1. Храни здесь повторяемую discovery-логику вместо того, чтобы заново собирать фильтры в каждой parser-сессии.</p>
+                                <p>2. Запускай рецепт, смотри результаты в лаборатории парсеров и только потом передавай сильнейшие сигналы в рабочую область канала.</p>
+                                <p>3. Используй разные рецепты для разных ролей сети контента: pain research, разговоры фаундеров, channel-specific trend sweeps или прогрев на gated-платформах.</p>
                             </div>
                         </div>
 
                         <div className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm p-6">
-                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Next Surface</div>
+                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Следующая поверхность</div>
                             <Link to="/parsers" className="mt-4 block rounded-[1.5rem] bg-surface-container-low p-5 hover:bg-primary/5 transition-all">
-                                <div className="font-headline font-black text-xl text-on-surface">Parser Lab</div>
+                                <div className="font-headline font-black text-xl text-on-surface">Лаборатория парсеров</div>
                                 <div className="mt-3 text-sm leading-7 text-on-surface-variant">
-                                    Open the research workspace to inspect results, set scoring thresholds, and push signals into project channels.
+                                    Открой исследовательскую рабочую область, чтобы смотреть результаты, задавать пороги скоринга и передавать сигналы в каналы проекта.
                                 </div>
                             </Link>
                         </div>
@@ -163,7 +163,7 @@ export default function SavedRecipesLibrary() {
                 {(templatesQuery.isLoading || templatesQuery.error || runTemplate.error) && (
                     <section className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm p-6 text-sm text-on-surface-variant">
                         {templatesQuery.isLoading
-                            ? 'Loading recipes...'
+                            ? 'Загружаем рецепты...'
                             : (templatesQuery.error as Error)?.message || (runTemplate.error as Error)?.message}
                     </section>
                 )}

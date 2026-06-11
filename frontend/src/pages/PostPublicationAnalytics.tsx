@@ -81,7 +81,7 @@ export default function PostPublicationAnalytics() {
             const key = String(task.channel?.id || task.channel?.name || task.type)
             const current = grouped.get(key) || {
                 key,
-                channelName: task.channel?.name || 'Unknown channel',
+                channelName: task.channel?.name || 'Неизвестный канал',
                 channelType: task.channel?.type || 'unknown',
                 published: 0,
                 views: 0,
@@ -118,21 +118,21 @@ export default function PostPublicationAnalytics() {
                 <section className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm p-8 lg:p-10">
                     <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-8">
                         <div className="max-w-4xl">
-                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Post-Publication Analytics</div>
+                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Пост-публикационная аналитика</div>
                             <h1 className="mt-3 text-4xl lg:text-5xl font-headline font-black tracking-tight text-on-surface">
-                                Review what happened after the publish
+                                Разбор того, что произошло после публикации
                             </h1>
                             <p className="mt-4 text-sm leading-7 text-on-surface-variant max-w-3xl">
-                                This workspace summarizes channel performance, missing metrics, and blocked or restricted outcomes so the project keeps its operational memory after content goes live.
+                                Эта рабочая область собирает эффективность каналов, недостающие метрики и негативные исходы, чтобы проект сохранял операционную память после выхода контента.
                             </p>
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 min-w-[320px]">
                             <Link to="/publication-tasks" className="rounded-2xl ai-gradient text-white px-5 py-4 text-sm font-black text-center shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all">
-                                Open Publishing
+                                Открыть публикации
                             </Link>
                             <Link to="/projects" className="rounded-2xl bg-surface-container-high px-5 py-4 text-sm font-black text-on-surface text-center hover:bg-primary/10 hover:text-primary transition-all">
-                                Back to Project
+                                Назад к проекту
                             </Link>
                         </div>
                     </div>
@@ -140,11 +140,11 @@ export default function PostPublicationAnalytics() {
 
                 <section className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                     {[
-                        { label: 'Published', value: publishedTasks.length },
-                        { label: 'Views', value: totals.views },
-                        { label: 'Clicks', value: totals.clicks },
-                        { label: 'Comments', value: totals.comments },
-                        { label: 'Missing Metrics', value: totals.missingMetrics }
+                        { label: 'Опубликовано', value: publishedTasks.length },
+                        { label: 'Просмотры', value: totals.views },
+                        { label: 'Клики', value: totals.clicks },
+                        { label: 'Комментарии', value: totals.comments },
+                        { label: 'Нет метрик', value: totals.missingMetrics }
                     ].map((card) => (
                         <div key={card.label} className="rounded-[1.5rem] bg-white border border-outline-variant/10 shadow-sm p-6">
                             <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">{card.label}</div>
@@ -156,8 +156,8 @@ export default function PostPublicationAnalytics() {
                 <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.5fr)_minmax(360px,1fr)] gap-6">
                     <div className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm overflow-hidden">
                         <div className="p-6 border-b border-outline-variant/10">
-                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">By Channel</div>
-                            <h2 className="mt-2 text-2xl font-headline font-black text-on-surface">Performance map</h2>
+                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">По каналам</div>
+                            <h2 className="mt-2 text-2xl font-headline font-black text-on-surface">Карта эффективности</h2>
                         </div>
                         <div className="p-6 space-y-4">
                             {byChannel.length > 0 ? byChannel.map((row) => (
@@ -168,31 +168,31 @@ export default function PostPublicationAnalytics() {
                                             <div className="mt-2 text-xl font-headline font-black text-on-surface">{row.channelName}</div>
                                         </div>
                                         <span className="px-3 py-1 rounded-full bg-white text-[10px] font-black uppercase tracking-widest text-on-surface-variant">
-                                            {row.published} published
+                                            {row.published} опубликовано
                                         </span>
                                     </div>
                                     <div className="mt-5 grid grid-cols-2 lg:grid-cols-4 gap-3">
                                         <div className="rounded-2xl bg-white px-4 py-3">
-                                            <div className="text-[10px] font-black uppercase tracking-[0.22em] text-primary/60">Views</div>
+                                            <div className="text-[10px] font-black uppercase tracking-[0.22em] text-primary/60">Просмотры</div>
                                             <div className="mt-2 text-lg font-black text-on-surface">{row.views}</div>
                                         </div>
                                         <div className="rounded-2xl bg-white px-4 py-3">
-                                            <div className="text-[10px] font-black uppercase tracking-[0.22em] text-primary/60">Clicks</div>
+                                            <div className="text-[10px] font-black uppercase tracking-[0.22em] text-primary/60">Клики</div>
                                             <div className="mt-2 text-lg font-black text-on-surface">{row.clicks}</div>
                                         </div>
                                         <div className="rounded-2xl bg-white px-4 py-3">
-                                            <div className="text-[10px] font-black uppercase tracking-[0.22em] text-primary/60">Comments</div>
+                                            <div className="text-[10px] font-black uppercase tracking-[0.22em] text-primary/60">Комментарии</div>
                                             <div className="mt-2 text-lg font-black text-on-surface">{row.comments}</div>
                                         </div>
                                         <div className="rounded-2xl bg-white px-4 py-3">
-                                            <div className="text-[10px] font-black uppercase tracking-[0.22em] text-primary/60">Missing</div>
+                                            <div className="text-[10px] font-black uppercase tracking-[0.22em] text-primary/60">Нет данных</div>
                                             <div className="mt-2 text-lg font-black text-on-surface">{row.missingMetrics}</div>
                                         </div>
                                     </div>
                                 </div>
                             )) : (
                                 <div className="rounded-[1.5rem] bg-surface-container-low p-5 text-sm text-on-surface-variant">
-                                    Published content with metrics will appear here once the project starts confirming live URLs.
+                                    Здесь появится опубликованный контент с метриками, как только проект начнёт подтверждать live URL.
                                 </div>
                             )}
                         </div>
@@ -200,23 +200,23 @@ export default function PostPublicationAnalytics() {
 
                     <div className="space-y-6">
                         <div className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm p-6">
-                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Needs Follow-Up</div>
+                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Требует follow-up</div>
                             <div className="mt-4 space-y-3">
                                 {missingMetricsTasks.length > 0 ? missingMetricsTasks.map((task) => (
                                     <div key={task.id} className="rounded-2xl bg-surface-container-low px-4 py-4">
                                         <div className="font-bold text-on-surface">{task.title || task.type}</div>
-                                        <div className="mt-2 text-sm text-on-surface-variant">{task.channel?.name || 'Unknown channel'}</div>
+                                        <div className="mt-2 text-sm text-on-surface-variant">{task.channel?.name || 'Неизвестный канал'}</div>
                                     </div>
                                 )) : (
                                     <div className="rounded-2xl bg-surface-container-low px-4 py-4 text-sm text-on-surface-variant">
-                                        No published tasks are currently missing metrics snapshots.
+                                        Сейчас нет опубликованных задач без сохранённого снимка метрик.
                                     </div>
                                 )}
                             </div>
                         </div>
 
                         <div className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm p-6">
-                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Negative Outcomes</div>
+                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Негативные исходы</div>
                             <div className="mt-4 space-y-3">
                                 {negativeOutcomeTasks.length > 0 ? negativeOutcomeTasks.map((task) => (
                                     <div key={task.id} className="rounded-2xl bg-surface-container-low px-4 py-4">
@@ -227,7 +227,7 @@ export default function PostPublicationAnalytics() {
                                     </div>
                                 )) : (
                                     <div className="rounded-2xl bg-surface-container-low px-4 py-4 text-sm text-on-surface-variant">
-                                        Blocked, removed, and restricted outcomes will appear here for follow-up.
+                                        Здесь будут появляться заблокированные, удалённые и ограниченные публикации для дальнейшей разборки.
                                     </div>
                                 )}
                             </div>
@@ -237,7 +237,7 @@ export default function PostPublicationAnalytics() {
 
                 {(isLoading || error) && (
                     <section className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm p-6 text-sm text-on-surface-variant">
-                        {isLoading ? 'Loading analytics...' : (error as Error)?.message}
+                        {isLoading ? 'Загружаем аналитику...' : (error as Error)?.message}
                     </section>
                 )}
             </div>

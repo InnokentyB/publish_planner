@@ -184,14 +184,14 @@ export default function PublicationTasks() {
     const prepareHandoff = useMutation({
         mutationFn: (taskId: number) => publicationTasksApi.prepareHandoff(taskId),
         onSuccess: () => {
-            setTaskMessage('Handoff bundle prepared.')
+            setTaskMessage('Handoff-пакет подготовлен.')
             refreshTasks()
         }
     })
 
     const confirmPublication = useMutation({
         mutationFn: () => {
-            if (!selectedTaskId) throw new Error('No task selected')
+            if (!selectedTaskId) throw new Error('Задача не выбрана')
             return publicationTasksApi.confirmPublication(selectedTaskId, {
                 publishedLink,
                 note: publicationNote || undefined,
@@ -200,39 +200,39 @@ export default function PublicationTasks() {
         },
         onSuccess: () => {
             setTaskMessage(publicationOutcome === 'published'
-                ? 'Publication confirmed. You can now fetch metrics from the channel or save them manually.'
-                : `Publication link saved with outcome: ${publicationOutcome}. The task stays confirmed even if the post is blocked or restricted.`)
+                ? 'Публикация подтверждена. Теперь можно подтянуть метрики из канала или сохранить их вручную.'
+                : `Ссылка на публикацию сохранена с исходом: ${publicationOutcome}. Задача остаётся подтверждённой, даже если пост заблокирован или ограничен.`)
             refreshTasks()
         }
     })
 
     const collectMetrics = useMutation({
         mutationFn: () => {
-            if (!selectedTaskId) throw new Error('No task selected')
+            if (!selectedTaskId) throw new Error('Задача не выбрана')
             return publicationTasksApi.collectMetrics(selectedTaskId)
         },
         onSuccess: (result: any) => {
             setTaskMessage(result?.updated
-                ? `Metrics fetched from channel${result?.reason ? `. ${result.reason}` : '.'}`
-                : (result?.reason || 'Metrics were not updated.'))
+                ? `Метрики получены из канала${result?.reason ? `. ${result.reason}` : '.'}`
+                : (result?.reason || 'Метрики не были обновлены.'))
             refreshTasks()
         }
     })
 
     const recordMetrics = useMutation({
         mutationFn: () => {
-            if (!selectedTaskId) throw new Error('No task selected')
+            if (!selectedTaskId) throw new Error('Задача не выбрана')
             return publicationTasksApi.recordMetrics(selectedTaskId, JSON.parse(metricsJson))
         },
         onSuccess: () => {
-            setTaskMessage('Metrics snapshot saved manually.')
+            setTaskMessage('Снимок метрик сохранён вручную.')
             refreshTasks()
         }
     })
 
     const sendCommentAlert = useMutation({
         mutationFn: () => {
-            if (!selectedTaskId) throw new Error('No task selected')
+            if (!selectedTaskId) throw new Error('Задача не выбрана')
             return publicationTasksApi.externalCommentAlert(selectedTaskId, {
                 author: commentAuthor || undefined,
                 commentUrl: commentUrl || undefined,
@@ -243,7 +243,7 @@ export default function PublicationTasks() {
             setCommentAuthor('')
             setCommentUrl('')
             setCommentText('')
-            setTaskMessage('External comment alert saved.')
+            setTaskMessage('Внешний алерт по комментарию сохранён.')
             refreshTasks()
         }
     })
@@ -271,20 +271,20 @@ export default function PublicationTasks() {
                         <div className="p-6 border-b border-outline-variant/10 space-y-4">
                             <div className="flex items-center justify-between gap-3">
                                 <div>
-                                    <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Publishing Console</div>
-                                    <h2 className="text-xl font-headline font-black text-on-surface mt-2">Publication Tasks</h2>
+                                    <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Консоль публикаций</div>
+                                    <h2 className="text-xl font-headline font-black text-on-surface mt-2">Задачи на публикацию</h2>
                                     <p className="text-xs text-on-surface-variant mt-2">
-                                        {currentProject ? `Project: ${currentProject.name}` : 'Choose or import a publication plan project.'}
+                                        {currentProject ? `Проект: ${currentProject.name}` : 'Выбери или импортируй проект с планом публикаций.'}
                                     </p>
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
                                     <div className="text-xs text-on-surface-variant">
-                                        {tasks?.length || 0} items
+                                        {tasks?.length || 0} элементов
                                     </div>
                                     <button
                                         onClick={() => setShowPlanModal(true)}
                                         className="w-11 h-11 rounded-2xl ai-gradient text-white flex items-center justify-center shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
-                                        title="Import or update publication plan"
+                                        title="Импортировать или обновить план публикаций"
                                     >
                                         <span className="material-symbols-outlined text-xl">hub</span>
                                     </button>
@@ -297,20 +297,20 @@ export default function PublicationTasks() {
                                     onChange={(event) => setStatusFilter(event.target.value)}
                                     className="w-full bg-surface-container-low border-none rounded-xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
                                 >
-                                    <option value="active">Active</option>
-                                    <option value="planned">Planned</option>
-                                    <option value="awaiting_manual_publication">Awaiting Manual</option>
-                                    <option value="ready_for_execution">Ready</option>
-                                    <option value="deferred">Deferred</option>
-                                    <option value="published">Published</option>
-                                    <option value="failed">Failed</option>
+                                    <option value="active">Активные</option>
+                                    <option value="planned">Запланированные</option>
+                                    <option value="awaiting_manual_publication">Ждут ручной публикации</option>
+                                    <option value="ready_for_execution">Готовы</option>
+                                    <option value="deferred">Отложенные</option>
+                                    <option value="published">Опубликованные</option>
+                                    <option value="failed">С ошибкой</option>
                                 </select>
 
                                 <button
                                     onClick={() => setManualOnly((value) => !value)}
                                     className={`rounded-xl px-4 py-3 text-sm font-black transition-all ${manualOnly ? 'bg-primary text-white' : 'bg-surface-container-low text-on-surface-variant'}`}
                                 >
-                                    {manualOnly ? 'Manual Only' : 'All Modes'}
+                                    {manualOnly ? 'Только ручные' : 'Все режимы'}
                                 </button>
                             </div>
                         </div>
@@ -318,7 +318,7 @@ export default function PublicationTasks() {
                         <div className="max-h-[720px] overflow-y-auto">
                             {!currentProject && (
                                 <div className="p-8 text-sm text-on-surface-variant">
-                                    Import a publication plan first, then choose the project to work with the task queue.
+                                    Сначала импортируй план публикаций, а затем выбери проект для работы с очередью задач.
                                 </div>
                             )}
 
@@ -336,7 +336,7 @@ export default function PublicationTasks() {
 
                             {currentProject && !isLoading && !tasks?.length && (
                                 <div className="p-8 text-sm text-on-surface-variant leading-relaxed">
-                                    No tasks match the current filter. Try turning off `Manual Only` or sync a fresh publication plan.
+                                    Под текущий фильтр задач не найдено. Попробуй отключить режим `Только ручные` или синхронизировать свежий план публикаций.
                                 </div>
                             )}
 
@@ -630,7 +630,7 @@ export default function PublicationTasks() {
                                         </div>
 
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-3">
-                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Assets & Visuals</div>
+                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Ассеты и визуалы</div>
                                             <pre className="text-xs font-mono whitespace-pre-wrap break-words text-on-surface-variant leading-6">
                                                 {prettyJson({
                                                     visuals: handoffBundle?.publication?.visuals || [],
@@ -642,19 +642,19 @@ export default function PublicationTasks() {
 
                                     <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
-                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Confirm Publication</div>
+                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Подтверждение публикации</div>
                                             <div className="rounded-2xl bg-white px-4 py-3 text-xs leading-6 text-on-surface-variant">
-                                                Save the permalink even if the platform later blocks, removes, or restricts the post. For Reddit this keeps the task confirmed and lets us track whatever metrics remain available.
+                                                Сохраняй permalink даже если платформа позже заблокирует, удалит или ограничит пост. Для Reddit это оставляет задачу подтверждённой и позволяет отслеживать те метрики, которые ещё доступны.
                                             </div>
                                             <select
                                                 value={publicationOutcome}
                                                 onChange={(event) => setPublicationOutcome(event.target.value as PublicationOutcome)}
                                                 className="w-full bg-white border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
                                             >
-                                                <option value="published">Published normally</option>
-                                                <option value="blocked">Blocked but URL exists</option>
-                                                <option value="removed">Removed but URL exists</option>
-                                                <option value="restricted">Restricted / limited visibility</option>
+                                                <option value="published">Опубликовано нормально</option>
+                                                <option value="blocked">Заблокировано, но URL есть</option>
+                                                <option value="removed">Удалено, но URL есть</option>
+                                                <option value="restricted">Ограниченная видимость</option>
                                             </select>
                                             <input
                                                 type="url"
@@ -668,25 +668,25 @@ export default function PublicationTasks() {
                                                 onChange={(event) => setPublicationNote(event.target.value)}
                                                 rows={4}
                                                 className="w-full bg-white border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
-                                                placeholder="Optional publication note"
+                                                placeholder="Необязательная заметка о публикации"
                                             />
                                             <button
                                                 onClick={() => confirmPublication.mutate()}
                                                 disabled={!publishedLink.trim() || confirmPublication.isPending}
                                                 className="w-full bg-primary text-white font-black text-sm px-5 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all disabled:opacity-50"
                                             >
-                                                {confirmPublication.isPending ? 'Saving...' : 'Confirm Live URL'}
+                                                {confirmPublication.isPending ? 'Сохраняем...' : 'Подтвердить live URL'}
                                             </button>
                                         </div>
 
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
-                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Record Metrics</div>
+                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Сохранение метрик</div>
                                             <div className="rounded-2xl bg-white px-4 py-3 text-xs leading-6 text-on-surface-variant">
                                                 {activeTask.channel?.type === 'linkedin'
-                                                    ? 'For LinkedIn we fetch analytics from the connected channel. If the token was issued before the new analytics scope, reconnect LinkedIn first.'
+                                                    ? 'Для LinkedIn мы подтягиваем аналитику из подключённого канала. Если токен был выдан до нового analytics scope, сначала переподключи LinkedIn.'
                                                     : activeTask.channel?.type === 'tilda'
-                                                        ? 'Tilda does not expose post analytics directly here. Automatic fetch works only when this project also has a linked Google Search Console property for the published URL.'
-                                                    : 'Use channel fetch when the adapter supports analytics, or save a manual snapshot if the platform is manual-only.'}
+                                                        ? 'Tilda не отдаёт постовую аналитику напрямую через этот интерфейс. Автоматический сбор сработает только если у проекта также привязана Google Search Console property для опубликованного URL.'
+                                                    : 'Используй сбор из канала, если адаптер поддерживает аналитику, или сохраняй ручной снимок, если площадка работает только вручную.'}
                                             </div>
                                             <textarea
                                                 value={metricsJson}
@@ -701,34 +701,34 @@ export default function PublicationTasks() {
                                                     disabled={collectMetrics.isPending || !canFetchMetrics}
                                                     className="w-full bg-primary text-white font-black text-sm px-5 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all disabled:opacity-50"
                                                 >
-                                                    {collectMetrics.isPending ? 'Fetching...' : 'Fetch From Channel'}
+                                                    {collectMetrics.isPending ? 'Получаем...' : 'Получить из канала'}
                                                 </button>
                                                 <button
                                                     onClick={() => recordMetrics.mutate()}
                                                     disabled={recordMetrics.isPending}
                                                     className="w-full bg-surface-container-highest text-on-surface font-black text-sm px-5 py-3 rounded-2xl hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50"
                                                 >
-                                                    {recordMetrics.isPending ? 'Saving Metrics...' : 'Save Metrics Snapshot'}
+                                                    {recordMetrics.isPending ? 'Сохраняем метрики...' : 'Сохранить снимок метрик'}
                                                 </button>
                                             </div>
                                         </div>
                                     </section>
 
                                     <section className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
-                                        <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">External Comment Alert</div>
+                                        <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Внешний алерт по комментарию</div>
                                         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
                                             <input
                                                 type="text"
                                                 value={commentAuthor}
                                                 onChange={(event) => setCommentAuthor(event.target.value)}
-                                                placeholder="Author"
+                                                placeholder="Автор"
                                                 className="w-full bg-white border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
                                             />
                                             <input
                                                 type="url"
                                                 value={commentUrl}
                                                 onChange={(event) => setCommentUrl(event.target.value)}
-                                                placeholder="Comment URL"
+                                                placeholder="URL комментария"
                                                 className="w-full bg-white border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
                                             />
                                             <button
@@ -736,7 +736,7 @@ export default function PublicationTasks() {
                                                 disabled={sendCommentAlert.isPending || !commentText.trim()}
                                                 className="bg-primary text-white font-black text-sm px-5 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all disabled:opacity-50"
                                             >
-                                                {sendCommentAlert.isPending ? 'Sending...' : 'Log Comment Alert'}
+                                                {sendCommentAlert.isPending ? 'Сохраняем...' : 'Записать алерт по комментарию'}
                                             </button>
                                         </div>
                                         <textarea
@@ -744,7 +744,7 @@ export default function PublicationTasks() {
                                             onChange={(event) => setCommentText(event.target.value)}
                                             rows={4}
                                             className="w-full bg-white border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
-                                            placeholder="Paste the comment text or moderation note"
+                                            placeholder="Вставь текст комментария или заметку модерации"
                                         />
                                     </section>
                                 </div>
@@ -758,8 +758,8 @@ export default function PublicationTasks() {
                     <div className="w-full max-w-4xl bg-white rounded-[2rem] border border-outline-variant/10 shadow-2xl overflow-hidden">
                         <div className="p-6 border-b border-outline-variant/10 flex items-start justify-between gap-4">
                             <div>
-                                <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Plan Import</div>
-                                <h2 className="text-2xl font-headline font-black tracking-tight text-on-surface mt-2">Sync Publication Plan</h2>
+                                <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Импорт плана</div>
+                                <h2 className="text-2xl font-headline font-black tracking-tight text-on-surface mt-2">Синхронизировать план публикаций</h2>
                                 <p className="text-sm text-on-surface-variant mt-2 leading-relaxed">
                                     Загрузи или обнови внешний `publication-plan.json`, не занимая место на основной рабочей странице.
                                 </p>
@@ -779,7 +779,7 @@ export default function PublicationTasks() {
                                 rows={18}
                                 spellCheck={false}
                                 className="w-full bg-surface-container-low border-none rounded-[1.5rem] p-5 text-xs font-mono leading-6 focus:ring-4 focus:ring-primary/10 transition-all outline-none"
-                                placeholder="Paste publication-plan.json here"
+                                placeholder="Вставь сюда publication-plan.json"
                             />
 
                             {planMessage && (
@@ -796,14 +796,14 @@ export default function PublicationTasks() {
 
                             <div className="flex flex-wrap gap-3 justify-between items-center">
                                 <div className="text-xs text-on-surface-variant">
-                                    {currentProject ? `Current project: ${currentProject.name}` : 'Import will create or update the mapped project.'}
+                                    {currentProject ? `Текущий проект: ${currentProject.name}` : 'Импорт создаст или обновит связанный проект.'}
                                 </div>
                                 <div className="flex gap-3">
                                     <button
                                         onClick={() => setShowPlanModal(false)}
                                         className="bg-surface-container-high text-on-surface font-black text-sm px-5 py-3 rounded-2xl hover:bg-surface-container-highest transition-all"
                                     >
-                                        Close
+                                        Закрыть
                                     </button>
                                     <button
                                         onClick={() => {
@@ -813,7 +813,7 @@ export default function PublicationTasks() {
                                         disabled={!planJson.trim() || importPlan.isPending}
                                         className="bg-primary text-white font-black text-sm px-6 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
                                     >
-                                        {importPlan.isPending ? 'Syncing Plan...' : 'Sync Publication Plan'}
+                                        {importPlan.isPending ? 'Синхронизируем план...' : 'Синхронизировать план публикаций'}
                                     </button>
                                 </div>
                             </div>

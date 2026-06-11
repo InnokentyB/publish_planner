@@ -135,10 +135,10 @@ export default function ChannelWorkspace() {
     const saveManualContent = useMutation({
         mutationFn: () => {
             if (!currentProject?.id || !selectedChannel?.id) {
-                throw new Error('Select a project channel first')
+                throw new Error('Сначала выбери канал проекта')
             }
             if (!manualFileContent.trim()) {
-                throw new Error('Upload a file first')
+                throw new Error('Сначала загрузи файл')
             }
             return projectsApi.saveManualChannelContent(currentProject.id, selectedChannel.id, {
                 fileName: manualFileName || 'manual-content',
@@ -152,8 +152,8 @@ export default function ChannelWorkspace() {
         },
         onSuccess: () => {
             setManualMessage(manualPublishNow
-                ? `Saved to ${selectedChannel?.name} and linked to the already published content.`
-                : `Saved to ${selectedChannel?.name}.`)
+                ? `Сохранено в канал ${selectedChannel?.name} и связано с уже опубликованным материалом.`
+                : `Сохранено в канал ${selectedChannel?.name}.`)
             queryClient.invalidateQueries({ queryKey: ['channel_workspace_tasks'] })
             queryClient.invalidateQueries({ queryKey: ['publication_tasks'] })
         }
@@ -176,7 +176,7 @@ export default function ChannelWorkspace() {
         return (
             <div className="flex-1 w-full p-8 lg:p-10">
                 <div className="max-w-5xl mx-auto rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm p-8 text-on-surface-variant">
-                    Select a project first to open a channel workspace.
+                    Сначала выбери проект, чтобы открыть рабочую область канала.
                 </div>
             </div>
         )
@@ -188,17 +188,17 @@ export default function ChannelWorkspace() {
                 <section className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm p-8 lg:p-10">
                     <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-8">
                         <div className="max-w-4xl">
-                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Channel Workspace</div>
+                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Рабочая область канала</div>
                             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-black uppercase tracking-[0.24em]">
-                                <Link to="/projects" className="text-primary/70 hover:text-primary transition-colors">Project</Link>
+                                <Link to="/projects" className="text-primary/70 hover:text-primary transition-colors">Проект</Link>
                                 <span className="text-on-surface-variant/50">/</span>
                                 <span className="text-on-surface-variant">{currentProject.name}</span>
                             </div>
                             <h1 className="mt-4 text-4xl lg:text-5xl font-headline font-black tracking-tight text-on-surface">
-                                {selectedChannel?.name || 'Loading channel'}
+                                {selectedChannel?.name || 'Загружаем канал'}
                             </h1>
                             <p className="mt-4 text-sm leading-7 text-on-surface-variant max-w-3xl">
-                                This channel is the execution surface where plan files, parser inputs, manual uploads, and generated drafts come together before publication.
+                                Этот канал — исполнительная поверхность, где перед публикацией сходятся файлы из плана, входы из парсеров, ручные загрузки и сгенерированные черновики.
                             </p>
                             {selectedChannel && (
                                 <div className="mt-6 flex flex-wrap gap-3">
@@ -206,14 +206,14 @@ export default function ChannelWorkspace() {
                                         {selectedChannel.type}
                                     </span>
                                     <span className="px-3 py-1 rounded-full bg-surface-container-high text-[10px] font-black uppercase tracking-widest text-on-surface-variant">
-                                        {selectedChannelTasks.length} tasks
+                                        {selectedChannelTasks.length} задач
                                     </span>
                                     <span className="px-3 py-1 rounded-full bg-surface-container-high text-[10px] font-black uppercase tracking-widest text-on-surface-variant">
-                                        {publishedTasks} published
+                                        {publishedTasks} опубликовано
                                     </span>
                                     {overdueTasks > 0 && (
                                         <span className="px-3 py-1 rounded-full bg-error-container/40 text-[10px] font-black uppercase tracking-widest text-error">
-                                            {overdueTasks} overdue
+                                            {overdueTasks} просрочено
                                         </span>
                                     )}
                                 </div>
@@ -225,19 +225,19 @@ export default function ChannelWorkspace() {
                                 to="/publication-tasks"
                                 className="rounded-2xl ai-gradient text-white px-5 py-4 text-sm font-black text-center shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all"
                             >
-                                Open Publishing
+                                Открыть публикации
                             </Link>
                             <Link
                                 to="/analytics"
                                 className="rounded-2xl bg-surface-container-high px-5 py-4 text-sm font-black text-on-surface text-center hover:bg-primary/10 hover:text-primary transition-all"
                             >
-                                View Analytics
+                                Смотреть аналитику
                             </Link>
                             <Link
                                 to="/parsers"
                                 className="rounded-2xl bg-surface-container-high px-5 py-4 text-sm font-black text-on-surface text-center hover:bg-primary/10 hover:text-primary transition-all"
                             >
-                                Parser Lab
+                                Лаборатория парсеров
                             </Link>
                         </div>
                     </div>
@@ -246,10 +246,10 @@ export default function ChannelWorkspace() {
                 <section className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-6">
                     <div className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm overflow-hidden">
                         <div className="p-6 border-b border-outline-variant/10">
-                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Project Channels</div>
-                            <h2 className="mt-2 text-xl font-headline font-black text-on-surface">Network</h2>
+                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Каналы проекта</div>
+                            <h2 className="mt-2 text-xl font-headline font-black text-on-surface">Сеть</h2>
                             <p className="mt-2 text-sm text-on-surface-variant">
-                                Jump across sibling channels without leaving the project context.
+                                Переключайся между соседними каналами, не теряя контекст проекта.
                             </p>
                         </div>
                         <div className="max-h-[900px] overflow-y-auto">
@@ -286,7 +286,7 @@ export default function ChannelWorkspace() {
                     <div className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm overflow-hidden">
                         {!selectedChannel ? (
                             <div className="h-full min-h-[720px] flex items-center justify-center p-10 text-center text-on-surface-variant">
-                                Loading channel workspace...
+                                Загружаем рабочую область канала...
                             </div>
                         ) : (
                             <div className="h-full overflow-y-auto">
@@ -298,16 +298,16 @@ export default function ChannelWorkspace() {
                                             </div>
                                             <h2 className="mt-2 text-3xl font-headline font-black text-on-surface">{selectedChannel.name}</h2>
                                             <p className="mt-3 text-sm leading-7 text-on-surface-variant max-w-3xl">
-                                                Choose how content enters this channel, inspect linked plan assets, and route the finished material into publishing and analytics.
+                                                Выбери, как контент попадает в этот канал, посмотри связанные плановые ресурсы и отправь готовый материал в публикации и аналитику.
                                             </p>
                                         </div>
 
                                         <div className="grid grid-cols-2 gap-3">
                                             {[
-                                                { id: 'plan', label: 'Plan Files' },
-                                                { id: 'manual', label: 'Manual Upload' },
-                                                { id: 'generate', label: 'Generate' },
-                                                { id: 'mcp', label: 'Parser / MCP' }
+                                                { id: 'plan', label: 'Файлы плана' },
+                                                { id: 'manual', label: 'Ручная загрузка' },
+                                                { id: 'generate', label: 'Генерация' },
+                                                { id: 'mcp', label: 'Парсер / MCP' }
                                             ].map((mode) => (
                                                 <button
                                                     key={mode.id}
@@ -324,29 +324,29 @@ export default function ChannelWorkspace() {
                                 <div className="p-7 space-y-7">
                                     <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5">
-                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Channel Summary</div>
+                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Сводка канала</div>
                                             <div className="mt-4 space-y-3 text-sm text-on-surface-variant">
-                                                <div><span className="font-bold text-on-surface">Type:</span> {selectedChannel.type}</div>
-                                                <div><span className="font-bold text-on-surface">Name:</span> {selectedChannel.name}</div>
-                                                <div><span className="font-bold text-on-surface">Tasks:</span> {selectedChannelTasks.length}</div>
+                                                <div><span className="font-bold text-on-surface">Тип:</span> {selectedChannel.type}</div>
+                                                <div><span className="font-bold text-on-surface">Название:</span> {selectedChannel.name}</div>
+                                                <div><span className="font-bold text-on-surface">Задачи:</span> {selectedChannelTasks.length}</div>
                                             </div>
                                         </div>
 
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5">
-                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Connected Network</div>
+                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Связанная сеть</div>
                                             <div className="mt-4 text-sm leading-7 text-on-surface-variant">
-                                                This channel stays linked to the rest of the project through the publication plan, dependency graph, shared parser recipes, and post-publication analytics.
+                                                Этот канал остаётся связанным с остальным проектом через план публикаций, граф зависимостей, общие parser recipes и пост-публикационную аналитику.
                                             </div>
                                         </div>
 
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5">
-                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Next Actions</div>
+                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Следующие действия</div>
                                             <div className="mt-4 flex flex-col gap-3">
                                                 <Link to="/publication-tasks" className="rounded-2xl bg-white px-4 py-3 text-sm font-bold text-primary hover:bg-primary hover:text-white transition-all">
-                                                    Open channel tasks
+                                                    Открыть задачи канала
                                                 </Link>
                                                 <Link to="/analytics" className="rounded-2xl bg-white px-4 py-3 text-sm font-bold text-primary hover:bg-primary hover:text-white transition-all">
-                                                    Review metrics
+                                                    Посмотреть метрики
                                                 </Link>
                                             </div>
                                         </div>
@@ -355,7 +355,7 @@ export default function ChannelWorkspace() {
                                     {sourceMode === 'plan' && (
                                         <section className="grid grid-cols-1 xl:grid-cols-[380px_minmax(0,1fr)] gap-6">
                                             <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
-                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Plan Sources</div>
+                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Источники из плана</div>
                                                 {selectedChannelTasks.length > 0 ? selectedChannelTasks.map((task) => (
                                                     <div key={task.id} className="rounded-2xl bg-white px-4 py-4 space-y-2">
                                                         <div className="flex items-start justify-between gap-3">
@@ -376,31 +376,31 @@ export default function ChannelWorkspace() {
                                                                 rel="noreferrer"
                                                                 className="text-xs font-bold text-primary hover:underline"
                                                             >
-                                                                Open live URL
+                                                                Открыть live URL
                                                             </a>
                                                         )}
                                                     </div>
                                                 )) : (
                                                     <div className="rounded-2xl bg-white px-4 py-4 text-sm text-on-surface-variant">
-                                                        No publication-plan tasks are linked to this channel yet.
+                                                        С этим каналом пока не связаны задачи из плана публикаций.
                                                     </div>
                                                 )}
                                             </div>
 
                                             <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
-                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Resolved Resource Files</div>
+                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Разрешённые ресурсные файлы</div>
                                                 {resourceFiles.length > 0 ? (
                                                     <div className="space-y-4">
                                                         {resourceFiles.map((file, index) => (
                                                             <div key={`${file.ref || file.file_name || 'resource'}-${index}`} className="rounded-2xl bg-white px-4 py-4 space-y-2">
-                                                                <div className="font-bold text-sm text-on-surface">{file.file_name || file.url || file.ref || 'Resource'}</div>
-                                                                {file.role && <div className="text-xs text-on-surface-variant">Role: {file.role}</div>}
+                                                                <div className="font-bold text-sm text-on-surface">{file.file_name || file.url || file.ref || 'Ресурс'}</div>
+                                                                {file.role && <div className="text-xs text-on-surface-variant">Роль: {file.role}</div>}
                                                                 {file.relative_path && <div className="text-xs text-on-surface-variant break-all">{file.relative_path}</div>}
-                                                                {file.section_marker && <div className="text-xs text-on-surface-variant">Section: {file.section_marker}</div>}
+                                                                {file.section_marker && <div className="text-xs text-on-surface-variant">Секция: {file.section_marker}</div>}
                                                                 {file.url && <div className="text-xs text-on-surface-variant break-all">{file.url}</div>}
                                                                 {file.purpose && <div className="text-xs leading-6 text-on-surface-variant">{file.purpose}</div>}
                                                                 <div className={`text-xs font-bold ${file.exists === false ? 'text-error' : 'text-success'}`}>
-                                                                    {file.exists === false ? 'Not available in current runtime path' : 'Available'}
+                                                                    {file.exists === false ? 'Недоступно в текущем runtime-пути' : 'Доступно'}
                                                                 </div>
                                                                 {file.content && (
                                                                     <ContentMarkupRenderer
@@ -415,7 +415,7 @@ export default function ChannelWorkspace() {
                                                     </div>
                                                 ) : (
                                                     <div className="rounded-2xl bg-white px-4 py-4 text-sm text-on-surface-variant">
-                                                        Prepare a publication task handoff to populate linked source files here.
+                                                        Подготовь handoff публикационной задачи, чтобы здесь появились связанные исходные файлы.
                                                     </div>
                                                 )}
                                             </div>
@@ -433,16 +433,16 @@ export default function ChannelWorkspace() {
                                                     if (file) handleManualFile(file)
                                                 }}
                                             >
-                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Manual Upload</div>
-                                                <h3 className="mt-3 text-xl font-headline font-black text-on-surface">Drop `.md` or `.html`</h3>
+                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Ручная загрузка</div>
+                                                <h3 className="mt-3 text-xl font-headline font-black text-on-surface">Перетащи `.md` или `.html`</h3>
                                                 <p className="mt-3 text-sm leading-7 text-on-surface-variant">
-                                                    Use this when the channel content does not come from the publication plan. The file is loaded into the workspace so you can review it, save it, and optionally attach the already published URL.
+                                                    Используй этот режим, когда контент канала не приходит из плана публикаций. Файл загружается в рабочую область, где его можно просмотреть, сохранить и при желании привязать к уже опубликованному URL.
                                                 </p>
                                                 <button
                                                     onClick={() => document.getElementById('manual-content-file')?.click()}
                                                     className="mt-6 rounded-2xl bg-primary text-white px-5 py-4 text-sm font-black shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all"
                                                 >
-                                                    Choose File
+                                                    Выбрать файл
                                                 </button>
                                                 <input
                                                     id="manual-content-file"
@@ -465,7 +465,7 @@ export default function ChannelWorkspace() {
                                                     onChange={(event) => setManualNote(event.target.value)}
                                                     rows={4}
                                                     className="mt-4 w-full bg-white border-none rounded-2xl p-4 text-sm leading-6 focus:ring-2 focus:ring-primary/20 outline-none"
-                                                    placeholder="Optional note for this channel content item"
+                                                    placeholder="Необязательная заметка для этого элемента контента"
                                                 />
                                                 <label className="mt-4 flex items-center gap-3 rounded-2xl bg-white px-4 py-3 text-sm font-medium text-on-surface">
                                                     <input
@@ -474,7 +474,7 @@ export default function ChannelWorkspace() {
                                                         onChange={(event) => setManualPublishNow(event.target.checked)}
                                                         className="w-4 h-4 rounded border-outline-variant/20 text-primary focus:ring-primary/20"
                                                     />
-                                                    This content is already published
+                                                    Этот контент уже опубликован
                                                 </label>
                                                 {manualPublishNow && (
                                                     <div className="mt-4 space-y-4">
@@ -490,10 +490,10 @@ export default function ChannelWorkspace() {
                                                             onChange={(event) => setManualOutcome(event.target.value as PublicationOutcome)}
                                                             className="w-full bg-white border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
                                                         >
-                                                            <option value="published">Published normally</option>
-                                                            <option value="blocked">Blocked but URL exists</option>
-                                                            <option value="removed">Removed but URL exists</option>
-                                                            <option value="restricted">Restricted / limited visibility</option>
+                                                            <option value="published">Опубликовано нормально</option>
+                                                            <option value="blocked">Заблокировано, но URL есть</option>
+                                                            <option value="removed">Удалено, но URL есть</option>
+                                                            <option value="restricted">Ограниченная видимость</option>
                                                         </select>
                                                     </div>
                                                 )}
@@ -502,7 +502,7 @@ export default function ChannelWorkspace() {
                                                     disabled={saveManualContent.isPending || !manualFileContent.trim() || (manualPublishNow && !manualPublishedLink.trim())}
                                                     className="mt-4 w-full rounded-2xl bg-primary text-white px-5 py-4 text-sm font-black shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all disabled:opacity-50"
                                                 >
-                                                    {saveManualContent.isPending ? 'Saving To Channel...' : 'Save To Channel'}
+                                                    {saveManualContent.isPending ? 'Сохраняем в канал...' : 'Сохранить в канал'}
                                                 </button>
                                                 {manualMessage && (
                                                     <div className="mt-4 rounded-2xl bg-success/10 text-success px-4 py-3 text-sm font-medium">
@@ -518,7 +518,7 @@ export default function ChannelWorkspace() {
 
                                             <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
                                                 <div className="flex items-center justify-between gap-3">
-                                                    <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Content Preview</div>
+                                                    <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Предпросмотр контента</div>
                                                     {manualFileName && (
                                                         <span className="text-xs text-on-surface-variant">{manualFileName}</span>
                                                     )}
@@ -527,7 +527,7 @@ export default function ChannelWorkspace() {
                                                     content={manualFileContent}
                                                     contentType={manualFileType === 'unknown' ? 'auto' : manualFileType}
                                                     title={manualFileName || 'manual-upload-preview'}
-                                                    emptyMessage="Upload a markdown or HTML file to preview channel content here."
+                                                    emptyMessage="Загрузи markdown или HTML-файл, чтобы увидеть здесь предпросмотр контента канала."
                                                 />
                                             </div>
                                         </section>
@@ -537,18 +537,18 @@ export default function ChannelWorkspace() {
                                         <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                                             {[
                                                 {
-                                                    title: 'Generate New Post',
-                                                    body: 'Use the planner’s existing post generation flows, critique loops, and image generation inside the project.',
+                                                    title: 'Сгенерировать новый пост',
+                                                    body: 'Используй существующие сценарии генерации постов, циклы критики и генерацию изображений прямо внутри проекта.',
                                                     href: '/'
                                                 },
                                                 {
-                                                    title: 'Publishing Queue',
-                                                    body: 'Jump into the execution queue after content is ready and keep the channel workflow connected to the plan.',
+                                                    title: 'Очередь публикаций',
+                                                    body: 'Переходи в очередь исполнения после подготовки контента и не теряй связь канала с планом.',
                                                     href: '/publication-tasks'
                                                 },
                                                 {
-                                                    title: 'Agent Settings',
-                                                    body: 'Tune prompts, models, skill connections, and dictionary rules for project-specific generation behavior.',
+                                                    title: 'Настройки агентов',
+                                                    body: 'Настраивай промпты, модели, skill connections и словарь под поведение генерации в этом проекте.',
                                                     href: '/settings'
                                                 }
                                             ].map((card) => (
@@ -566,25 +566,25 @@ export default function ChannelWorkspace() {
                                     {sourceMode === 'mcp' && (
                                         <section className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-6">
                                             <div className="rounded-[1.5rem] bg-surface-container-low p-6">
-                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Parser & MCP Intake</div>
-                                                <h3 className="mt-3 text-2xl font-headline font-black text-on-surface">Research and ingestion surface</h3>
+                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Парсер и MCP</div>
+                                                <h3 className="mt-3 text-2xl font-headline font-black text-on-surface">Поверхность исследования и intake</h3>
                                                 <p className="mt-4 text-sm leading-7 text-on-surface-variant max-w-3xl">
-                                                    Move from external research into channel-ready material: run parser jobs, inspect results, reuse saved recipes, and hand off the strongest signals into the content flow.
+                                                    Переводи внешние исследования в материал для канала: запускай parser jobs, смотри результаты, переиспользуй рецепты и передавай сильнейшие сигналы в контентный поток.
                                                 </p>
                                             </div>
                                             <div className="space-y-4">
                                                 <Link to="/parsers" className="block rounded-[1.5rem] ai-gradient text-white p-6 shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all">
-                                                    <div className="text-[10px] font-black uppercase tracking-[0.25em] text-white/70">Research Lab</div>
-                                                    <h3 className="mt-3 text-2xl font-headline font-black">Open Parsers</h3>
+                                                    <div className="text-[10px] font-black uppercase tracking-[0.25em] text-white/70">Исследовательская лаборатория</div>
+                                                    <h3 className="mt-3 text-2xl font-headline font-black">Открыть парсеры</h3>
                                                     <p className="mt-4 text-sm leading-7 text-white/80">
-                                                        Go to the parser interface for discovery, scoring, and MCP-connected source work.
+                                                        Перейди в интерфейс парсеров для discovery, скоринга и работы с источниками через MCP.
                                                     </p>
                                                 </Link>
                                                 <Link to="/recipes" className="block rounded-[1.5rem] bg-surface-container-low p-6 border border-outline-variant/10 hover:bg-primary/5 transition-all">
-                                                    <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Reusable Assets</div>
-                                                    <h3 className="mt-3 text-xl font-headline font-black text-on-surface">Saved Recipes</h3>
+                                                    <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Переиспользуемые активы</div>
+                                                    <h3 className="mt-3 text-xl font-headline font-black text-on-surface">Сохранённые рецепты</h3>
                                                     <p className="mt-3 text-sm leading-7 text-on-surface-variant">
-                                                        Browse parser recipes and rerun the ones that fit this channel’s discovery pattern.
+                                                        Просматривай рецепты парсеров и заново запускай те, что подходят под discovery-паттерн этого канала.
                                                     </p>
                                                 </Link>
                                             </div>

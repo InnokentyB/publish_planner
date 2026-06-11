@@ -23,7 +23,7 @@ export default function Login() {
             });
 
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Login failed');
+            if (!res.ok) throw new Error(data.error || 'Не удалось войти');
 
             login(data.token, data.user, data.projects);
             navigate('/orchestrator');
@@ -47,7 +47,7 @@ export default function Login() {
                         <span className="material-symbols-outlined text-4xl">rocket_launch</span>
                     </div>
                     <h1 className="text-3xl font-headline font-black tracking-tight text-on-surface mb-2">Project Alpha</h1>
-                    <p className="text-sm font-label uppercase tracking-widest text-primary font-bold">Intelligence Matrix</p>
+                    <p className="text-sm font-label uppercase tracking-widest text-primary font-bold">Матрица управления контентом</p>
                 </div>
 
                 {error && (
@@ -59,7 +59,7 @@ export default function Login() {
 
                 <form onSubmit={handleSubmit} className="space-y-6">
                     <div className="space-y-2 relative group">
-                        <label htmlFor="email" className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant ml-1 group-focus-within:text-primary transition-colors">Digital Identity</label>
+                        <label htmlFor="email" className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant ml-1 group-focus-within:text-primary transition-colors">Почта</label>
                         <div className="relative">
                             <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant group-focus-within:text-primary transition-colors">mail</span>
                             <input
@@ -75,7 +75,7 @@ export default function Login() {
                     </div>
                     
                     <div className="space-y-2 relative group">
-                        <label htmlFor="password" className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant ml-1 group-focus-within:text-primary transition-colors">Access Key</label>
+                        <label htmlFor="password" className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant ml-1 group-focus-within:text-primary transition-colors">Пароль</label>
                         <div className="relative">
                             <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant group-focus-within:text-primary transition-colors">lock</span>
                             <input
@@ -98,11 +98,11 @@ export default function Login() {
                         {loading ? (
                             <>
                                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                <span>Authenticating...</span>
+                                <span>Входим...</span>
                             </>
                         ) : (
                             <>
-                                <span>Initialize Node</span>
+                                <span>Войти</span>
                                 <span className="material-symbols-outlined text-sm">arrow_forward</span>
                             </>
                         )}
@@ -111,8 +111,8 @@ export default function Login() {
 
                 <div className="mt-10 text-center border-t border-outline-variant/10 pt-8">
                     <p className="text-xs font-bold text-on-surface-variant">
-                        No authorization access?{' '}
-                        <Link to="/register" className="text-primary hover:underline underline-offset-4 font-black">Request Clearance</Link>
+                        Нет доступа?{' '}
+                        <Link to="/register" className="text-primary hover:underline underline-offset-4 font-black">Запросить доступ</Link>
                     </p>
                 </div>
             </div>

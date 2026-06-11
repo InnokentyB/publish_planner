@@ -19,14 +19,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   };
 
   const navItems = [
-    { label: 'Projects', path: '/projects', icon: 'folder_open' },
-    { label: 'Analytics', path: '/analytics', icon: 'monitoring' },
-    { label: 'Parsers', path: '/parsers', icon: 'hub' },
-    { label: 'Recipes', path: '/recipes', icon: 'book_2' },
-    { label: 'Publishing', path: '/publication-tasks', icon: 'publish' },
-    { label: 'Guide', path: '/guide', icon: 'help_outline' },
-    { label: 'Calendar', path: '/calendar', icon: 'calendar_month' },
-    { label: 'Settings', path: '/settings', icon: 'settings' },
+    { label: 'Проекты', path: '/projects', icon: 'folder_open' },
+    { label: 'Аналитика', path: '/analytics', icon: 'monitoring' },
+    { label: 'Парсеры', path: '/parsers', icon: 'hub' },
+    { label: 'Рецепты', path: '/recipes', icon: 'book_2' },
+    { label: 'Публикации', path: '/publication-tasks', icon: 'publish' },
+    { label: 'Гайд', path: '/guide', icon: 'help_outline' },
+    { label: 'Календарь', path: '/calendar', icon: 'calendar_month' },
+    { label: 'Настройки', path: '/settings', icon: 'settings' },
   ];
 
   return (
@@ -36,7 +36,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="mb-10 px-2 space-y-4">
           <Link to="/projects" className="block hover:opacity-80 transition-opacity">
             <h1 className="text-2xl font-black text-primary tracking-tighter font-headline">Project Alpha</h1>
-            <p className="text-xs text-on-surface-variant font-label mt-1">Status Tracking Beta</p>
+            <p className="text-xs text-on-surface-variant font-label mt-1">Бета-версия рабочей среды</p>
           </Link>
           
           {/* Project Switcher */}
@@ -87,7 +87,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             onClick={() => {/* TODO: Global New Post Trigger */}}
           >
             <span className="material-symbols-outlined">add</span>
-            <span className="font-headline tracking-tight">New Post</span>
+            <span className="font-headline tracking-tight">Новый пост</span>
           </button>
 
           <button
@@ -95,7 +95,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-error hover:bg-error-container/10 transition-all duration-200"
           >
             <span className="material-symbols-outlined">logout</span>
-            <span className="font-label">Logout</span>
+            <span className="font-label">Выйти</span>
           </button>
 
           <div className="mt-8 pt-6 border-t border-outline-variant/15 flex items-center gap-3 px-2">
@@ -103,8 +103,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               {user?.name?.[0] || user?.email?.[0] || 'U'}
             </div>
             <div className="overflow-hidden">
-              <p className="text-sm font-bold truncate">{user?.name || 'User'}</p>
-              <p className="text-xs text-on-surface-variant truncate">Pro Plan</p>
+              <p className="text-sm font-bold truncate">{user?.name || 'Пользователь'}</p>
+              <p className="text-xs text-on-surface-variant truncate">Рабочий доступ</p>
             </div>
           </div>
         </div>
@@ -115,28 +115,28 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {/* TopNavBar */}
         <header className="flex justify-between items-center w-full px-8 h-20 sticky top-0 bg-surface/80 backdrop-blur-xl z-30 border-b border-outline-variant/5">
           <div className="flex items-center gap-8">
-            <span className="text-xl font-bold text-primary font-headline">Cognitive Assistant</span>
+            <span className="text-xl font-bold text-primary font-headline">Когнитивный помощник</span>
             <div className="relative hidden lg:block">
               <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">search</span>
               <input 
                 className="bg-surface-container-low border-none rounded-full py-2 pl-10 pr-4 text-sm w-64 focus:ring-2 focus:ring-primary/20" 
-                placeholder="Search..." 
+                placeholder="Поиск..." 
                 type="text"
               />
             </div>
           </div>
           <nav className="flex items-center gap-8 h-full">
-            <Link to="/projects" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Project</Link>
-            <Link to="/publication-tasks" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Publishing</Link>
-            <Link to="/analytics" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Analytics</Link>
-            <Link to="/recipes" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Recipes</Link>
-            <Link to="/calendar" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Calendar</Link>
+            <Link to="/projects" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Проекты</Link>
+            <Link to="/publication-tasks" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Публикации</Link>
+            <Link to="/analytics" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Аналитика</Link>
+            <Link to="/recipes" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Рецепты</Link>
+            <Link to="/calendar" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Календарь</Link>
             <div className="flex items-center gap-4 ml-4">
               <button className="p-2 text-on-surface-variant hover:opacity-80 transition-opacity">
                 <span className="material-symbols-outlined">notifications_active</span>
               </button>
               <Link to="/projects" className="bg-primary text-white px-5 py-2 rounded-full font-bold text-sm shadow-sm hover:opacity-90 transition-opacity">
-                Open Workspace
+                Открыть рабочую область
               </Link>
             </div>
           </nav>
