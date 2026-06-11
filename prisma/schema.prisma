@@ -35,6 +35,9 @@ model Project {
   name        String
   slug        String   @unique
   description String?
+  kind        String   @default("content_network")
+  is_archived Boolean  @default(false)
+  archived_at DateTime?
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
 
@@ -58,6 +61,8 @@ model Project {
   provider_keys     ProviderKey[]
   telegram_accounts TelegramAccount[]
 
+  @@index([is_archived])
+  @@index([kind])
   @@schema("planner")
   @@map("projects")
 }
