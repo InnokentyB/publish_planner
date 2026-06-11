@@ -33,35 +33,100 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
     const [isLoading, setIsLoading] = useState(true);
 
+    const syncSessionFromBackend = async (activeToken: string, fallbackProjects?: Project[]) => {
+        const apiBaseUrl = import.meta.env.VITE_API_URL || '';
+        const response = await fetch(`${apiBaseUrl}/api/auth/me`, {
+            headers: {
+                Authorization: `Bearer ${activeToken}`
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Auth sync failed with status ${response.status}`);
+        }
+
+        const data = await response.json();
+        const backendUser = data.user as User;
+        const backendProjects = (data.projects || []) as Project[];
+        const savedProjectId = localStorage.getItem('projectId');
+
+        setUser(backendUser);
+        setProjects(backendProjects);
+        localStorage.setItem('user', JSON.stringify(backendUser));
+        localStorage.setItem('projects', JSON.stringify(backendProjects));
+
+        const preferredProjectId = savedProjectId ? parseInt(savedProjectId, 10) : fallbackProjects?.[0]?.id;
+        const resolvedProject = preferredProjectId
+            ? backendProjects.find((project) => project.id === preferredProjectId) || null
+            : null;
+
+        if (resolvedProject) {
+            setCurrentProjectState(resolvedProject);
+            localStorage.setItem('projectId', resolvedProject.id.toString());
+        } else if (backendProjects.length > 0) {
+            setCurrentProjectState(backendProjects[0]);
+            localStorage.setItem('projectId', backendProjects[0].id.toString());
+        } else {
+            setCurrentProjectState(null);
+            localStorage.removeItem('projectId');
+        }
+    };
+
     useEffect(() => {
         const savedUser = localStorage.getItem('user');
         const savedProjects = localStorage.getItem('projects');
         const savedProjectId = localStorage.getItem('projectId');
 
-        if (savedUser && savedProjects && token) {
-            try {
-                const parsedUser = JSON.parse(savedUser);
-                const parsedProjects = JSON.parse(savedProjects);
-                setUser(parsedUser);
-                setProjects(parsedProjects);
+        const bootstrapAuth = async () => {
+            if (savedUser && savedProjects && token) {
+                try {
+                    const parsedUser = JSON.parse(savedUser);
+                    const parsedProjects = JSON.parse(savedProjects);
+                    setUser(parsedUser);
+                    setProjects(parsedProjects);
 
-                if (savedProjectId) {
-                    const project = parsedProjects.find((p: Project) => p.id === parseInt(savedProjectId));
-                    if (project) setCurrentProjectState(project);
-                } else if (parsedProjects.length > 0) {
-                    setCurrentProjectState(parsedProjects[0]);
-                    localStorage.setItem('projectId', parsedProjects[0].id.toString());
+                    if (savedProjectId) {
+                        const project = parsedProjects.find((p: Project) => p.id === parseInt(savedProjectId));
+                        if (project) setCurrentProjectState(project);
+                    } else if (parsedProjects.length > 0) {
+                        setCurrentProjectState(parsedProjects[0]);
+                        localStorage.setItem('projectId', parsedProjects[0].id.toString());
+                    }
+
+                    await syncSessionFromBackend(token, parsedProjects);
+                } catch (e) {
+                    console.error('Failed to parse or sync auth data', e);
+                    localStorage.clear();
+                    setToken(null);
+                    setUser(null);
+                    setProjects([]);
+                    setCurrentProjectState(null);
+                } finally {
+                    setIsLoading(false);
                 }
-            } catch (e) {
-                console.error('Failed to parse auth data', e);
-                localStorage.clear();
-                setToken(null);
-                setUser(null);
-                setProjects([]);
-                setCurrentProjectState(null);
+                return;
             }
-        }
-        setIsLoading(false);
+
+            if (token) {
+                try {
+                    await syncSessionFromBackend(token);
+                } catch (e) {
+                    console.error('Failed to sync auth data', e);
+                    localStorage.clear();
+                    setToken(null);
+                    setUser(null);
+                    setProjects([]);
+                    setCurrentProjectState(null);
+                } finally {
+                    setIsLoading(false);
+                }
+                return;
+            }
+
+            setIsLoading(false);
+        };
+
+        bootstrapAuth();
     }, [token]);
 
     const login = (token: string, user: User, projects: Project[]) => {
