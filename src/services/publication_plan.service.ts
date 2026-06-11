@@ -160,6 +160,226 @@ function derivePublicationOutcome(action: any): string | null {
 }
 
 class PublicationPlanService {
+    getPublicationPlanFormat() {
+        return {
+            version: '2026-06-publication-plan-v2',
+            summary: 'Preferred planner publication-plan format for MCP and chat-generated plans.',
+            top_level: {
+                required: ['meta', 'accounts', 'assets', 'actions'],
+                optional: ['ongoing_rules', 'measurement', 'dependencies_matrix_visualized']
+            },
+            meta: {
+                required: ['plan_id'],
+                optional: [
+                    'plan_version',
+                    'generated_at',
+                    'source_article_id',
+                    'cycle_start',
+                    'cycle_end',
+                    'timezone_default',
+                    'owner',
+                    'pipeline_root',
+                    'project_name',
+                    'description'
+                ]
+            },
+            accounts: {
+                shape: 'Record<string, account>',
+                required_fields: ['platform'],
+                examples: [
+                    { ref: 'spherical_analyst_tg', platform: 'telegram' },
+                    { ref: 'seturon_linkedin', platform: 'linkedin' }
+                ]
+            },
+            assets: {
+                shape: 'Record<string, asset>',
+                supported_patterns: [
+                    {
+                        kind: 'inline_preview',
+                        when_to_use: 'Short preview, teaser, or compact raw note that can be rendered directly in UI.',
+                        fields: ['type', 'content']
+                    },
+                    {
+                        kind: 'file_backed_content',
+                        when_to_use: 'Full draft or source material stored in a markdown/html file.',
+                        fields: ['type', 'path', 'section_marker?']
+                    },
+                    {
+                        kind: 'url_asset',
+                        when_to_use: 'Canonical URL, destination page, image source, or external reference.',
+                        fields: ['type', 'target_url']
+                    }
+                ]
+            },
+            actions: {
+                shape: 'Array<action>',
+                required_fields: ['id', 'channel', 'account_ref', 'action_type'],
+                strongly_recommended_fields: ['display_name'],
+                preferred_content_pattern: {
+                    rule: 'For full publication text, use action.content_files. Do not rely on free-text hints inside asset.content.',
+                    content_files_item: {
+                        required: ['role'],
+                        recommended: ['purpose'],
+                        one_of: [
+                            ['path'],
+                            ['url'],
+                            ['url_ref']
+                        ],
+                        optional: ['section_marker']
+                    }
+                }
+            },
+            recommendations: [
+                'Use asset.content only for compact inline text or preview notes.',
+                'Use action.content_files for the full publication body, markdown sections, or HTML fragments.',
+                'Use unique section_marker values that match stable headings in the source file.',
+                'If a post depends on a full markdown section, make that dependency explicit in content_files.'
+            ]
+        };
+    }
+
+    getPublicationPlanTemplate(input: {
+        planId?: string;
+        projectName?: string;
+        owner?: string;
+        timezone?: string;
+        channelRef?: string;
+        channelPlatform?: string;
+    } = {}) {
+        const planId = input.planId || 'project-cycle-2026-06';
+        const channelRef = input.channelRef || 'primary_channel';
+        const channelPlatform = input.channelPlatform || 'telegram';
+        const timezone = input.timezone || 'Europe/Lisbon';
+
+        return {
+            meta: {
+                plan_id: planId,
+                plan_version: '1.0.0',
+                generated_at: new Date().toISOString(),
+                cycle_start: '2026-06-01',
+                cycle_end: '2026-06-30',
+                timezone_default: timezone,
+                owner: input.owner || 'workspace_owner',
+                project_name: input.projectName || 'Новый проект',
+                description: 'План публикаций, подготовленный через MCP/чат.'
+            },
+            accounts: {
+                [channelRef]: {
+                    platform: channelPlatform
+                }
+            },
+            assets: {
+                teaser_note_1: {
+                    type: `${channelPlatform}_inline_preview`,
+                    content: 'Краткая идея или превью материала для быстрых карточек в UI.'
+                },
+                article_source_1: {
+                    type: 'markdown_source',
+                    path: 'weeks/w01.md',
+                    section_marker: 'Idea 1 — «Название секции»'
+                },
+                target_article_url: {
+                    type: 'canonical_url',
+                    target_url: 'https://example.com/article'
+                }
+            },
+            actions: [
+                {
+                    id: 'a-w01-001',
+                    display_name: `${channelPlatform} — публикация 1`,
+                    channel: channelPlatform,
+                    account_ref: channelRef,
+                    action_type: 'post_text',
+                    status: 'planned',
+                    scheduled_date: '2026-06-03',
+                    scheduled_time_window: {
+                        start: '10:00',
+                        end: '10:00',
+                        timezone
+                    },
+                    asset_refs: ['teaser_note_1'],
+                    content_files: [
+                        {
+                            role: 'post_body',
+                            purpose: 'Полный текст публикации',
+                            path: 'weeks/w01.md',
+                            section_marker: 'Idea 1 — «Название секции»'
+                        }
+                    ],
+                    parameters: {
+                        link_url_ref: 'assets.target_article_url.target_url'
+                    },
+                    notes: 'Краткий комментарий по задаче.'
+                }
+            ],
+            ongoing_rules: [],
+            measurement: {}
+        };
+    }
+
+    normalizePublicationPlan(raw: string) {
+        const parsed = this.parsePlan(raw);
+        const warnings: string[] = [];
+
+        const normalized = {
+            ...parsed,
+            ongoing_rules: Array.isArray(parsed.ongoing_rules) ? parsed.ongoing_rules : [],
+            measurement: parsed.measurement || {},
+            actions: parsed.actions.map((action: any) => {
+                const normalizedAction = {
+                    ...action,
+                    asset_refs: Array.isArray(action.asset_refs) ? action.asset_refs : [],
+                    content_files: Array.isArray(action.content_files)
+                        ? action.content_files
+                            .filter(Boolean)
+                            .map((entry: any) => ({
+                                role: entry.role || 'post_body',
+                                purpose: entry.purpose || null,
+                                path: entry.path || null,
+                                url: entry.url || null,
+                                url_ref: entry.url_ref || null,
+                                section_marker: entry.section_marker || null
+                            }))
+                        : []
+                };
+
+                if (!normalizedAction.display_name) {
+                    warnings.push(`Action '${action.id}' is missing display_name.`);
+                }
+
+                if (normalizedAction.content_files.length === 0 && normalizedAction.asset_refs.length > 0) {
+                    const inlineOnlyRefs = normalizedAction.asset_refs.filter((ref: string) => {
+                        const asset = parsed.assets?.[ref];
+                        return asset && typeof asset.content === 'string' && !asset.path;
+                    });
+
+                    if (inlineOnlyRefs.length > 0) {
+                        warnings.push(
+                            `Action '${action.id}' relies on inline asset content (${inlineOnlyRefs.join(', ')}). Add content_files for full text if this should render a complete draft.`
+                        );
+                    }
+                }
+
+                normalizedAction.content_files.forEach((entry: any, index: number) => {
+                    if (!entry.path && !entry.url && !entry.url_ref) {
+                        warnings.push(`Action '${action.id}' content_files[${index}] should define path, url, or url_ref.`);
+                    }
+                    if (entry.path && !entry.section_marker) {
+                        warnings.push(`Action '${action.id}' content_files[${index}] uses a path without section_marker. This is valid, but section_marker is recommended for multi-section files.`);
+                    }
+                });
+
+                return normalizedAction;
+            })
+        };
+
+        return {
+            normalizedPlan: normalized,
+            warnings,
+            format: this.getPublicationPlanFormat()
+        };
+    }
+
     parsePlan(raw: string): PublicationPlan {
         const parsed = JSON.parse(raw);
         if (!parsed?.meta?.plan_id || !parsed?.accounts || !parsed?.assets || !Array.isArray(parsed?.actions)) {

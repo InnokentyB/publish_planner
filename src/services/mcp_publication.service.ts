@@ -355,6 +355,25 @@ class McpPublicationService {
         return projects.map((project) => this.summarizeProject(project, project.members?.[0]?.role || null));
     }
 
+    getPublicationPlanFormat() {
+        return publicationPlanService.getPublicationPlanFormat();
+    }
+
+    getPublicationPlanTemplate(input: {
+        planId?: string;
+        projectName?: string;
+        owner?: string;
+        timezone?: string;
+        channelRef?: string;
+        channelPlatform?: string;
+    } = {}) {
+        return publicationPlanService.getPublicationPlanTemplate(input);
+    }
+
+    normalizePublicationPlan(planJson: string) {
+        return publicationPlanService.normalizePublicationPlan(planJson);
+    }
+
     async listUsers(options: { includeArchivedProjects?: boolean } = {}) {
         const users = await prisma.user.findMany({
             orderBy: { id: 'asc' },

@@ -26,6 +26,45 @@ export function createPlannerMcpServer() {
 }
 
 export function registerPlannerTools(server: McpServer) {
+    server.registerTool('ba_get_publication_plan_format', {
+        description: 'Return the preferred machine-readable publication-plan contract for chat/MCP authoring.',
+        annotations: {
+            readOnlyHint: true
+        },
+        inputSchema: {}
+    }, async () => {
+        const format = mcpPublicationService.getPublicationPlanFormat();
+        return asToolResult({ format });
+    });
+
+    server.registerTool('ba_get_publication_plan_template', {
+        description: 'Return a ready-to-fill publication-plan JSON template for chat-based authoring.',
+        annotations: {
+            readOnlyHint: true
+        },
+        inputSchema: {
+            planId: z.string().optional(),
+            projectName: z.string().optional(),
+            owner: z.string().optional(),
+            timezone: z.string().optional(),
+            channelRef: z.string().optional(),
+            channelPlatform: z.string().optional()
+        }
+    }, async (input) => {
+        const template = mcpPublicationService.getPublicationPlanTemplate(input);
+        return asToolResult({ template });
+    });
+
+    server.registerTool('ba_normalize_publication_plan_json', {
+        description: 'Validate and normalize a publication-plan JSON payload produced by chat before import.',
+        inputSchema: {
+            planJson: z.string().min(2)
+        }
+    }, async ({ planJson }) => {
+        const result = mcpPublicationService.normalizePublicationPlan(planJson);
+        return asToolResult(result);
+    });
+
     server.registerTool('ba_list_users', {
         description: 'List planner users with their IDs and linked umbrella projects.',
         annotations: {
