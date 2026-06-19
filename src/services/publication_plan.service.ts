@@ -40,6 +40,16 @@ type AssetSnapshot = {
     captured_at: string;
 };
 
+const RUNTIME_LOCKED_TASK_STATUSES = new Set([
+    'drafted',
+    'revised',
+    'approved',
+    'scheduled',
+    'ready_for_execution',
+    'awaiting_manual_publication',
+    'published'
+]);
+
 function slugify(value: string) {
     return value
         .toLowerCase()
@@ -157,6 +167,19 @@ function derivePublicationOutcome(action: any): string | null {
     if (result.includes('remove')) return 'removed';
     if (result.includes('restrict')) return 'restricted';
     return 'blocked';
+}
+
+function getImportedTaskId(item: any) {
+    const taskId = (item?.metrics as any)?.task_id;
+    return typeof taskId === 'string' && taskId.trim() ? taskId.trim() : null;
+}
+
+function isExternalPublicationPlanItem(item: any) {
+    return (item?.assets as any)?.source === 'external_publication_plan' && Boolean(getImportedTaskId(item));
+}
+
+function shouldPreserveRuntimeTask(item: any) {
+    return RUNTIME_LOCKED_TASK_STATUSES.has(String(item?.status || ''));
 }
 
 class PublicationPlanService {
@@ -448,21 +471,18 @@ class PublicationPlanService {
                     }
                 });
 
-            if (existingProject) {
-                await tx.contentItem.deleteMany({ where: { project_id: project.id } });
-                await tx.weekPackage.deleteMany({ where: { project_id: project.id } });
+            const existingChannels = await tx.socialChannel.findMany({
+                where: { project_id: project.id }
+            });
 
-                const existingChannels = await tx.socialChannel.findMany({
-                    where: { project_id: project.id }
-                });
-                const adapterChannelIds = existingChannels
-                    .filter((channel) => (channel.config as any)?.adapter_kind === 'publication_source')
-                    .map((channel) => channel.id);
+            const existingImportedItems = (await tx.contentItem.findMany({
+                where: { project_id: project.id }
+            })).filter(isExternalPublicationPlanItem);
 
-                if (adapterChannelIds.length > 0) {
-                    await tx.socialChannel.deleteMany({ where: { id: { in: adapterChannelIds } } });
-                }
-            }
+            const existingImportedItemsByTaskId = new Map(
+                existingImportedItems
+                    .map((item) => [getImportedTaskId(item) as string, item] as const)
+            );
 
             const settingsPayload = [
                 {
@@ -527,12 +547,26 @@ class PublicationPlanService {
 
             const channels = await Promise.all(
                 Object.entries(plan.accounts).map(async ([accountRef, account]) => {
+                    const channelConfig = publicationAdapterService.buildAdapterConfig(accountRef, account, accountActions[accountRef]);
+                    const existingChannel = existingChannels.find((channel) => channel.name === accountRef);
+
+                    if (existingChannel) {
+                        return tx.socialChannel.update({
+                            where: { id: existingChannel.id },
+                            data: {
+                                type: account.platform,
+                                config: channelConfig,
+                                is_active: true
+                            }
+                        });
+                    }
+
                     return tx.socialChannel.create({
                         data: {
                             project_id: project.id,
                             type: account.platform,
                             name: accountRef,
-                            config: publicationAdapterService.buildAdapterConfig(accountRef, account, accountActions[accountRef])
+                            config: channelConfig
                         }
                     });
                 })
@@ -544,20 +578,34 @@ class PublicationPlanService {
             const cycleStart = plan.meta.cycle_start ? new Date(plan.meta.cycle_start) : new Date();
             const cycleEnd = plan.meta.cycle_end ? new Date(plan.meta.cycle_end) : new Date(cycleStart);
 
-            const weekPackage = await tx.weekPackage.create({
-                data: {
-                    project_id: project.id,
-                    week_start: cycleStart,
-                    week_end: cycleEnd,
-                    week_theme: `Publication cycle ${plan.meta.plan_id}`,
-                    core_thesis: plan.meta.source_article_id || null,
-                    audience_focus: 'external_strategy',
-                    intent_tag: 'distribution_execution',
-                    narrative_arc: plan.meta as any,
-                    channel_mix: Object.fromEntries(Object.entries(plan.accounts).map(([key, value]) => [key, (value as any).platform])) as any,
-                    approval_status: 'approved'
-                }
+            const existingWeekPackage = await tx.weekPackage.findFirst({
+                where: { project_id: project.id },
+                orderBy: { id: 'asc' }
             });
+
+            const weekPackageData = {
+                project_id: project.id,
+                week_start: cycleStart,
+                week_end: cycleEnd,
+                week_theme: `Publication cycle ${plan.meta.plan_id}`,
+                core_thesis: plan.meta.source_article_id || null,
+                audience_focus: 'external_strategy',
+                intent_tag: 'distribution_execution',
+                narrative_arc: plan.meta as any,
+                channel_mix: Object.fromEntries(Object.entries(plan.accounts).map(([key, value]) => [key, (value as any).platform])) as any,
+                approval_status: 'approved'
+            };
+
+            const weekPackage = existingWeekPackage
+                ? await tx.weekPackage.update({
+                    where: { id: existingWeekPackage.id },
+                    data: weekPackageData
+                })
+                : await tx.weekPackage.create({
+                    data: weekPackageData
+                });
+
+            const importedTaskIds = new Set<string>();
 
             for (const action of plan.actions) {
                 const schedule = computeSchedule(action, plan.meta.timezone_default);
@@ -569,56 +617,86 @@ class PublicationPlanService {
                 const executionMode = publicationAdapterService.inferExecutionMode(account, action);
                 const mappedStatus = mapActionStatus(action.status);
                 const publicationOutcome = derivePublicationOutcome(action);
+                const taskId = String(action.id);
+                importedTaskIds.add(taskId);
 
-                const createdItem = await tx.contentItem.create({
-                    data: {
-                        project_id: project.id,
-                        week_package_id: weekPackage.id,
-                        channel_id: channelMap.get(action.account_ref) || null,
-                        type: `${action.channel}:${action.action_type}`,
-                        layer: action.channel,
-                        title: resolveActionTitle(action),
-                        brief: action.notes || action.human_review_reason || null,
-                        key_points: resolvedAssets as any,
-                        cta: action.parameters?.link_url_ref || null,
-                        cross_link_to: action.dependencies || [],
-                        assets: {
-                            source: 'external_publication_plan',
-                            action,
-                            account_ref: action.account_ref,
-                            asset_refs: action.asset_refs || [],
-                            resolved_assets: resolvedAssets
-                        } as any,
-                        status: mappedStatus,
-                        schedule_at: schedule?.scheduled_at || null,
-                        quality_report: {
-                            execution_mode: executionMode,
-                            verification: action.verification || [],
-                            post_actions: action.post_actions || [],
-                            human_review: action.human_review === true,
-                            human_review_reason: action.human_review_reason || null,
-                            blocking_conditions: action.blocking_conditions || [],
-                            display_name: action.display_name || null,
-                            deferred_reason: action.deferred_reason || null,
-                            blocked_by: action.blocked_by || [],
-                            reactivation_trigger: action.reactivation_trigger || null,
-                            target_cycle_after_unblock: action.target_cycle_after_unblock || null,
-                            publication_outcome: publicationOutcome,
-                            plan_outcome: action.outcome || null,
-                            skip_reason: action.skip_reason || null
-                        } as any,
-                        metrics: {
-                            publication_plan_id: plan.meta.plan_id,
-                            task_id: action.id,
-                            task_display_name: action.display_name || null,
-                            timezone: schedule?.timezone || plan.meta.timezone_default || null,
-                            account_ref: action.account_ref,
-                            publication_outcome: publicationOutcome,
-                            monitoring: publicationAdapterService.deriveMonitoringPlan(action)
-                        } as any,
-                        published_link: action.status === 'completed' ? action.verification?.find((item: any) => item.type === 'post_live_check')?.url || null : null
-                    }
-                });
+                const itemData = {
+                    project_id: project.id,
+                    week_package_id: weekPackage.id,
+                    channel_id: channelMap.get(action.account_ref) || null,
+                    type: `${action.channel}:${action.action_type}`,
+                    layer: action.channel,
+                    title: resolveActionTitle(action),
+                    brief: action.notes || action.human_review_reason || null,
+                    key_points: resolvedAssets as any,
+                    cta: action.parameters?.link_url_ref || null,
+                    cross_link_to: action.dependencies || [],
+                    assets: {
+                        source: 'external_publication_plan',
+                        action,
+                        account_ref: action.account_ref,
+                        asset_refs: action.asset_refs || [],
+                        resolved_assets: resolvedAssets
+                    } as any,
+                    status: mappedStatus,
+                    schedule_at: schedule?.scheduled_at || null,
+                    quality_report: {
+                        execution_mode: executionMode,
+                        verification: action.verification || [],
+                        post_actions: action.post_actions || [],
+                        human_review: action.human_review === true,
+                        human_review_reason: action.human_review_reason || null,
+                        blocking_conditions: action.blocking_conditions || [],
+                        display_name: action.display_name || null,
+                        deferred_reason: action.deferred_reason || null,
+                        blocked_by: action.blocked_by || [],
+                        reactivation_trigger: action.reactivation_trigger || null,
+                        target_cycle_after_unblock: action.target_cycle_after_unblock || null,
+                        publication_outcome: publicationOutcome,
+                        plan_outcome: action.outcome || null,
+                        skip_reason: action.skip_reason || null
+                    } as any,
+                    metrics: {
+                        publication_plan_id: plan.meta.plan_id,
+                        task_id: taskId,
+                        task_display_name: action.display_name || null,
+                        timezone: schedule?.timezone || plan.meta.timezone_default || null,
+                        account_ref: action.account_ref,
+                        publication_outcome: publicationOutcome,
+                        monitoring: publicationAdapterService.deriveMonitoringPlan(action)
+                    } as any,
+                    published_link: action.status === 'completed'
+                        ? action.verification?.find((item: any) => item.type === 'post_live_check')?.url || null
+                        : null
+                };
+
+                const existingItem = existingImportedItemsByTaskId.get(taskId);
+
+                const createdItem = existingItem
+                    ? shouldPreserveRuntimeTask(existingItem)
+                        ? existingItem
+                        : await tx.contentItem.update({
+                            where: { id: existingItem.id },
+                            data: {
+                                ...itemData,
+                                assets: {
+                                    ...((existingItem.assets as any) || {}),
+                                    ...itemData.assets
+                                } as any,
+                                quality_report: {
+                                    ...((existingItem.quality_report as any) || {}),
+                                    ...itemData.quality_report
+                                } as any,
+                                metrics: {
+                                    ...((existingItem.metrics as any) || {}),
+                                    ...itemData.metrics
+                                } as any,
+                                published_link: existingItem.published_link || itemData.published_link
+                            }
+                        })
+                    : await tx.contentItem.create({
+                        data: itemData
+                    });
 
                 const gscPostActions = (action.post_actions || []).filter((item: any) =>
                     item.type === 'submit_to_gsc' || item.type === 'gsc_url_inspection'
@@ -627,42 +705,94 @@ class PublicationPlanService {
                 for (const postAction of gscPostActions) {
                     if (!gscChannel) continue;
 
-                    await tx.contentItem.create({
-                        data: {
-                            project_id: project.id,
-                            week_package_id: weekPackage.id,
-                            channel_id: gscChannel.id,
-                            type: `google_search_console:${postAction.type}`,
-                            layer: 'google_search_console',
-                            title: `${resolveActionTitle(action)} · ${postAction.type}`,
-                            brief: `Follow-up GSC action for ${action.id}`,
-                            cross_link_to: [createdItem.id],
-                            status: mappedStatus === 'deferred' ? 'deferred' : mappedStatus === 'skipped' ? 'skipped' : 'planned',
-                            schedule_at: schedule?.scheduled_at || null,
-                            assets: {
-                                source: 'external_publication_plan',
-                                parent_action_id: action.id,
-                                parent_content_item_id: createdItem.id,
-                                gsc_action: postAction,
-                                target_url_ref: postAction.url_ref || action.parameters?.link_url_ref || null
-                            } as any,
-                            quality_report: {
-                                execution_mode: 'automated',
-                                verification: [],
-                                post_actions: []
-                            } as any,
-                            metrics: {
-                                publication_plan_id: plan.meta.plan_id,
-                                task_id: `${action.id}:${postAction.type}`,
-                                task_display_name: action.display_name ? `${action.display_name} · ${postAction.type}` : null,
-                                account_ref: gscChannel.name,
-                                monitoring: {
-                                    needs_analytics_collection: true
-                                }
-                            } as any
+                    const followupTaskId = `${action.id}:${postAction.type}`;
+                    importedTaskIds.add(followupTaskId);
+
+                    const followupData = {
+                        project_id: project.id,
+                        week_package_id: weekPackage.id,
+                        channel_id: gscChannel.id,
+                        type: `google_search_console:${postAction.type}`,
+                        layer: 'google_search_console',
+                        title: `${resolveActionTitle(action)} · ${postAction.type}`,
+                        brief: `Follow-up GSC action for ${action.id}`,
+                        cross_link_to: [createdItem.id],
+                        status: mappedStatus === 'deferred' ? 'deferred' : mappedStatus === 'skipped' ? 'skipped' : 'planned',
+                        schedule_at: schedule?.scheduled_at || null,
+                        assets: {
+                            source: 'external_publication_plan',
+                            parent_action_id: action.id,
+                            parent_content_item_id: createdItem.id,
+                            gsc_action: postAction,
+                            target_url_ref: postAction.url_ref || action.parameters?.link_url_ref || null
+                        } as any,
+                        quality_report: {
+                            execution_mode: 'automated',
+                            verification: [],
+                            post_actions: []
+                        } as any,
+                        metrics: {
+                            publication_plan_id: plan.meta.plan_id,
+                            task_id: followupTaskId,
+                            task_display_name: action.display_name ? `${action.display_name} · ${postAction.type}` : null,
+                            account_ref: gscChannel.name,
+                            monitoring: {
+                                needs_analytics_collection: true
+                            }
+                        } as any
+                    };
+
+                    const existingFollowup = existingImportedItemsByTaskId.get(followupTaskId);
+
+                    if (existingFollowup) {
+                        if (shouldPreserveRuntimeTask(existingFollowup)) {
+                            continue;
                         }
+
+                        await tx.contentItem.update({
+                            where: { id: existingFollowup.id },
+                            data: {
+                                ...followupData,
+                                assets: {
+                                    ...((existingFollowup.assets as any) || {}),
+                                    ...followupData.assets
+                                } as any,
+                                quality_report: {
+                                    ...((existingFollowup.quality_report as any) || {}),
+                                    ...followupData.quality_report
+                                } as any,
+                                metrics: {
+                                    ...((existingFollowup.metrics as any) || {}),
+                                    ...followupData.metrics
+                                } as any,
+                                published_link: existingFollowup.published_link || null
+                            }
+                        });
+                        continue;
+                    }
+
+                    await tx.contentItem.create({
+                        data: followupData
                     });
                 }
+            }
+
+            const staleImportedIds = existingImportedItems
+                .filter((item) => {
+                    const taskId = getImportedTaskId(item);
+                    if (!taskId || importedTaskIds.has(taskId)) {
+                        return false;
+                    }
+                    return !shouldPreserveRuntimeTask(item);
+                })
+                .map((item) => item.id);
+
+            if (staleImportedIds.length > 0) {
+                await tx.contentItem.deleteMany({
+                    where: {
+                        id: { in: staleImportedIds }
+                    }
+                });
             }
 
             return {

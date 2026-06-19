@@ -38,9 +38,19 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
+const crypto_1 = require("crypto");
 const db_1 = __importDefault(require("../db"));
 const publication_adapter_service_1 = __importDefault(require("./publication_adapter.service"));
 const publication_runtime_helpers_1 = require("./publication_runtime.helpers");
+const RUNTIME_LOCKED_TASK_STATUSES = new Set([
+    'drafted',
+    'revised',
+    'approved',
+    'scheduled',
+    'ready_for_execution',
+    'awaiting_manual_publication',
+    'published'
+]);
 function slugify(value) {
     return value
         .toLowerCase()
@@ -111,6 +121,25 @@ function dedupeResourceFiles(entries) {
         return true;
     });
 }
+function inferContentType(relativePath) {
+    if (!relativePath)
+        return 'text/plain';
+    const normalized = relativePath.toLowerCase();
+    if (normalized.endsWith('.md') || normalized.endsWith('.markdown'))
+        return 'text/markdown';
+    if (normalized.endsWith('.html') || normalized.endsWith('.htm'))
+        return 'text/html';
+    if (normalized.endsWith('.json'))
+        return 'application/json';
+    if (normalized.endsWith('.yaml') || normalized.endsWith('.yml'))
+        return 'application/yaml';
+    return 'text/plain';
+}
+function checksumContent(content) {
+    if (typeof content !== 'string')
+        return null;
+    return (0, crypto_1.createHash)('sha256').update(content).digest('hex');
+}
 function computeSchedule(action, fallbackTimezone) {
     if (!action.scheduled_date)
         return null;
@@ -134,7 +163,217 @@ function derivePublicationOutcome(action) {
         return 'restricted';
     return 'blocked';
 }
+function getImportedTaskId(item) {
+    const taskId = item?.metrics?.task_id;
+    return typeof taskId === 'string' && taskId.trim() ? taskId.trim() : null;
+}
+function isExternalPublicationPlanItem(item) {
+    return item?.assets?.source === 'external_publication_plan' && Boolean(getImportedTaskId(item));
+}
+function shouldPreserveRuntimeTask(item) {
+    return RUNTIME_LOCKED_TASK_STATUSES.has(String(item?.status || ''));
+}
 class PublicationPlanService {
+    getPublicationPlanFormat() {
+        return {
+            version: '2026-06-publication-plan-v2',
+            summary: 'Preferred planner publication-plan format for MCP and chat-generated plans.',
+            top_level: {
+                required: ['meta', 'accounts', 'assets', 'actions'],
+                optional: ['ongoing_rules', 'measurement', 'dependencies_matrix_visualized']
+            },
+            meta: {
+                required: ['plan_id'],
+                optional: [
+                    'plan_version',
+                    'generated_at',
+                    'source_article_id',
+                    'cycle_start',
+                    'cycle_end',
+                    'timezone_default',
+                    'owner',
+                    'pipeline_root',
+                    'project_name',
+                    'description'
+                ]
+            },
+            accounts: {
+                shape: 'Record<string, account>',
+                required_fields: ['platform'],
+                examples: [
+                    { ref: 'spherical_analyst_tg', platform: 'telegram' },
+                    { ref: 'seturon_linkedin', platform: 'linkedin' }
+                ]
+            },
+            assets: {
+                shape: 'Record<string, asset>',
+                supported_patterns: [
+                    {
+                        kind: 'inline_preview',
+                        when_to_use: 'Short preview, teaser, or compact raw note that can be rendered directly in UI.',
+                        fields: ['type', 'content']
+                    },
+                    {
+                        kind: 'file_backed_content',
+                        when_to_use: 'Full draft or source material stored in a markdown/html file.',
+                        fields: ['type', 'path', 'section_marker?']
+                    },
+                    {
+                        kind: 'url_asset',
+                        when_to_use: 'Canonical URL, destination page, image source, or external reference.',
+                        fields: ['type', 'target_url']
+                    }
+                ]
+            },
+            actions: {
+                shape: 'Array<action>',
+                required_fields: ['id', 'channel', 'account_ref', 'action_type'],
+                strongly_recommended_fields: ['display_name'],
+                preferred_content_pattern: {
+                    rule: 'For full publication text, use action.content_files. Do not rely on free-text hints inside asset.content.',
+                    content_files_item: {
+                        required: ['role'],
+                        recommended: ['purpose'],
+                        one_of: [
+                            ['path'],
+                            ['url'],
+                            ['url_ref']
+                        ],
+                        optional: ['section_marker']
+                    }
+                }
+            },
+            recommendations: [
+                'Use asset.content only for compact inline text or preview notes.',
+                'Use action.content_files for the full publication body, markdown sections, or HTML fragments.',
+                'Use unique section_marker values that match stable headings in the source file.',
+                'If a post depends on a full markdown section, make that dependency explicit in content_files.'
+            ]
+        };
+    }
+    getPublicationPlanTemplate(input = {}) {
+        const planId = input.planId || 'project-cycle-2026-06';
+        const channelRef = input.channelRef || 'primary_channel';
+        const channelPlatform = input.channelPlatform || 'telegram';
+        const timezone = input.timezone || 'Europe/Lisbon';
+        return {
+            meta: {
+                plan_id: planId,
+                plan_version: '1.0.0',
+                generated_at: new Date().toISOString(),
+                cycle_start: '2026-06-01',
+                cycle_end: '2026-06-30',
+                timezone_default: timezone,
+                owner: input.owner || 'workspace_owner',
+                project_name: input.projectName || 'Новый проект',
+                description: 'План публикаций, подготовленный через MCP/чат.'
+            },
+            accounts: {
+                [channelRef]: {
+                    platform: channelPlatform
+                }
+            },
+            assets: {
+                teaser_note_1: {
+                    type: `${channelPlatform}_inline_preview`,
+                    content: 'Краткая идея или превью материала для быстрых карточек в UI.'
+                },
+                article_source_1: {
+                    type: 'markdown_source',
+                    path: 'weeks/w01.md',
+                    section_marker: 'Idea 1 — «Название секции»'
+                },
+                target_article_url: {
+                    type: 'canonical_url',
+                    target_url: 'https://example.com/article'
+                }
+            },
+            actions: [
+                {
+                    id: 'a-w01-001',
+                    display_name: `${channelPlatform} — публикация 1`,
+                    channel: channelPlatform,
+                    account_ref: channelRef,
+                    action_type: 'post_text',
+                    status: 'planned',
+                    scheduled_date: '2026-06-03',
+                    scheduled_time_window: {
+                        start: '10:00',
+                        end: '10:00',
+                        timezone
+                    },
+                    asset_refs: ['teaser_note_1'],
+                    content_files: [
+                        {
+                            role: 'post_body',
+                            purpose: 'Полный текст публикации',
+                            path: 'weeks/w01.md',
+                            section_marker: 'Idea 1 — «Название секции»'
+                        }
+                    ],
+                    parameters: {
+                        link_url_ref: 'assets.target_article_url.target_url'
+                    },
+                    notes: 'Краткий комментарий по задаче.'
+                }
+            ],
+            ongoing_rules: [],
+            measurement: {}
+        };
+    }
+    normalizePublicationPlan(raw) {
+        const parsed = this.parsePlan(raw);
+        const warnings = [];
+        const normalized = {
+            ...parsed,
+            ongoing_rules: Array.isArray(parsed.ongoing_rules) ? parsed.ongoing_rules : [],
+            measurement: parsed.measurement || {},
+            actions: parsed.actions.map((action) => {
+                const normalizedAction = {
+                    ...action,
+                    asset_refs: Array.isArray(action.asset_refs) ? action.asset_refs : [],
+                    content_files: Array.isArray(action.content_files)
+                        ? action.content_files
+                            .filter(Boolean)
+                            .map((entry) => ({
+                            role: entry.role || 'post_body',
+                            purpose: entry.purpose || null,
+                            path: entry.path || null,
+                            url: entry.url || null,
+                            url_ref: entry.url_ref || null,
+                            section_marker: entry.section_marker || null
+                        }))
+                        : []
+                };
+                if (!normalizedAction.display_name) {
+                    warnings.push(`Action '${action.id}' is missing display_name.`);
+                }
+                if (normalizedAction.content_files.length === 0 && normalizedAction.asset_refs.length > 0) {
+                    const inlineOnlyRefs = normalizedAction.asset_refs.filter((ref) => {
+                        const asset = parsed.assets?.[ref];
+                        return asset && typeof asset.content === 'string' && !asset.path;
+                    });
+                    if (inlineOnlyRefs.length > 0) {
+                        warnings.push(`Action '${action.id}' relies on inline asset content (${inlineOnlyRefs.join(', ')}). Add content_files for full text if this should render a complete draft.`);
+                    }
+                }
+                normalizedAction.content_files.forEach((entry, index) => {
+                    if (!entry.path && !entry.url && !entry.url_ref) {
+                        warnings.push(`Action '${action.id}' content_files[${index}] should define path, url, or url_ref.`);
+                    }
+                    if (entry.path && !entry.section_marker) {
+                        warnings.push(`Action '${action.id}' content_files[${index}] uses a path without section_marker. This is valid, but section_marker is recommended for multi-section files.`);
+                    }
+                });
+                return normalizedAction;
+            })
+        };
+        return {
+            normalizedPlan: normalized,
+            warnings,
+            format: this.getPublicationPlanFormat()
+        };
+    }
     parsePlan(raw) {
         const parsed = JSON.parse(raw);
         if (!parsed?.meta?.plan_id || !parsed?.accounts || !parsed?.assets || !Array.isArray(parsed?.actions)) {
@@ -169,6 +408,10 @@ class PublicationPlanService {
                 suffix += 1;
             }
         }
+        const existingSnapshots = existingProject
+            ? await this.loadAssetSnapshots(existingProject.id)
+            : {};
+        const assetSnapshots = this.buildAssetSnapshots(plan, existingSnapshots);
         return db_1.default.$transaction(async (tx) => {
             const project = existingProject
                 ? await tx.project.update({
@@ -191,19 +434,14 @@ class PublicationPlanService {
                         }
                     }
                 });
-            if (existingProject) {
-                await tx.contentItem.deleteMany({ where: { project_id: project.id } });
-                await tx.weekPackage.deleteMany({ where: { project_id: project.id } });
-                const existingChannels = await tx.socialChannel.findMany({
-                    where: { project_id: project.id }
-                });
-                const adapterChannelIds = existingChannels
-                    .filter((channel) => channel.config?.adapter_kind === 'publication_source')
-                    .map((channel) => channel.id);
-                if (adapterChannelIds.length > 0) {
-                    await tx.socialChannel.deleteMany({ where: { id: { in: adapterChannelIds } } });
-                }
-            }
+            const existingChannels = await tx.socialChannel.findMany({
+                where: { project_id: project.id }
+            });
+            const existingImportedItems = (await tx.contentItem.findMany({
+                where: { project_id: project.id }
+            })).filter(isExternalPublicationPlanItem);
+            const existingImportedItemsByTaskId = new Map(existingImportedItems
+                .map((item) => [getImportedTaskId(item), item]));
             const settingsPayload = [
                 {
                     project_id: project.id,
@@ -224,6 +462,11 @@ class PublicationPlanService {
                     project_id: project.id,
                     key: 'publication_plan_accounts',
                     value: JSON.stringify(plan.accounts)
+                },
+                {
+                    project_id: project.id,
+                    key: 'publication_plan_asset_snapshots',
+                    value: JSON.stringify(assetSnapshots)
                 },
                 {
                     project_id: project.id,
@@ -258,12 +501,24 @@ class PublicationPlanService {
                 return acc;
             }, {});
             const channels = await Promise.all(Object.entries(plan.accounts).map(async ([accountRef, account]) => {
+                const channelConfig = publication_adapter_service_1.default.buildAdapterConfig(accountRef, account, accountActions[accountRef]);
+                const existingChannel = existingChannels.find((channel) => channel.name === accountRef);
+                if (existingChannel) {
+                    return tx.socialChannel.update({
+                        where: { id: existingChannel.id },
+                        data: {
+                            type: account.platform,
+                            config: channelConfig,
+                            is_active: true
+                        }
+                    });
+                }
                 return tx.socialChannel.create({
                     data: {
                         project_id: project.id,
                         type: account.platform,
                         name: accountRef,
-                        config: publication_adapter_service_1.default.buildAdapterConfig(accountRef, account, accountActions[accountRef])
+                        config: channelConfig
                     }
                 });
             }));
@@ -271,20 +526,31 @@ class PublicationPlanService {
             const gscChannel = channels.find((channel) => channel.type === 'google_search_console') || null;
             const cycleStart = plan.meta.cycle_start ? new Date(plan.meta.cycle_start) : new Date();
             const cycleEnd = plan.meta.cycle_end ? new Date(plan.meta.cycle_end) : new Date(cycleStart);
-            const weekPackage = await tx.weekPackage.create({
-                data: {
-                    project_id: project.id,
-                    week_start: cycleStart,
-                    week_end: cycleEnd,
-                    week_theme: `Publication cycle ${plan.meta.plan_id}`,
-                    core_thesis: plan.meta.source_article_id || null,
-                    audience_focus: 'external_strategy',
-                    intent_tag: 'distribution_execution',
-                    narrative_arc: plan.meta,
-                    channel_mix: Object.fromEntries(Object.entries(plan.accounts).map(([key, value]) => [key, value.platform])),
-                    approval_status: 'approved'
-                }
+            const existingWeekPackage = await tx.weekPackage.findFirst({
+                where: { project_id: project.id },
+                orderBy: { id: 'asc' }
             });
+            const weekPackageData = {
+                project_id: project.id,
+                week_start: cycleStart,
+                week_end: cycleEnd,
+                week_theme: `Publication cycle ${plan.meta.plan_id}`,
+                core_thesis: plan.meta.source_article_id || null,
+                audience_focus: 'external_strategy',
+                intent_tag: 'distribution_execution',
+                narrative_arc: plan.meta,
+                channel_mix: Object.fromEntries(Object.entries(plan.accounts).map(([key, value]) => [key, value.platform])),
+                approval_status: 'approved'
+            };
+            const weekPackage = existingWeekPackage
+                ? await tx.weekPackage.update({
+                    where: { id: existingWeekPackage.id },
+                    data: weekPackageData
+                })
+                : await tx.weekPackage.create({
+                    data: weekPackageData
+                });
+            const importedTaskIds = new Set();
             for (const action of plan.actions) {
                 const schedule = computeSchedule(action, plan.meta.timezone_default);
                 const resolvedAssets = (action.asset_refs || []).map((ref) => ({
@@ -295,95 +561,168 @@ class PublicationPlanService {
                 const executionMode = publication_adapter_service_1.default.inferExecutionMode(account, action);
                 const mappedStatus = (0, publication_runtime_helpers_1.mapActionStatus)(action.status);
                 const publicationOutcome = derivePublicationOutcome(action);
-                const createdItem = await tx.contentItem.create({
-                    data: {
-                        project_id: project.id,
-                        week_package_id: weekPackage.id,
-                        channel_id: channelMap.get(action.account_ref) || null,
-                        type: `${action.channel}:${action.action_type}`,
-                        layer: action.channel,
-                        title: (0, publication_runtime_helpers_1.resolveActionTitle)(action),
-                        brief: action.notes || action.human_review_reason || null,
-                        key_points: resolvedAssets,
-                        cta: action.parameters?.link_url_ref || null,
-                        cross_link_to: action.dependencies || [],
-                        assets: {
-                            source: 'external_publication_plan',
-                            action,
-                            account_ref: action.account_ref,
-                            asset_refs: action.asset_refs || [],
-                            resolved_assets: resolvedAssets
-                        },
-                        status: mappedStatus,
-                        schedule_at: schedule?.scheduled_at || null,
-                        quality_report: {
-                            execution_mode: executionMode,
-                            verification: action.verification || [],
-                            post_actions: action.post_actions || [],
-                            human_review: action.human_review === true,
-                            human_review_reason: action.human_review_reason || null,
-                            blocking_conditions: action.blocking_conditions || [],
-                            display_name: action.display_name || null,
-                            deferred_reason: action.deferred_reason || null,
-                            blocked_by: action.blocked_by || [],
-                            reactivation_trigger: action.reactivation_trigger || null,
-                            target_cycle_after_unblock: action.target_cycle_after_unblock || null,
-                            publication_outcome: publicationOutcome,
-                            plan_outcome: action.outcome || null,
-                            skip_reason: action.skip_reason || null
-                        },
-                        metrics: {
-                            publication_plan_id: plan.meta.plan_id,
-                            task_id: action.id,
-                            task_display_name: action.display_name || null,
-                            timezone: schedule?.timezone || plan.meta.timezone_default || null,
-                            account_ref: action.account_ref,
-                            publication_outcome: publicationOutcome,
-                            monitoring: publication_adapter_service_1.default.deriveMonitoringPlan(action)
-                        },
-                        published_link: action.status === 'completed' ? action.verification?.find((item) => item.type === 'post_live_check')?.url || null : null
-                    }
-                });
+                const taskId = String(action.id);
+                importedTaskIds.add(taskId);
+                const itemData = {
+                    project_id: project.id,
+                    week_package_id: weekPackage.id,
+                    channel_id: channelMap.get(action.account_ref) || null,
+                    type: `${action.channel}:${action.action_type}`,
+                    layer: action.channel,
+                    title: (0, publication_runtime_helpers_1.resolveActionTitle)(action),
+                    brief: action.notes || action.human_review_reason || null,
+                    key_points: resolvedAssets,
+                    cta: action.parameters?.link_url_ref || null,
+                    cross_link_to: action.dependencies || [],
+                    assets: {
+                        source: 'external_publication_plan',
+                        action,
+                        account_ref: action.account_ref,
+                        asset_refs: action.asset_refs || [],
+                        resolved_assets: resolvedAssets
+                    },
+                    status: mappedStatus,
+                    schedule_at: schedule?.scheduled_at || null,
+                    quality_report: {
+                        execution_mode: executionMode,
+                        verification: action.verification || [],
+                        post_actions: action.post_actions || [],
+                        human_review: action.human_review === true,
+                        human_review_reason: action.human_review_reason || null,
+                        blocking_conditions: action.blocking_conditions || [],
+                        display_name: action.display_name || null,
+                        deferred_reason: action.deferred_reason || null,
+                        blocked_by: action.blocked_by || [],
+                        reactivation_trigger: action.reactivation_trigger || null,
+                        target_cycle_after_unblock: action.target_cycle_after_unblock || null,
+                        publication_outcome: publicationOutcome,
+                        plan_outcome: action.outcome || null,
+                        skip_reason: action.skip_reason || null
+                    },
+                    metrics: {
+                        publication_plan_id: plan.meta.plan_id,
+                        task_id: taskId,
+                        task_display_name: action.display_name || null,
+                        timezone: schedule?.timezone || plan.meta.timezone_default || null,
+                        account_ref: action.account_ref,
+                        publication_outcome: publicationOutcome,
+                        monitoring: publication_adapter_service_1.default.deriveMonitoringPlan(action)
+                    },
+                    published_link: action.status === 'completed'
+                        ? action.verification?.find((item) => item.type === 'post_live_check')?.url || null
+                        : null
+                };
+                const existingItem = existingImportedItemsByTaskId.get(taskId);
+                const createdItem = existingItem
+                    ? shouldPreserveRuntimeTask(existingItem)
+                        ? existingItem
+                        : await tx.contentItem.update({
+                            where: { id: existingItem.id },
+                            data: {
+                                ...itemData,
+                                assets: {
+                                    ...(existingItem.assets || {}),
+                                    ...itemData.assets
+                                },
+                                quality_report: {
+                                    ...(existingItem.quality_report || {}),
+                                    ...itemData.quality_report
+                                },
+                                metrics: {
+                                    ...(existingItem.metrics || {}),
+                                    ...itemData.metrics
+                                },
+                                published_link: existingItem.published_link || itemData.published_link
+                            }
+                        })
+                    : await tx.contentItem.create({
+                        data: itemData
+                    });
                 const gscPostActions = (action.post_actions || []).filter((item) => item.type === 'submit_to_gsc' || item.type === 'gsc_url_inspection');
                 for (const postAction of gscPostActions) {
                     if (!gscChannel)
                         continue;
-                    await tx.contentItem.create({
-                        data: {
-                            project_id: project.id,
-                            week_package_id: weekPackage.id,
-                            channel_id: gscChannel.id,
-                            type: `google_search_console:${postAction.type}`,
-                            layer: 'google_search_console',
-                            title: `${(0, publication_runtime_helpers_1.resolveActionTitle)(action)} · ${postAction.type}`,
-                            brief: `Follow-up GSC action for ${action.id}`,
-                            cross_link_to: [createdItem.id],
-                            status: mappedStatus === 'deferred' ? 'deferred' : mappedStatus === 'skipped' ? 'skipped' : 'planned',
-                            schedule_at: schedule?.scheduled_at || null,
-                            assets: {
-                                source: 'external_publication_plan',
-                                parent_action_id: action.id,
-                                parent_content_item_id: createdItem.id,
-                                gsc_action: postAction,
-                                target_url_ref: postAction.url_ref || action.parameters?.link_url_ref || null
-                            },
-                            quality_report: {
-                                execution_mode: 'automated',
-                                verification: [],
-                                post_actions: []
-                            },
-                            metrics: {
-                                publication_plan_id: plan.meta.plan_id,
-                                task_id: `${action.id}:${postAction.type}`,
-                                task_display_name: action.display_name ? `${action.display_name} · ${postAction.type}` : null,
-                                account_ref: gscChannel.name,
-                                monitoring: {
-                                    needs_analytics_collection: true
-                                }
+                    const followupTaskId = `${action.id}:${postAction.type}`;
+                    importedTaskIds.add(followupTaskId);
+                    const followupData = {
+                        project_id: project.id,
+                        week_package_id: weekPackage.id,
+                        channel_id: gscChannel.id,
+                        type: `google_search_console:${postAction.type}`,
+                        layer: 'google_search_console',
+                        title: `${(0, publication_runtime_helpers_1.resolveActionTitle)(action)} · ${postAction.type}`,
+                        brief: `Follow-up GSC action for ${action.id}`,
+                        cross_link_to: [createdItem.id],
+                        status: mappedStatus === 'deferred' ? 'deferred' : mappedStatus === 'skipped' ? 'skipped' : 'planned',
+                        schedule_at: schedule?.scheduled_at || null,
+                        assets: {
+                            source: 'external_publication_plan',
+                            parent_action_id: action.id,
+                            parent_content_item_id: createdItem.id,
+                            gsc_action: postAction,
+                            target_url_ref: postAction.url_ref || action.parameters?.link_url_ref || null
+                        },
+                        quality_report: {
+                            execution_mode: 'automated',
+                            verification: [],
+                            post_actions: []
+                        },
+                        metrics: {
+                            publication_plan_id: plan.meta.plan_id,
+                            task_id: followupTaskId,
+                            task_display_name: action.display_name ? `${action.display_name} · ${postAction.type}` : null,
+                            account_ref: gscChannel.name,
+                            monitoring: {
+                                needs_analytics_collection: true
                             }
                         }
+                    };
+                    const existingFollowup = existingImportedItemsByTaskId.get(followupTaskId);
+                    if (existingFollowup) {
+                        if (shouldPreserveRuntimeTask(existingFollowup)) {
+                            continue;
+                        }
+                        await tx.contentItem.update({
+                            where: { id: existingFollowup.id },
+                            data: {
+                                ...followupData,
+                                assets: {
+                                    ...(existingFollowup.assets || {}),
+                                    ...followupData.assets
+                                },
+                                quality_report: {
+                                    ...(existingFollowup.quality_report || {}),
+                                    ...followupData.quality_report
+                                },
+                                metrics: {
+                                    ...(existingFollowup.metrics || {}),
+                                    ...followupData.metrics
+                                },
+                                published_link: existingFollowup.published_link || null
+                            }
+                        });
+                        continue;
+                    }
+                    await tx.contentItem.create({
+                        data: followupData
                     });
                 }
+            }
+            const staleImportedIds = existingImportedItems
+                .filter((item) => {
+                const taskId = getImportedTaskId(item);
+                if (!taskId || importedTaskIds.has(taskId)) {
+                    return false;
+                }
+                return !shouldPreserveRuntimeTask(item);
+            })
+                .map((item) => item.id);
+            if (staleImportedIds.length > 0) {
+                await tx.contentItem.deleteMany({
+                    where: {
+                        id: { in: staleImportedIds }
+                    }
+                });
             }
             return {
                 project,
@@ -391,53 +730,204 @@ class PublicationPlanService {
                     accounts: channels.length,
                     actions: plan.actions.length,
                     assets: Object.keys(plan.assets).length,
+                    assetSnapshots: Object.keys(assetSnapshots).length,
                     ongoingRules: (plan.ongoing_rules || []).length,
                     updatedExistingProject: Boolean(existingProject)
                 }
             };
         });
     }
+    readAssetContent(plan, asset, relativePath) {
+        const pipelineRoot = plan.meta.pipeline_root || '';
+        if (!pipelineRoot) {
+            return null;
+        }
+        const fullPath = path.resolve(pipelineRoot, relativePath);
+        const normalizedRoot = path.resolve(pipelineRoot);
+        if (!fullPath.startsWith(normalizedRoot)) {
+            return null;
+        }
+        if (!fs.existsSync(fullPath)) {
+            return null;
+        }
+        const rawContent = fs.readFileSync(fullPath, 'utf8');
+        return {
+            fullPath,
+            content: asset.section_marker ? resolveSection(rawContent, asset.section_marker) : rawContent
+        };
+    }
+    buildAssetSnapshots(plan, existingSnapshots = {}, overrides = {}) {
+        const snapshots = {};
+        for (const [ref, asset] of Object.entries(plan.assets || {})) {
+            const relativePath = typeof asset?.path === 'string' ? asset.path : null;
+            const sectionMarker = asset?.section_marker || null;
+            const previous = existingSnapshots[ref];
+            const override = overrides[ref];
+            if (override && typeof override.content === 'string') {
+                snapshots[ref] = {
+                    ref,
+                    relative_path: relativePath,
+                    file_name: relativePath ? path.basename(relativePath) : null,
+                    section_marker: sectionMarker,
+                    content: override.content,
+                    content_type: override.content_type || inferContentType(relativePath),
+                    content_length: override.content.length,
+                    checksum: checksumContent(override.content),
+                    source: 'mcp',
+                    source_available: true,
+                    captured_at: new Date().toISOString()
+                };
+                continue;
+            }
+            const inlineContent = typeof asset?.content === 'string' ? asset.content : null;
+            if (inlineContent) {
+                snapshots[ref] = {
+                    ref,
+                    relative_path: relativePath,
+                    file_name: relativePath ? path.basename(relativePath) : ref,
+                    section_marker: sectionMarker,
+                    content: inlineContent,
+                    content_type: inferContentType(relativePath),
+                    content_length: inlineContent.length,
+                    checksum: checksumContent(inlineContent),
+                    source: 'inline',
+                    source_available: true,
+                    captured_at: new Date().toISOString()
+                };
+                continue;
+            }
+            if (!relativePath) {
+                continue;
+            }
+            const resolved = this.readAssetContent(plan, asset, relativePath);
+            if (resolved) {
+                snapshots[ref] = {
+                    ref,
+                    relative_path: relativePath,
+                    file_name: path.basename(relativePath),
+                    section_marker: sectionMarker,
+                    content: resolved.content,
+                    content_type: inferContentType(relativePath),
+                    content_length: resolved.content.length,
+                    checksum: checksumContent(resolved.content),
+                    source: 'filesystem',
+                    source_available: true,
+                    captured_at: new Date().toISOString()
+                };
+                continue;
+            }
+            if (previous?.content) {
+                snapshots[ref] = {
+                    ...previous,
+                    ref,
+                    relative_path: relativePath,
+                    file_name: path.basename(relativePath),
+                    section_marker: sectionMarker,
+                    source: previous.source === 'mcp' ? 'mcp' : 'preserved',
+                    source_available: false
+                };
+            }
+        }
+        return snapshots;
+    }
+    resolveAssetRuntime(plan, assetRef, maxChars) {
+        const asset = plan.assets?.[assetRef];
+        if (!asset) {
+            return {
+                ref: assetRef,
+                missing: true
+            };
+        }
+        const relativePath = typeof asset.path === 'string' ? asset.path : null;
+        const snapshot = plan.asset_snapshots?.[assetRef] || null;
+        const runtimeRead = relativePath ? this.readAssetContent(plan, asset, relativePath) : null;
+        const inlineContent = typeof asset.content === 'string' ? asset.content : null;
+        const snapshotContent = typeof snapshot?.content === 'string' ? snapshot.content : null;
+        const content = runtimeRead?.content ?? inlineContent ?? snapshotContent;
+        const truncated = typeof maxChars === 'number' && typeof content === 'string' && content.length > maxChars;
+        return {
+            ref: assetRef,
+            asset,
+            full_path: runtimeRead?.fullPath || (relativePath && plan.meta.pipeline_root ? path.resolve(plan.meta.pipeline_root, relativePath) : null),
+            file_name: relativePath ? path.basename(relativePath) : (inlineContent ? assetRef : null),
+            relative_path: relativePath,
+            section_marker: asset.section_marker || null,
+            exists: Boolean(content),
+            content: typeof content === 'string'
+                ? (truncated ? `${content.slice(0, maxChars)}\n...[truncated]` : content)
+                : null,
+            truncated: Boolean(truncated),
+            snapshot_available: Boolean(snapshotContent),
+            content_source: runtimeRead?.content ? 'filesystem' : (inlineContent ? 'inline' : (snapshotContent ? (snapshot?.source || 'snapshot') : null)),
+            snapshot
+        };
+    }
+    async loadAssetSnapshots(projectId) {
+        const snapshots = await db_1.default.projectSettings.findFirst({
+            where: {
+                project_id: projectId,
+                key: 'publication_plan_asset_snapshots'
+            }
+        });
+        if (!snapshots?.value) {
+            return {};
+        }
+        try {
+            return JSON.parse(snapshots.value);
+        }
+        catch {
+            return {};
+        }
+    }
+    async saveAssetSnapshots(projectId, snapshots) {
+        await db_1.default.projectSettings.upsert({
+            where: {
+                project_id_key: {
+                    project_id: projectId,
+                    key: 'publication_plan_asset_snapshots'
+                }
+            },
+            update: {
+                value: JSON.stringify(snapshots)
+            },
+            create: {
+                project_id: projectId,
+                key: 'publication_plan_asset_snapshots',
+                value: JSON.stringify(snapshots)
+            }
+        });
+        return snapshots;
+    }
+    async refreshAssetSnapshots(projectId, plan, overrides = {}) {
+        const existing = await this.loadAssetSnapshots(projectId);
+        const snapshots = this.buildAssetSnapshots(plan, existing, overrides);
+        await this.saveAssetSnapshots(projectId, snapshots);
+        return snapshots;
+    }
     buildHandoffBundle(plan, item) {
         const action = item.assets?.action || {};
         const accountRef = item.assets?.account_ref || null;
         const account = accountRef ? plan.accounts[accountRef] : null;
-        const pipelineRoot = plan.meta.pipeline_root || '';
         const assetRefs = item.assets?.asset_refs || [];
-        const resolvedAssets = assetRefs.map((ref) => {
-            const asset = plan.assets[ref];
-            if (!asset) {
-                return { ref, missing: true };
-            }
-            const fullPath = asset.path ? path.join(pipelineRoot, asset.path) : null;
-            let content = null;
-            let exists = false;
-            if (fullPath && fs.existsSync(fullPath)) {
-                exists = true;
-                const rawContent = fs.readFileSync(fullPath, 'utf8');
-                content = asset.section_marker ? resolveSection(rawContent, asset.section_marker) : rawContent;
-            }
-            return {
-                ref,
-                asset,
-                full_path: fullPath,
-                file_name: asset.path ? path.basename(asset.path) : null,
-                relative_path: asset.path || null,
-                section_marker: asset.section_marker || null,
-                exists,
-                content
-            };
-        });
+        const resolvedAssets = assetRefs.map((ref) => this.resolveAssetRuntime(plan, ref));
         const contentFiles = Array.isArray(action.content_files) ? action.content_files : [];
         const resolvedContentFiles = contentFiles.map((file, index) => {
             const relativePath = file.path || null;
-            const fullPath = relativePath ? path.join(pipelineRoot, relativePath) : null;
             const resolvedUrl = file.url_ref ? resolveRef(plan, file.url_ref) : file.url || null;
             let content = null;
             let exists = false;
-            if (fullPath && fs.existsSync(fullPath)) {
-                exists = true;
-                const rawContent = fs.readFileSync(fullPath, 'utf8');
-                content = file.section_marker ? resolveSection(rawContent, file.section_marker) : rawContent;
+            let fullPath = null;
+            if (relativePath) {
+                const syntheticAsset = {
+                    path: relativePath,
+                    section_marker: file.section_marker || null
+                };
+                const resolved = this.readAssetContent(plan, syntheticAsset, relativePath);
+                fullPath = resolved?.fullPath || (plan.meta.pipeline_root ? path.resolve(plan.meta.pipeline_root, relativePath) : null);
+                if (resolved?.content) {
+                    exists = true;
+                    content = resolved.content;
+                }
             }
             return {
                 ref: `content_file_${index + 1}`,
