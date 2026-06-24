@@ -170,6 +170,10 @@ export const publicationTasksApi = {
     prepareHandoff: (id: number) => api.post(`/api/publication-tasks/${id}/prepare-handoff`),
     confirmPublication: (id: number, data: { publishedLink: string; note?: string; outcome?: 'published' | 'blocked' | 'removed' | 'restricted' }) =>
         api.post(`/api/publication-tasks/${id}/confirm-publication`, data),
+    criticCheck: (id: number, data?: { text?: string }) =>
+        api.post(`/api/publication-tasks/${id}/critic-check`, data || {}),
+    generateImage: (id: number, data?: { provider?: 'gpt-image' | 'nano' }) =>
+        api.post(`/api/publication-tasks/${id}/generate-image`, data || {}),
     collectMetrics: (id: number) => api.post(`/api/publication-tasks/${id}/collect-metrics`),
     recordMetrics: (id: number, metrics: Record<string, any>) =>
         api.post(`/api/publication-tasks/${id}/record-metrics`, { metrics }),

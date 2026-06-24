@@ -24,9 +24,45 @@ interface PublicationTask {
         type: string
         config?: JsonRecord | null
     } | null
+    project_context?: {
+        glossary_available?: boolean
+        glossary_yaml?: string | null
+        atoma_files_description?: string | null
+        atoma_files_payload?: JsonRecord | JsonRecord[] | null
+    } | null
+    workspace_context?: {
+        plan_item_ref?: string | null
+        target_resource_url?: string | null
+        target_resource_label?: string | null
+        source_content?: string | null
+        source_file_name?: string | null
+    } | null
 }
 
 type PublicationOutcome = 'published' | 'blocked' | 'removed' | 'restricted'
+
+type CriticReview = {
+    checked_at?: string
+    overall_score?: number
+    dictionary?: {
+        valid?: boolean
+        score?: number
+        findings?: Array<{
+            severity?: 'error' | 'warning' | 'info'
+            message?: string
+            matched?: string
+            suggestion?: string
+        }>
+    }
+    llm_critic?: {
+        score?: number
+        critique?: string
+    } | null
+    llm_error?: string | null
+    glossary_available?: boolean
+    atoma_files_description?: string | null
+    atoma_files_payload?: JsonRecord | JsonRecord[] | null
+}
 
 const PUBLICATION_PLAN_TEMPLATE = `{
   "meta": {
@@ -106,6 +142,7 @@ export default function PublicationTasks() {
     const [commentAuthor, setCommentAuthor] = useState('')
     const [commentUrl, setCommentUrl] = useState('')
     const [commentText, setCommentText] = useState('')
+    const [criticReport, setCriticReport] = useState<CriticReview | null>(null)
 
     const resolvedStatusFilter = statusFilter
 
@@ -143,6 +180,7 @@ export default function PublicationTasks() {
         setPublicationNote(selectedTask?.quality_report?.manual_publication_note || '')
         setPublicationOutcome((selectedTask?.quality_report?.publication_outcome || selectedTask?.metrics?.publication_outcome || 'published') as PublicationOutcome)
         setMetricsJson(prettyJson(selectedTask?.metrics?.collected_metrics || { views: 0, clicks: 0, comments: 0 }))
+        setCriticReport((selectedTask?.quality_report?.critic_review as CriticReview | undefined) || null)
         setCommentAuthor('')
         setCommentUrl('')
         setCommentText('')
@@ -206,6 +244,32 @@ export default function PublicationTasks() {
         }
     })
 
+    const runCriticCheck = useMutation({
+        mutationFn: () => {
+            if (!selectedTaskId) throw new Error('Задача не выбрана')
+            const reviewText = (selectedTask?.quality_report?.handoff_bundle as JsonRecord | undefined)?.publication?.body
+                || selectedTask?.workspace_context?.source_content
+                || ''
+            return publicationTasksApi.criticCheck(selectedTaskId, { text: reviewText })
+        },
+        onSuccess: (result: CriticReview) => {
+            setCriticReport(result)
+            setTaskMessage('Проверка критиком завершена. Отчёт обновлён.')
+            refreshTasks()
+        }
+    })
+
+    const generateTaskImage = useMutation({
+        mutationFn: (provider: 'gpt-image' | 'nano' = 'gpt-image') => {
+            if (!selectedTaskId) throw new Error('Задача не выбрана')
+            return publicationTasksApi.generateImage(selectedTaskId, { provider })
+        },
+        onSuccess: () => {
+            setTaskMessage('Изображение для публикации сгенерировано.')
+            refreshTasks()
+        }
+    })
+
     const collectMetrics = useMutation({
         mutationFn: () => {
             if (!selectedTaskId) throw new Error('Задача не выбрана')
@@ -253,9 +317,11 @@ export default function PublicationTasks() {
     const sourceFiles = (handoffBundle?.resource_files as JsonRecord[] | undefined)
         || (activeTask?.assets?.resolved_assets as JsonRecord[] | undefined)
         || []
-    const primarySourceContent = (handoffBundle?.resource_files as JsonRecord[] | undefined)?.find((entry) =>
-        typeof entry?.content === 'string' && entry.content.trim().length > 0
-    )?.content || ''
+    const primarySourceContent = activeTask?.workspace_context?.source_content
+        || (handoffBundle?.resource_files as JsonRecord[] | undefined)?.find((entry) =>
+            typeof entry?.content === 'string' && entry.content.trim().length > 0
+        )?.content
+        || ''
     const executionMode = handoffBundle?.mode || activeTask?.quality_report?.execution_mode || 'manual'
     const activeOutcome = (activeTask?.quality_report?.publication_outcome || activeTask?.metrics?.publication_outcome || 'published') as PublicationOutcome
     const isTaskOverdue = !!activeTask?.schedule_at
@@ -263,11 +329,19 @@ export default function PublicationTasks() {
         && new Date(activeTask.schedule_at).getTime() < Date.now()
     const canPrepareHandoff = !!activeTask && !['published', 'skipped'].includes(activeTask.status)
     const canFetchMetrics = !!activeTask?.published_link && supportsAutoMetrics(activeTask)
+    const targetResourceUrl = activeTask?.workspace_context?.target_resource_url || handoffBundle?.publication?.link_url || ''
+    const planItemRef = activeTask?.workspace_context?.plan_item_ref || (activeTask?.assets as JsonRecord | undefined)?.action?.id || (activeTask?.metrics as JsonRecord | undefined)?.task_id || ''
+    const glossaryAvailable = activeTask?.project_context?.glossary_available === true
+    const glossaryYaml = activeTask?.project_context?.glossary_yaml || ''
+    const atomaDescription = activeTask?.project_context?.atoma_files_description || ''
+    const atomaPayload = activeTask?.project_context?.atoma_files_payload
+    const latestGeneratedImage = (((activeTask?.assets as JsonRecord | undefined)?.generated_visuals as JsonRecord[] | undefined)?.[0])
+        || ((activeTask?.quality_report as JsonRecord | undefined)?.generated_image as JsonRecord | undefined)
 
     return (
         <div className="flex-1 w-full p-8 lg:p-10 space-y-8 overflow-y-auto">
-            <section className="grid grid-cols-1 lg:grid-cols-[380px_minmax(0,1fr)] gap-6 min-h-[720px]">
-                    <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden">
+            <section className="grid grid-cols-1 lg:grid-cols-[380px_minmax(0,1fr)] gap-6 items-start">
+                    <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden sticky top-6">
                         <div className="p-6 border-b border-outline-variant/10 space-y-4">
                             <div className="flex items-center justify-between gap-3">
                                 <div>
@@ -395,7 +469,7 @@ export default function PublicationTasks() {
 
                     <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden">
                         {!activeTask && (
-                            <div className="h-full min-h-[720px] flex items-center justify-center p-10 text-center">
+                            <div className="min-h-[560px] flex items-center justify-center p-10 text-center">
                                 <div className="max-w-md space-y-4">
                                     <div className="w-16 h-16 mx-auto rounded-3xl bg-surface-container-high flex items-center justify-center text-primary">
                                         <span className="material-symbols-outlined text-3xl">task_alt</span>
@@ -409,7 +483,7 @@ export default function PublicationTasks() {
                         )}
 
                         {activeTask && (
-                            <div className="h-full max-h-[720px] overflow-y-auto">
+                            <div>
                                 <div className="p-7 border-b border-outline-variant/10">
                                     <div className="flex flex-wrap items-start justify-between gap-4">
                                         <div className="space-y-3">
@@ -519,25 +593,141 @@ export default function PublicationTasks() {
                                         </div>
                                     </section>
 
-                                    <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                                    <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.18fr)_minmax(360px,0.82fr)] gap-6 items-start">
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
                                             <div className="flex items-center justify-between gap-3">
-                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Publication Body</div>
+                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Текст публикации</div>
                                                 <span className="text-xs text-on-surface-variant">{handoffBundle?.publication?.body?.length || 0} chars</span>
                                             </div>
                                             <textarea
                                                 readOnly
                                                 value={handoffBundle?.publication?.body || ''}
-                                                rows={14}
+                                                rows={16}
                                                 className="w-full bg-white border-none rounded-2xl p-4 text-sm leading-6 focus:outline-none resize-none"
                                             />
-                                            {handoffBundle?.publication?.link_url && (
-                                                <div className="text-sm text-on-surface-variant">
-                                                    <span className="font-bold text-on-surface">Canonical link:</span> {handoffBundle.publication.link_url}
-                                                </div>
-                                            )}
                                         </div>
 
+                                        <div className="space-y-6">
+                                            <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
+                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Контекст публикации</div>
+                                                <div className="space-y-4">
+                                                    <div>
+                                                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface-variant">Ресурс для редактирования / публикации</div>
+                                                        {targetResourceUrl ? (
+                                                            <a
+                                                                href={targetResourceUrl}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="mt-2 inline-flex items-center gap-2 text-sm font-bold text-primary break-all hover:underline"
+                                                            >
+                                                                <span className="material-symbols-outlined text-base">open_in_new</span>
+                                                                {targetResourceUrl}
+                                                            </a>
+                                                        ) : (
+                                                            <div className="mt-2 text-sm text-on-surface-variant">Не указан в плане.</div>
+                                                        )}
+                                                    </div>
+
+                                                    <div>
+                                                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface-variant">Ссылка на пункт плана</div>
+                                                        <div className="mt-2 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-on-surface">
+                                                            {planItemRef || 'Не привязано'}
+                                                        </div>
+                                                    </div>
+
+                                                    <div>
+                                                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface-variant">Исходный ресурс</div>
+                                                        <div className="mt-2 rounded-2xl bg-white px-4 py-3 text-sm text-on-surface">
+                                                            {activeTask?.workspace_context?.source_file_name || sourceFiles[0]?.file_name || sourceFiles[0]?.relative_path || 'Не найден'}
+                                                        </div>
+                                                    </div>
+
+                                                    <div>
+                                                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface-variant">Ссылка на сам пост</div>
+                                                        <input
+                                                            type="url"
+                                                            value={publishedLink}
+                                                            onChange={(event) => setPublishedLink(event.target.value)}
+                                                            placeholder="https://..."
+                                                            className="mt-2 w-full bg-white border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
+                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Подтверждение публикации</div>
+                                                <div className="rounded-2xl bg-white px-4 py-3 text-xs leading-6 text-on-surface-variant">
+                                                    Сохраняй permalink даже если платформа позже заблокирует, удалит или ограничит пост. Для Reddit это оставляет задачу подтверждённой и позволяет отслеживать те метрики, которые ещё доступны.
+                                                </div>
+                                                <select
+                                                    value={publicationOutcome}
+                                                    onChange={(event) => setPublicationOutcome(event.target.value as PublicationOutcome)}
+                                                    className="w-full bg-white border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                                                >
+                                                    <option value="published">Опубликовано нормально</option>
+                                                    <option value="blocked">Заблокировано, но URL есть</option>
+                                                    <option value="removed">Удалено, но URL есть</option>
+                                                    <option value="restricted">Ограниченная видимость</option>
+                                                </select>
+                                                <textarea
+                                                    value={publicationNote}
+                                                    onChange={(event) => setPublicationNote(event.target.value)}
+                                                    rows={3}
+                                                    className="w-full bg-white border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                                                    placeholder="Необязательная заметка о публикации"
+                                                />
+                                                <button
+                                                    onClick={() => confirmPublication.mutate()}
+                                                    disabled={!publishedLink.trim() || confirmPublication.isPending}
+                                                    className="w-full bg-primary text-white font-black text-sm px-5 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all disabled:opacity-50"
+                                                >
+                                                    {confirmPublication.isPending ? 'Сохраняем...' : 'Подтвердить live URL'}
+                                                </button>
+                                            </div>
+
+                                            <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
+                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Изображение к посту</div>
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                    <button
+                                                        onClick={() => generateTaskImage.mutate('gpt-image')}
+                                                        disabled={generateTaskImage.isPending}
+                                                        className="w-full bg-primary text-white font-black text-sm px-5 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all disabled:opacity-50"
+                                                    >
+                                                        {generateTaskImage.isPending ? 'Генерируем...' : 'Сгенерировать через GPT-Image'}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => generateTaskImage.mutate('nano')}
+                                                        disabled={generateTaskImage.isPending}
+                                                        className="w-full bg-surface-container-highest text-on-surface font-black text-sm px-5 py-3 rounded-2xl hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50"
+                                                    >
+                                                        {generateTaskImage.isPending ? 'Подготовка...' : 'Сгенерировать через Nano'}
+                                                    </button>
+                                                </div>
+                                                {latestGeneratedImage?.url ? (
+                                                    <div className="space-y-3">
+                                                        <img
+                                                            src={String(latestGeneratedImage.url)}
+                                                            alt="Generated post visual"
+                                                            className="w-full rounded-2xl border border-outline-variant/10 bg-white object-cover"
+                                                        />
+                                                        <div className="rounded-2xl bg-white px-4 py-3 text-xs leading-6 text-on-surface-variant">
+                                                            <div><span className="font-bold text-on-surface">Provider:</span> {String(latestGeneratedImage.provider || 'n/a')}</div>
+                                                            {latestGeneratedImage.prompt && (
+                                                                <div className="mt-2 whitespace-pre-wrap break-words">{String(latestGeneratedImage.prompt)}</div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div className="rounded-2xl bg-white px-4 py-3 text-sm text-on-surface-variant">
+                                                        Сгенерированное изображение пока не добавлено.
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </section>
+
+                                    <section className="grid grid-cols-1 xl:grid-cols-[minmax(320px,0.72fr)_minmax(0,1.28fr)] gap-6 items-start">
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
                                             <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Manual Checklist</div>
                                             <div className="space-y-3">
@@ -549,9 +739,7 @@ export default function PublicationTasks() {
                                                 ))}
                                             </div>
                                         </div>
-                                    </section>
 
-                                    <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
                                             <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Source Files</div>
                                             <div className="space-y-3">
@@ -595,7 +783,7 @@ export default function PublicationTasks() {
                                             </div>
                                         </div>
 
-                                        <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
+                                        <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4 xl:col-start-2 xl:row-span-2">
                                             <div className="flex items-center justify-between gap-3">
                                                 <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Source Content</div>
                                                 {!handoffBundle && (
@@ -611,6 +799,119 @@ export default function PublicationTasks() {
                                                     ? 'No readable source text was found in the linked resource files.'
                                                     : 'Prepare handoff to pull text from the linked resource file or section marker.'}
                                             />
+                                        </div>
+                                    </section>
+
+                                    <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] gap-6 items-start">
+                                        <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Критик и правила</div>
+                                                <button
+                                                    onClick={() => runCriticCheck.mutate()}
+                                                    disabled={runCriticCheck.isPending}
+                                                    className="bg-primary text-white font-black text-xs px-4 py-2 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all disabled:opacity-50"
+                                                >
+                                                    {runCriticCheck.isPending ? 'Проверяем...' : 'Проверить критиком'}
+                                                </button>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                                <div className="rounded-2xl bg-white px-4 py-3">
+                                                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-on-surface-variant">Глоссарий</div>
+                                                    <div className="mt-2 text-sm font-bold text-on-surface">{glossaryAvailable ? 'Подключён' : 'Не загружен'}</div>
+                                                </div>
+                                                <div className="rounded-2xl bg-white px-4 py-3">
+                                                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-on-surface-variant">Atoma</div>
+                                                    <div className="mt-2 text-sm font-bold text-on-surface">{atomaDescription ? 'Контекст есть' : 'Не загружен'}</div>
+                                                </div>
+                                                <div className="rounded-2xl bg-white px-4 py-3">
+                                                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-on-surface-variant">Итоговый score</div>
+                                                    <div className="mt-2 text-sm font-bold text-on-surface">{criticReport?.overall_score ?? '—'}</div>
+                                                </div>
+                                            </div>
+
+                                            {criticReport ? (
+                                                <div className="space-y-4">
+                                                    <div className="rounded-2xl bg-white px-4 py-3 text-sm text-on-surface-variant">
+                                                        <div><span className="font-bold text-on-surface">Dictionary score:</span> {criticReport.dictionary?.score ?? '—'}</div>
+                                                        {criticReport.llm_critic?.score !== undefined && (
+                                                            <div className="mt-1"><span className="font-bold text-on-surface">LLM critic score:</span> {criticReport.llm_critic.score}</div>
+                                                        )}
+                                                        {criticReport.checked_at && (
+                                                            <div className="mt-1"><span className="font-bold text-on-surface">Проверено:</span> {formatDate(criticReport.checked_at)}</div>
+                                                        )}
+                                                    </div>
+
+                                                    {criticReport.llm_critic?.critique && (
+                                                        <div className="rounded-2xl bg-white px-4 py-3 text-sm leading-6 text-on-surface whitespace-pre-wrap">
+                                                            {criticReport.llm_critic.critique}
+                                                        </div>
+                                                    )}
+
+                                                    {criticReport.llm_error && (
+                                                        <div className="rounded-2xl bg-error-container/30 px-4 py-3 text-sm text-error">
+                                                            {criticReport.llm_error}
+                                                        </div>
+                                                    )}
+
+                                                    <div className="space-y-2">
+                                                        {(criticReport.dictionary?.findings || []).length === 0 ? (
+                                                            <div className="rounded-2xl bg-white px-4 py-3 text-sm text-on-surface-variant">
+                                                                По словарю и обязательным правилам замечаний нет.
+                                                            </div>
+                                                        ) : (
+                                                            (criticReport.dictionary?.findings || []).map((finding, index) => (
+                                                                <div key={`${finding.message}-${index}`} className="rounded-2xl bg-white px-4 py-3 text-sm">
+                                                                    <div className="font-bold text-on-surface">{finding.message}</div>
+                                                                    {(finding.matched || finding.suggestion) && (
+                                                                        <div className="mt-2 text-xs text-on-surface-variant">
+                                                                            {finding.matched && <div>Найдено: {finding.matched}</div>}
+                                                                            {finding.suggestion && <div>Предлагается: {finding.suggestion}</div>}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            ))
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="rounded-2xl bg-white px-4 py-3 text-sm text-on-surface-variant">
+                                                    Запусти критика, чтобы проверить текст по глоссарию, atoma-контексту и агентной критике.
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
+                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Глоссарий и atoma-контекст</div>
+                                            <div className="grid grid-cols-1 gap-4">
+                                                <div>
+                                                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface-variant">Глоссарий проекта</div>
+                                                    <textarea
+                                                        readOnly
+                                                        value={glossaryYaml || 'Глоссарий не загружен вместе с планом или через настройки проекта.'}
+                                                        rows={8}
+                                                        className="mt-2 w-full bg-white border-none rounded-2xl p-4 text-xs leading-6 focus:outline-none resize-none"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface-variant">Описание atoma files</div>
+                                                    <textarea
+                                                        readOnly
+                                                        value={atomaDescription || 'Описание atoma files не загружено.'}
+                                                        rows={4}
+                                                        className="mt-2 w-full bg-white border-none rounded-2xl p-4 text-xs leading-6 focus:outline-none resize-none"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface-variant">Atoma payload</div>
+                                                    <textarea
+                                                        readOnly
+                                                        value={prettyJson(atomaPayload || {})}
+                                                        rows={8}
+                                                        className="mt-2 w-full bg-white border-none rounded-2xl p-4 text-xs font-mono leading-6 focus:outline-none resize-none"
+                                                    />
+                                                </div>
+                                            </div>
                                         </div>
                                     </section>
 
@@ -640,45 +941,7 @@ export default function PublicationTasks() {
                                         </div>
                                     </section>
 
-                                    <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                                        <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
-                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Подтверждение публикации</div>
-                                            <div className="rounded-2xl bg-white px-4 py-3 text-xs leading-6 text-on-surface-variant">
-                                                Сохраняй permalink даже если платформа позже заблокирует, удалит или ограничит пост. Для Reddit это оставляет задачу подтверждённой и позволяет отслеживать те метрики, которые ещё доступны.
-                                            </div>
-                                            <select
-                                                value={publicationOutcome}
-                                                onChange={(event) => setPublicationOutcome(event.target.value as PublicationOutcome)}
-                                                className="w-full bg-white border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
-                                            >
-                                                <option value="published">Опубликовано нормально</option>
-                                                <option value="blocked">Заблокировано, но URL есть</option>
-                                                <option value="removed">Удалено, но URL есть</option>
-                                                <option value="restricted">Ограниченная видимость</option>
-                                            </select>
-                                            <input
-                                                type="url"
-                                                value={publishedLink}
-                                                onChange={(event) => setPublishedLink(event.target.value)}
-                                                placeholder="https://..."
-                                                className="w-full bg-white border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
-                                            />
-                                            <textarea
-                                                value={publicationNote}
-                                                onChange={(event) => setPublicationNote(event.target.value)}
-                                                rows={4}
-                                                className="w-full bg-white border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
-                                                placeholder="Необязательная заметка о публикации"
-                                            />
-                                            <button
-                                                onClick={() => confirmPublication.mutate()}
-                                                disabled={!publishedLink.trim() || confirmPublication.isPending}
-                                                className="w-full bg-primary text-white font-black text-sm px-5 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all disabled:opacity-50"
-                                            >
-                                                {confirmPublication.isPending ? 'Сохраняем...' : 'Подтвердить live URL'}
-                                            </button>
-                                        </div>
-
+                                    <section>
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
                                             <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Сохранение метрик</div>
                                             <div className="rounded-2xl bg-white px-4 py-3 text-xs leading-6 text-on-surface-variant">

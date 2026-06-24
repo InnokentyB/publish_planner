@@ -47,6 +47,30 @@ async function loadPublicationPlanContext(projectId: number) {
     };
 }
 
+function safeJsonParse<T = any>(value?: string | null): T | null {
+    if (!value?.trim()) return null;
+    try {
+        return JSON.parse(value) as T;
+    } catch {
+        return null;
+    }
+}
+
+async function loadPublicationProjectContext(projectId: number) {
+    const settings = await prisma.projectSettings.findMany({
+        where: {
+            project_id: projectId,
+            key: { in: ['content_dictionary_yaml', 'atoma_files_description', 'atoma_files_payload'] }
+        }
+    });
+
+    return {
+        glossaryYaml: settings.find((setting) => setting.key === 'content_dictionary_yaml')?.value || null,
+        atomaFilesDescription: settings.find((setting) => setting.key === 'atoma_files_description')?.value || null,
+        atomaFilesPayload: safeJsonParse(settings.find((setting) => setting.key === 'atoma_files_payload')?.value || null)
+    };
+}
+
 export default async function apiRoutes(fastify: FastifyInstance) {
     // Auth and Project context middleware
     fastify.addHook('preHandler', async (request, reply) => {
@@ -661,17 +685,42 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         }
 
         const plan = await loadPublicationPlanContext(projectId);
+        const projectContext = await loadPublicationProjectContext(projectId);
         const action = (item.assets as any)?.action;
         if (!plan || !action) {
-            return item;
+            return {
+                ...item,
+                project_context: {
+                    glossary_available: Boolean(projectContext.glossaryYaml),
+                    glossary_yaml: projectContext.glossaryYaml,
+                    atoma_files_description: projectContext.atomaFilesDescription,
+                    atoma_files_payload: projectContext.atomaFilesPayload
+                }
+            };
         }
 
         const bundle = publicationPlanService.buildHandoffBundle({ ...plan, actions: [action] } as any, item);
+        const firstResourceWithUrl = (bundle.resource_files || []).find((entry: any) => entry?.url);
+        const firstSourceContent = (bundle.resource_files || []).find((entry: any) => typeof entry?.content === 'string' && entry.content.trim());
+
         return {
             ...item,
             quality_report: {
                 ...((item.quality_report as any) || {}),
                 handoff_bundle: bundle
+            },
+            project_context: {
+                glossary_available: Boolean(projectContext.glossaryYaml),
+                glossary_yaml: projectContext.glossaryYaml,
+                atoma_files_description: projectContext.atomaFilesDescription,
+                atoma_files_payload: projectContext.atomaFilesPayload
+            },
+            workspace_context: {
+                plan_item_ref: action.id || (item.metrics as any)?.task_id || null,
+                target_resource_url: bundle.publication?.link_url || firstResourceWithUrl?.url || null,
+                target_resource_label: bundle.publication?.link_url ? 'publication.link_url' : firstResourceWithUrl?.file_name || firstResourceWithUrl?.ref || null,
+                source_content: firstSourceContent?.content || bundle.publication?.body || item.draft_text || '',
+                source_file_name: firstSourceContent?.file_name || null
             }
         };
     });
@@ -854,6 +903,153 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         });
 
         return comment;
+    });
+
+    fastify.post('/api/publication-tasks/:id/critic-check', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { id } = request.params as { id: string };
+        const { text } = request.body as { text?: string };
+
+        const item = await prisma.contentItem.findFirst({
+            where: { id: parseInt(id), project_id: projectId },
+            include: { channel: true }
+        });
+
+        if (!item) {
+            return reply.code(404).send({ error: 'Publication task not found' });
+        }
+
+        const plan = await loadPublicationPlanContext(projectId);
+        const projectContext = await loadPublicationProjectContext(projectId);
+        const action = (item.assets as any)?.action;
+        const bundle = plan && action
+            ? publicationPlanService.buildHandoffBundle({ ...plan, actions: [action] } as any, item)
+            : ((item.quality_report as any)?.handoff_bundle || null);
+
+        const publicationBody = (text || bundle?.publication?.body || item.draft_text || '').trim();
+        const sourceContent = ((bundle?.resource_files || []) as any[]).find((entry) => typeof entry?.content === 'string' && entry.content.trim())?.content || '';
+
+        if (!publicationBody) {
+            return reply.code(400).send({ error: 'No publication body is available for critic review.' });
+        }
+
+        const dictionaryReport = contentDictionaryService.validateText(publicationBody, projectContext.glossaryYaml);
+
+        let llmCritic: { score: number; critique: string } | null = null;
+        let llmError: string | null = null;
+
+        try {
+            llmCritic = await multiAgentService.runContentCritic(projectId, {
+                task_id: (action as any)?.id || (item.metrics as any)?.task_id || item.id,
+                title: item.title,
+                channel: item.channel?.name || item.layer || item.type,
+                target_resource_url: bundle?.publication?.link_url || null,
+                publication_body: publicationBody,
+                source_content: sourceContent,
+                glossary_yaml: projectContext.glossaryYaml,
+                atoma_files_description: projectContext.atomaFilesDescription,
+                atoma_files_payload: projectContext.atomaFilesPayload
+            });
+        } catch (error: any) {
+            llmError = error?.message || 'Critic agent failed'
+        }
+
+        const overallScore = llmCritic
+            ? Math.round((dictionaryReport.score + llmCritic.score) / 2)
+            : dictionaryReport.score;
+
+        const criticReview = {
+            checked_at: new Date().toISOString(),
+            overall_score: overallScore,
+            dictionary: dictionaryReport,
+            llm_critic: llmCritic,
+            llm_error: llmError,
+            glossary_available: Boolean(projectContext.glossaryYaml),
+            atoma_files_description: projectContext.atomaFilesDescription,
+            atoma_files_payload: projectContext.atomaFilesPayload
+        };
+
+        await prisma.contentItem.update({
+            where: { id: item.id },
+            data: {
+                quality_report: {
+                    ...((item.quality_report as any) || {}),
+                    critic_review: criticReview
+                } as any
+            }
+        });
+
+        return criticReview;
+    });
+
+    fastify.post('/api/publication-tasks/:id/generate-image', async (request, reply) => {
+        const projectId = (request as any).projectId;
+        if (!projectId) return reply.code(400).send({ error: 'Project ID required' });
+
+        const { id } = request.params as { id: string };
+        const { provider } = request.body as { provider?: 'gpt-image' | 'nano' };
+
+        const item = await prisma.contentItem.findFirst({
+            where: { id: parseInt(id), project_id: projectId }
+        });
+
+        if (!item) {
+            return reply.code(404).send({ error: 'Publication task not found' });
+        }
+
+        const plan = await loadPublicationPlanContext(projectId);
+        const action = (item.assets as any)?.action;
+        const bundle = plan && action
+            ? publicationPlanService.buildHandoffBundle({ ...plan, actions: [action] } as any, item)
+            : ((item.quality_report as any)?.handoff_bundle || null);
+
+        const publicationBody = (bundle?.publication?.body || item.draft_text || '').trim();
+        const topic = item.title || (action as any)?.display_name || item.type;
+        const selectedProvider = provider || 'gpt-image';
+
+        if (!publicationBody) {
+            return reply.code(400).send({ error: 'No publication body is available to generate an image.' });
+        }
+
+        let prompt = '';
+        try {
+            prompt = await generatorService.generateImagePrompt(projectId, topic, publicationBody, selectedProvider);
+        } catch {
+            prompt = `Create an editorial visual for "${topic}". Context: ${publicationBody.slice(0, 700)}`;
+        }
+
+        const imageUrl = selectedProvider === 'nano'
+            ? await generatorService.generateImageNanoBanana(prompt)
+            : await generatorService.generateImage(prompt);
+
+        const previousVisuals = Array.isArray((item.assets as any)?.generated_visuals)
+            ? (item.assets as any).generated_visuals
+            : [];
+
+        const generatedImage = {
+            provider: selectedProvider,
+            prompt,
+            url: imageUrl,
+            generated_at: new Date().toISOString()
+        };
+
+        await prisma.contentItem.update({
+            where: { id: item.id },
+            data: {
+                assets: {
+                    ...((item.assets as any) || {}),
+                    generated_visuals: [generatedImage, ...previousVisuals].slice(0, 6)
+                } as any,
+                quality_report: {
+                    ...((item.quality_report as any) || {}),
+                    generated_image: generatedImage
+                } as any
+            }
+        });
+
+        return generatedImage;
     });
 
     // Settings

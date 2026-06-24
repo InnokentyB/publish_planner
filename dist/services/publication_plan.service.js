@@ -42,6 +42,7 @@ const crypto_1 = require("crypto");
 const db_1 = __importDefault(require("../db"));
 const publication_adapter_service_1 = __importDefault(require("./publication_adapter.service"));
 const publication_runtime_helpers_1 = require("./publication_runtime.helpers");
+const content_dictionary_service_1 = __importDefault(require("./content_dictionary.service"));
 const RUNTIME_LOCKED_TASK_STATUSES = new Set([
     'drafted',
     'revised',
@@ -180,7 +181,7 @@ class PublicationPlanService {
             summary: 'Preferred planner publication-plan format for MCP and chat-generated plans.',
             top_level: {
                 required: ['meta', 'accounts', 'assets', 'actions'],
-                optional: ['ongoing_rules', 'measurement', 'dependencies_matrix_visualized']
+                optional: ['ongoing_rules', 'measurement', 'dependencies_matrix_visualized', 'content_dictionary', 'atoma_files', 'atoma_files_description']
             },
             meta: {
                 required: ['plan_id'],
@@ -247,7 +248,9 @@ class PublicationPlanService {
                 'Use asset.content only for compact inline text or preview notes.',
                 'Use action.content_files for the full publication body, markdown sections, or HTML fragments.',
                 'Use unique section_marker values that match stable headings in the source file.',
-                'If a post depends on a full markdown section, make that dependency explicit in content_files.'
+                'If a post depends on a full markdown section, make that dependency explicit in content_files.',
+                'Attach content_dictionary to import glossary/style rules together with the publication plan.',
+                'Attach atoma_files and atoma_files_description when the critic should validate against atomized source context.'
             ]
         };
     }
@@ -318,7 +321,20 @@ class PublicationPlanService {
                 }
             ],
             ongoing_rules: [],
-            measurement: {}
+            measurement: {},
+            content_dictionary: {
+                terms: [],
+                style_rules: {
+                    required_phrases: [],
+                    forbidden_phrases: [],
+                    preferred_tone: 'direct, practical, non-generic'
+                }
+            },
+            atoma_files_description: 'Описание atomized source files и правил их использования для редактора/критика.',
+            atoma_files: {
+                source_map: [],
+                editorial_rules: []
+            }
         };
     }
     normalizePublicationPlan(raw) {
@@ -412,6 +428,17 @@ class PublicationPlanService {
             ? await this.loadAssetSnapshots(existingProject.id)
             : {};
         const assetSnapshots = this.buildAssetSnapshots(plan, existingSnapshots);
+        const dictionaryYaml = plan.content_dictionary !== undefined
+            ? content_dictionary_service_1.default.normalizeToYaml(plan.content_dictionary)
+            : null;
+        const atomaFilesDescription = plan.atoma_files_description === undefined
+            ? null
+            : (typeof plan.atoma_files_description === 'string'
+                ? plan.atoma_files_description.trim()
+                : JSON.stringify(plan.atoma_files_description));
+        const atomaFilesPayload = plan.atoma_files === undefined
+            ? null
+            : JSON.stringify(plan.atoma_files);
         return db_1.default.$transaction(async (tx) => {
             const project = existingProject
                 ? await tx.project.update({
@@ -482,7 +509,22 @@ class PublicationPlanService {
                     project_id: project.id,
                     key: 'publication_plan_dependencies_matrix',
                     value: JSON.stringify(plan.dependencies_matrix_visualized || {})
-                }
+                },
+                ...(dictionaryYaml ? [{
+                        project_id: project.id,
+                        key: 'content_dictionary_yaml',
+                        value: dictionaryYaml
+                    }] : []),
+                ...(atomaFilesDescription ? [{
+                        project_id: project.id,
+                        key: 'atoma_files_description',
+                        value: atomaFilesDescription
+                    }] : []),
+                ...(atomaFilesPayload ? [{
+                        project_id: project.id,
+                        key: 'atoma_files_payload',
+                        value: atomaFilesPayload
+                    }] : [])
             ];
             for (const setting of settingsPayload) {
                 await tx.projectSettings.upsert({
