@@ -44,6 +44,13 @@ const linkedin_service_1 = __importDefault(require("./linkedin.service"));
 const parser_integration_service_1 = __importDefault(require("./parser_integration.service"));
 const path_1 = __importDefault(require("path"));
 const project_utils_1 = require("../utils/project.utils");
+function resolveTaskScheduleAt(item) {
+    const actionScheduleAt = item?.assets?.action?.scheduled_at;
+    if (typeof actionScheduleAt === 'string' && actionScheduleAt.trim()) {
+        return actionScheduleAt;
+    }
+    return item?.schedule_at?.toISOString?.() || item?.schedule_at || null;
+}
 function resolveSection(content, marker) {
     const lines = content.split(/\r?\n/);
     const startIndex = lines.findIndex((line) => line.trim() === marker.trim());
@@ -618,6 +625,8 @@ class McpPublicationService {
                     section_marker: entry.section_marker || null,
                     exists: entry.exists === true,
                     url: entry.url || null,
+                    content_source: entry.content_source || null,
+                    snapshot_available: entry.snapshot_available === true,
                     truncated,
                     content: content ? (truncated ? `${content.slice(0, maxChars)}\n...[truncated]` : content) : null
                 };
@@ -649,7 +658,7 @@ class McpPublicationService {
             type: item.type,
             status: item.status,
             layer: item.layer,
-            schedule_at: item.schedule_at?.toISOString() || null,
+            schedule_at: resolveTaskScheduleAt(item),
             published_link: item.published_link,
             channel: item.channel
                 ? {
@@ -678,6 +687,7 @@ class McpPublicationService {
         const bundle = publication_plan_service_1.default.buildHandoffBundle({ ...plan, actions: [action] }, item);
         return {
             ...item,
+            schedule_at: resolveTaskScheduleAt(item),
             quality_report: {
                 ...(item.quality_report || {}),
                 handoff_bundle: bundle
@@ -716,7 +726,10 @@ class McpPublicationService {
             }
         });
         return {
-            item: updated,
+            item: {
+                ...updated,
+                schedule_at: resolveTaskScheduleAt(updated)
+            },
             bundle,
             reused: false
         };

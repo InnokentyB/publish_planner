@@ -165,6 +165,16 @@ function checksumContent(content: string | null) {
 }
 
 function computeSchedule(action: any, fallbackTimezone?: string) {
+    if (action.scheduled_at) {
+        const parsed = new Date(action.scheduled_at);
+        if (!Number.isNaN(parsed.getTime())) {
+            return {
+                scheduled_at: parsed,
+                timezone: fallbackTimezone || action.scheduled_time_window?.timezone || 'UTC'
+            };
+        }
+    }
+
     if (!action.scheduled_date) return null;
 
     const start = action.scheduled_time_window?.start || '09:00';
@@ -206,10 +216,24 @@ function contentFileSnapshotKey(relativePath: string, sectionMarker?: string | n
 }
 
 class PublicationPlanService {
+    private resolveAssetRefFromUrlRef(plan: PublicationPlan, urlRef?: string | null) {
+        if (!urlRef || typeof urlRef !== 'string') return null;
+        if (plan.assets?.[urlRef]) return urlRef;
+        if (urlRef.startsWith('assets.')) {
+            const candidate = urlRef.slice('assets.'.length).split('.')[0];
+            return plan.assets?.[candidate] ? candidate : null;
+        }
+        return null;
+    }
+
     private resolveContentFileDescriptor(plan: PublicationPlan, file: any) {
         const resolvedRef = file?.url_ref ? resolveRef(plan, file.url_ref) : null;
+        const resolvedAssetRef = this.resolveAssetRefFromUrlRef(plan, file?.url_ref);
         const resolvedAsset = typeof file?.url_ref === 'string' && plan.assets?.[file.url_ref]
             ? plan.assets[file.url_ref]
+            : (resolvedAssetRef ? plan.assets[resolvedAssetRef] : null);
+        const directInlineContent = typeof resolvedAsset?.content === 'string'
+            ? resolvedAsset.content
             : null;
         const assetCandidate = resolvedAsset && typeof resolvedAsset === 'object'
             ? resolvedAsset
@@ -222,7 +246,9 @@ class PublicationPlanService {
         return {
             relativePath,
             resolvedUrl,
-            assetCandidate
+            assetCandidate,
+            resolvedAssetRef,
+            directInlineContent
         };
     }
 
@@ -1273,9 +1299,13 @@ class PublicationPlanService {
             const descriptor = this.resolveContentFileDescriptor(plan, file);
             const relativePath = descriptor.relativePath;
             const resolvedUrl = descriptor.resolvedUrl;
+            const assetRuntime = descriptor.resolvedAssetRef
+                ? this.resolveAssetRuntime(plan, descriptor.resolvedAssetRef)
+                : null;
             let content: string | null = null;
             let exists = false;
             let fullPath: string | null = null;
+            let contentSource: string | null = null;
             const snapshotKey = relativePath ? contentFileSnapshotKey(relativePath, file.section_marker || null) : null;
             const snapshot = snapshotKey ? plan.content_file_snapshots?.[snapshotKey] || null : null;
 
@@ -1289,11 +1319,20 @@ class PublicationPlanService {
                 if (resolved?.content) {
                     exists = true;
                     content = resolved.content;
+                    contentSource = 'filesystem';
                 }
             }
 
             if (!content && snapshot?.content) {
                 content = snapshot.content;
+                contentSource = snapshot.source || 'snapshot';
+            }
+
+            if (!content && assetRuntime?.content) {
+                content = assetRuntime.content;
+                exists = assetRuntime.exists === true;
+                fullPath = assetRuntime.full_path || fullPath;
+                contentSource = assetRuntime.content_source || null;
             }
 
             return {
@@ -1301,15 +1340,17 @@ class PublicationPlanService {
                 type: 'content_file',
                 role: file.role || null,
                 purpose: file.purpose || null,
-                file_name: relativePath ? path.basename(relativePath) : null,
+                file_name: relativePath
+                    ? path.basename(relativePath)
+                    : (assetRuntime?.file_name || (descriptor.resolvedAssetRef || null)),
                 relative_path: relativePath,
                 full_path: fullPath,
-                section_marker: file.section_marker || null,
-                exists: exists || Boolean(snapshot?.content),
+                section_marker: file.section_marker || assetRuntime?.section_marker || null,
+                exists: exists || Boolean(snapshot?.content) || assetRuntime?.exists === true,
                 url: resolvedUrl,
                 content,
-                snapshot_available: Boolean(snapshot?.content),
-                content_source: exists ? 'filesystem' : (snapshot?.content ? snapshot.source || 'snapshot' : null)
+                snapshot_available: Boolean(snapshot?.content) || Boolean(assetRuntime?.snapshot_available),
+                content_source: contentSource
             };
         });
 
@@ -1344,6 +1385,7 @@ class PublicationPlanService {
                 display_name: action.display_name || item.title || null,
                 channel: action.channel || item.layer,
                 action_type: action.action_type || item.type,
+                schedule_at: action.scheduled_at || item.schedule_at?.toISOString?.() || item.schedule_at || null,
                 scheduled_date: action.scheduled_date || item.schedule_at,
                 time_window: action.scheduled_time_window || null
             },
