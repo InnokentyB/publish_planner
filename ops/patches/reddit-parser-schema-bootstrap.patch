@@ -1,0 +1,228 @@
+diff --git a/README.md b/README.md
+index a9dde51..1adf962 100644
+--- a/README.md
++++ b/README.md
+@@ -82,6 +82,7 @@ By default, the app now expects:
+ 
+ ```bash
+ export APP_DATABASE_URL=postgresql+psycopg2://postgres:postgres@127.0.0.1:5432/reddit_insight_collector
++export PARSER_DB_SCHEMA=parser
+ ```
+ 
+ If you want to point to Railway or another hosted Postgres later, use its connection string in `APP_DATABASE_URL` or `DATABASE_URL`.
+@@ -202,6 +203,7 @@ curl -X POST 'http://127.0.0.1:8000/search-templates/<template_id>/run' \
+ ## Notes
+ 
+ - Default runtime database: local Postgres on `127.0.0.1:5432`
++- Default Postgres schema: `parser`
+ - Tests use an isolated in-memory SQLite database
+ - `app.worker` handles Reddit ingestion and refresh runs
+ - `app.scheduler` is the clean cron-job entrypoint for daily template reruns
+@@ -271,6 +273,7 @@ Required variables:
+ 
+ ```bash
+ APP_DATABASE_URL=${{Postgres.DATABASE_URL}}
++PARSER_DB_SCHEMA=parser
+ REDDIT_PROVIDER=oauth
+ REDDIT_CLIENT_ID=...
+ REDDIT_CLIENT_SECRET=...
+@@ -303,6 +306,7 @@ Required variables:
+ 
+ ```bash
+ APP_DATABASE_URL=${{Postgres.DATABASE_URL}}
++PARSER_DB_SCHEMA=parser
+ REDDIT_PROVIDER=oauth
+ REDDIT_CLIENT_ID=...
+ REDDIT_CLIENT_SECRET=...
+@@ -315,6 +319,7 @@ If you switch to browser mode instead:
+ 
+ ```bash
+ APP_DATABASE_URL=${{Postgres.DATABASE_URL}}
++PARSER_DB_SCHEMA=parser
+ REDDIT_PROVIDER=browser
+ REDDIT_BROWSER_HEADLESS=true
+ REDDIT_BROWSER_TIMEOUT_MS=20000
+@@ -340,6 +345,7 @@ Required variables:
+ 
+ ```bash
+ APP_DATABASE_URL=${{Postgres.DATABASE_URL}}
++PARSER_DB_SCHEMA=parser
+ ```
+ 
+ The default cron schedule in the checked-in config is every 6 hours:
+diff --git a/app/config.py b/app/config.py
+index 19a143b..3c028fd 100644
+--- a/app/config.py
++++ b/app/config.py
+@@ -66,6 +66,10 @@ def default_database_url() -> str:
+     )
+ 
+ 
++def default_database_schema() -> str:
++    return os.getenv("PARSER_DB_SCHEMA", "parser").strip() or "parser"
++
++
+ def default_comment_limit_per_post() -> int:
+     return int(os.getenv("COMMENT_LIMIT_PER_POST", str(DEFAULT_COMMENT_LIMIT_PER_POST)))
+ 
+diff --git a/app/db.py b/app/db.py
+index 8246b2d..5b33c9f 100644
+--- a/app/db.py
++++ b/app/db.py
+@@ -1,6 +1,8 @@
+ from __future__ import annotations
+ 
+-from sqlalchemy import create_engine, inspect, text
++import re
++
++from sqlalchemy import create_engine, event, inspect, text
+ from sqlalchemy.orm import DeclarativeBase, sessionmaker
+ from sqlalchemy.pool import StaticPool
+ 
+@@ -9,9 +11,39 @@ class Base(DeclarativeBase):
+     pass
+ 
+ 
++def _normalize_schema_name(schema_name: str | None) -> str | None:
++    if schema_name is None:
++        return None
++
++    normalized = schema_name.strip().lower()
++    if not normalized:
++        return None
++    if not re.match(r"^[a-z_][a-z0-9_]*$", normalized):
++        raise ValueError(f"Invalid Postgres schema name: {schema_name}")
++    return normalized
++
++
++def _configure_postgres_search_path(engine, schema_name: str | None) -> str | None:
++    normalized = _normalize_schema_name(schema_name)
++    if normalized is None or engine.dialect.name == "sqlite":
++        return normalized
++
++    @event.listens_for(engine, "connect")
++    def _set_search_path(dbapi_connection, _connection_record):
++        cursor = dbapi_connection.cursor()
++        try:
++            cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{normalized}"')
++            cursor.execute(f'SET search_path TO "{normalized}", public')
++        finally:
++            cursor.close()
++
++    return normalized
++
++
+ def create_engine_and_sessionmaker(
+     testing: bool = False,
+     database_url: str | None = None,
++    database_schema: str | None = None,
+ ) -> tuple[object, sessionmaker]:
+     if testing:
+         engine = create_engine(
+@@ -27,11 +59,22 @@ def create_engine_and_sessionmaker(
+             database_url,
+             future=True,
+         )
++        _configure_postgres_search_path(engine, database_schema)
+ 
+     session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+     return engine, session_factory
+ 
+ 
++def initialize_database(engine, schema_name: str | None = None) -> None:
++    normalized = _normalize_schema_name(schema_name)
++    if engine.dialect.name != "sqlite" and normalized is not None:
++        with engine.begin() as connection:
++            connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{normalized}"'))
++
++    Base.metadata.create_all(engine)
++    ensure_runtime_schema(engine)
++
++
+ def ensure_runtime_schema(engine) -> None:
+     inspector = inspect(engine)
+     if "search_jobs" not in inspector.get_table_names():
+diff --git a/app/main.py b/app/main.py
+index 35e5e0d..d739354 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -9,8 +9,8 @@ from fastapi import FastAPI, Header, Query, Request
+ from fastapi.responses import HTMLResponse, JSONResponse
+ from fastapi.templating import Jinja2Templates
+ 
+-from app.config import default_database_url
+-from app.db import Base, create_engine_and_sessionmaker, ensure_runtime_schema
++from app.config import default_database_schema, default_database_url
++from app.db import create_engine_and_sessionmaker, initialize_database
+ from app.domain.search import build_query_hash
+ from app.creator_api import create_creator_app
+ from app.errors import AppError, create_error_response
+@@ -100,9 +100,9 @@ def create_app(testing: bool = False) -> FastAPI:
+     engine, session_factory = create_engine_and_sessionmaker(
+         testing=testing,
+         database_url=None if testing else default_database_url(),
++        database_schema=None if testing else default_database_schema(),
+     )
+-    Base.metadata.create_all(engine)
+-    ensure_runtime_schema(engine)
++    initialize_database(engine, None if testing else default_database_schema())
+     app.state.engine = engine
+     app.state.repository = Repository(session_factory)
+     app.mount("/creator-api", create_creator_app(app.state.repository, testing=testing))
+diff --git a/app/scheduler.py b/app/scheduler.py
+index b06b14a..202251c 100644
+--- a/app/scheduler.py
++++ b/app/scheduler.py
+@@ -3,8 +3,8 @@ from __future__ import annotations
+ import argparse
+ import time
+ 
+-from app.config import default_database_url
+-from app.db import Base, create_engine_and_sessionmaker, ensure_runtime_schema
++from app.config import default_database_schema, default_database_url
++from app.db import create_engine_and_sessionmaker, initialize_database
+ from app.repository import Repository
+ 
+ 
+@@ -21,9 +21,9 @@ def main() -> int:
+     engine, session_factory = create_engine_and_sessionmaker(
+         testing=False,
+         database_url=default_database_url(),
++        database_schema=default_database_schema(),
+     )
+-    Base.metadata.create_all(engine)
+-    ensure_runtime_schema(engine)
++    initialize_database(engine, default_database_schema())
+     repository = Repository(session_factory)
+ 
+     if args.once:
+diff --git a/app/worker.py b/app/worker.py
+index d22ca11..84c0907 100644
+--- a/app/worker.py
++++ b/app/worker.py
+@@ -15,11 +15,12 @@ from app.config import (
+     POST_PLATFORM,
+     TOOLS_KEYWORDS,
+     default_comment_limit_per_post,
++    default_database_schema,
+     default_database_url,
+     default_query_cooldown_seconds,
+     default_subreddit_snapshot_ttl_days,
+ )
+-from app.db import Base, create_engine_and_sessionmaker, ensure_runtime_schema
++from app.db import create_engine_and_sessionmaker, initialize_database
+ from app.providers.indie_hackers import IndieHackersFeedClient, IndieHackersTransientError
+ from app.providers.reddit_factory import create_reddit_client_from_env
+ from app.providers.reddit import RedditAuthError, RedditConfigurationError, RedditOAuthClient, RedditTransientError
+@@ -177,9 +178,9 @@ def main() -> int:
+     engine, session_factory = create_engine_and_sessionmaker(
+         testing=False,
+         database_url=default_database_url(),
++        database_schema=default_database_schema(),
+     )
+-    Base.metadata.create_all(engine)
+-    ensure_runtime_schema(engine)
++    initialize_database(engine, default_database_schema())
+     repository = Repository(session_factory)
+     reddit_client = create_reddit_client_from_env()
+     indie_hackers_client = IndieHackersFeedClient()

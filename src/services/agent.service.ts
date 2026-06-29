@@ -17,14 +17,20 @@ const pool = new Pool({ connectionString });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
+function getOpenAIClient() {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+        throw new Error('OPENAI_API_KEY is required only for agent-driven content flows');
+    }
+
+    return new OpenAI({ apiKey });
+}
 
 class AgentService {
     private history: any[] = [];
 
     async processMessage(text: string, projectId: number = 1) {
+        const openai = getOpenAIClient();
         this.history.push({ role: 'user', content: text });
 
         const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [

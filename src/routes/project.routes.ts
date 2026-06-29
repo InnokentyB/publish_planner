@@ -7,6 +7,8 @@ import yaml from 'js-yaml';
 import multiAgentService from '../services/multi_agent.service';
 import contentDictionaryService from '../services/content_dictionary.service';
 import publicationPlanService from '../services/publication_plan.service';
+import parserIntegrationService from '../services/parser_integration.service';
+import { normalizeProjectKind, slugifyProjectName } from '../utils/project.utils';
 
 const connectionString = process.env.DATABASE_URL;
 const pool = new Pool({ connectionString });
@@ -71,6 +73,7 @@ type ImportedProjectConfig = {
         name?: string;
         slug?: string;
         description?: string;
+        kind?: string;
     };
     settings?: Record<string, unknown>;
     content_dictionary?: unknown;
@@ -133,22 +136,26 @@ function createConnectionId(name: string) {
     return `${base}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function slugifyProjectName(value: string) {
-    return value
-        .toLowerCase()
-        .trim()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 60);
+function parseProjectId(raw: string) {
+    const value = parseInt(raw, 10);
+    if (Number.isNaN(value)) {
+        throw new Error('Invalid project id');
+    }
+    return value;
 }
 
-async function makeUniqueProjectSlug(baseSlug?: string, fallbackName?: string) {
+async function makeUniqueProjectSlug(baseSlug?: string, fallbackName?: string, excludeProjectId?: number) {
     const source = baseSlug?.trim() || fallbackName || 'project';
     const normalized = slugifyProjectName(source) || `project-${Date.now()}`;
     let candidate = normalized;
     let suffix = 1;
 
-    while (await prisma.project.findUnique({ where: { slug: candidate } })) {
+    while (await prisma.project.findFirst({
+        where: {
+            slug: candidate,
+            ...(excludeProjectId ? { id: { not: excludeProjectId } } : {})
+        }
+    })) {
         candidate = `${normalized}-${suffix}`;
         suffix += 1;
     }
@@ -181,6 +188,7 @@ async function buildImportedProjectData(rawConfig: string, userId: number) {
 
     const slug = await makeUniqueProjectSlug(projectBlock.slug, name);
     const description = projectBlock.description?.trim() || null;
+    const kind = normalizeProjectKind(projectBlock.kind);
     const settings = Object.entries(parsed.settings || {})
         .filter(([key, value]) => typeof key === 'string' && key.trim() && value !== undefined && value !== null)
         .map(([key, value]) => ({
@@ -299,6 +307,7 @@ async function buildImportedProjectData(rawConfig: string, userId: number) {
             name,
             slug,
             description,
+            kind,
             members: {
                 create: {
                     user_id: userId,
@@ -339,7 +348,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     // Create project
     fastify.post('/api/projects', async (request, reply) => {
         const user = (request as any).user;
-        const { name, slug, description } = request.body as any;
+        const { name, slug, description, kind } = request.body as any;
 
         const finalSlug = await makeUniqueProjectSlug(slug, name);
         const project = await prisma.project.create({
@@ -347,6 +356,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
                 name,
                 slug: finalSlug,
                 description,
+                kind: normalizeProjectKind(kind),
                 members: {
                     create: {
                         user_id: user.id,
@@ -459,7 +469,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
 
     fastify.post('/api/projects/import-publication-plan', async (request, reply) => {
         const user = (request as any).user;
-        const { planJson, planPath } = request.body as { planJson?: string; planPath?: string };
+        const { planJson, planPath, workspaceRoots } = request.body as { planJson?: string; planPath?: string; workspaceRoots?: string[] };
 
         if (!planJson && !planPath) {
             return reply.code(400).send({ error: 'planJson or planPath is required' });
@@ -469,7 +479,8 @@ export default async function projectRoutes(fastify: FastifyInstance) {
             const result = await publicationPlanService.importPlan({
                 rawPlan: planJson,
                 planPath,
-                userId: user.id
+                userId: user.id,
+                workspaceRoots: Array.isArray(workspaceRoots) ? workspaceRoots : undefined
             });
 
             return result;
@@ -536,6 +547,187 @@ export default async function projectRoutes(fastify: FastifyInstance) {
         });
 
         return project;
+    });
+
+    fastify.get('/api/projects/:id/parser/health', async (request, reply) => {
+        const user = (request as any).user;
+        const { id } = request.params as any;
+
+        try {
+            const projectId = parseProjectId(id);
+            const hasAccess = await authService.hasProjectAccess(user.id, projectId);
+            if (!hasAccess) {
+                return reply.code(403).send({ error: 'No access' });
+            }
+
+            return await parserIntegrationService.getHealth();
+        } catch (error: any) {
+            return reply.code(400).send({ error: error.message || 'Failed to fetch parser health' });
+        }
+    });
+
+    fastify.post('/api/projects/:id/parser/search', async (request, reply) => {
+        const user = (request as any).user;
+        const { id } = request.params as any;
+
+        try {
+            const projectId = parseProjectId(id);
+            const result = await parserIntegrationService.createSearchJob({
+                projectId,
+                ...(request.body as any)
+            }, { userId: user.id, minRole: 'editor' });
+
+            return reply.code(202).send(result);
+        } catch (error: any) {
+            const message = error.message || 'Failed to create parser search job';
+            const statusCode = message.includes('does not have') ? 403 : 400;
+            return reply.code(statusCode).send({ error: message });
+        }
+    });
+
+    fastify.get('/api/projects/:id/parser/search/:jobId', async (request, reply) => {
+        const user = (request as any).user;
+        const { id, jobId } = request.params as any;
+
+        try {
+            const projectId = parseProjectId(id);
+            return await parserIntegrationService.getSearchJob(projectId, jobId, { userId: user.id });
+        } catch (error: any) {
+            const message = error.message || 'Failed to fetch parser search job';
+            const statusCode = message.includes('does not have') ? 403 : 400;
+            return reply.code(statusCode).send({ error: message });
+        }
+    });
+
+    fastify.post('/api/projects/:id/parser/search/:jobId/refresh', async (request, reply) => {
+        const user = (request as any).user;
+        const { id, jobId } = request.params as any;
+
+        try {
+            const projectId = parseProjectId(id);
+            const body = (request.body || {}) as any;
+            const result = await parserIntegrationService.refreshSearchJob({
+                projectId,
+                jobId,
+                idempotencyKey: body.idempotencyKey
+            }, { userId: user.id, minRole: 'editor' });
+
+            return reply.code(202).send(result);
+        } catch (error: any) {
+            const message = error.message || 'Failed to refresh parser search job';
+            const statusCode = message.includes('does not have') ? 403 : 400;
+            return reply.code(statusCode).send({ error: message });
+        }
+    });
+
+    fastify.get('/api/projects/:id/parser/posts', async (request, reply) => {
+        const user = (request as any).user;
+        const { id } = request.params as any;
+        const { limit, offset } = request.query as any;
+
+        try {
+            const projectId = parseProjectId(id);
+            return await parserIntegrationService.listPosts(projectId, { userId: user.id }, {
+                limit: limit !== undefined ? parseInt(limit, 10) : undefined,
+                offset: offset !== undefined ? parseInt(offset, 10) : undefined
+            });
+        } catch (error: any) {
+            const message = error.message || 'Failed to list parser posts';
+            const statusCode = message.includes('does not have') ? 403 : 400;
+            return reply.code(statusCode).send({ error: message });
+        }
+    });
+
+    fastify.get('/api/projects/:id/parser/insights', async (request, reply) => {
+        const user = (request as any).user;
+        const { id } = request.params as any;
+        const { limit, offset, jobId, type } = request.query as any;
+
+        try {
+            const projectId = parseProjectId(id);
+            return await parserIntegrationService.getInsights({
+                projectId,
+                limit: limit !== undefined ? parseInt(limit, 10) : undefined,
+                offset: offset !== undefined ? parseInt(offset, 10) : undefined,
+                jobId,
+                type
+            }, { userId: user.id });
+        } catch (error: any) {
+            const message = error.message || 'Failed to fetch parser insights';
+            const statusCode = message.includes('does not have') ? 403 : 400;
+            return reply.code(statusCode).send({ error: message });
+        }
+    });
+
+    fastify.get('/api/projects/:id/parser/summaries/:jobId', async (request, reply) => {
+        const user = (request as any).user;
+        const { id, jobId } = request.params as any;
+
+        try {
+            const projectId = parseProjectId(id);
+            return await parserIntegrationService.getSummary({
+                projectId,
+                jobId
+            }, { userId: user.id });
+        } catch (error: any) {
+            const message = error.message || 'Failed to fetch parser summary';
+            const statusCode = message.includes('does not have') ? 403 : 400;
+            return reply.code(statusCode).send({ error: message });
+        }
+    });
+
+    fastify.get('/api/projects/:id/parser/templates', async (request, reply) => {
+        const user = (request as any).user;
+        const { id } = request.params as any;
+
+        try {
+            const projectId = parseProjectId(id);
+            return await parserIntegrationService.listTemplates(projectId, { userId: user.id });
+        } catch (error: any) {
+            const message = error.message || 'Failed to list parser templates';
+            const statusCode = message.includes('does not have') ? 403 : 400;
+            return reply.code(statusCode).send({ error: message });
+        }
+    });
+
+    fastify.post('/api/projects/:id/parser/templates/import', async (request, reply) => {
+        const user = (request as any).user;
+        const { id } = request.params as any;
+
+        try {
+            const projectId = parseProjectId(id);
+            const result = await parserIntegrationService.importTemplates({
+                projectId,
+                ...(request.body as any)
+            }, { userId: user.id, minRole: 'editor' });
+
+            return reply.code(202).send(result);
+        } catch (error: any) {
+            const message = error.message || 'Failed to import parser templates';
+            const statusCode = message.includes('does not have') ? 403 : 400;
+            return reply.code(statusCode).send({ error: message });
+        }
+    });
+
+    fastify.post('/api/projects/:id/parser/templates/:templateId/run', async (request, reply) => {
+        const user = (request as any).user;
+        const { id, templateId } = request.params as any;
+
+        try {
+            const projectId = parseProjectId(id);
+            const body = (request.body || {}) as any;
+            const result = await parserIntegrationService.runTemplate({
+                projectId,
+                templateId,
+                idempotencyKey: body.idempotencyKey
+            }, { userId: user.id, minRole: 'editor' });
+
+            return reply.code(202).send(result);
+        } catch (error: any) {
+            const message = error.message || 'Failed to run parser template';
+            const statusCode = message.includes('does not have') ? 403 : 400;
+            return reply.code(statusCode).send({ error: message });
+        }
     });
 
     // Channels management
@@ -696,7 +888,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     fastify.put('/api/projects/:id', async (request, reply) => {
         const user = (request as any).user;
         const { id } = request.params as any;
-        const { name, description } = request.body as any;
+        const { name, slug, description, kind } = request.body as any;
         const projectId = parseInt(id);
 
         const hasAccess = await authService.hasProjectAccess(user.id, projectId, 'owner');
@@ -705,9 +897,51 @@ export default async function projectRoutes(fastify: FastifyInstance) {
             return;
         }
 
+        const existing = await prisma.project.findUnique({
+            where: { id: projectId }
+        });
+
+        if (!existing) {
+            reply.code(404).send({ error: 'Project not found' });
+            return;
+        }
+
+        const finalSlug = typeof slug === 'string' && slug.trim()
+            ? await makeUniqueProjectSlug(slug, existing.name, existing.id)
+            : undefined;
+
         const project = await prisma.project.update({
             where: { id: projectId },
-            data: { name, description }
+            data: {
+                ...(typeof name === 'string' ? { name } : {}),
+                ...(typeof description === 'string' || description === null ? { description } : {}),
+                ...(finalSlug ? { slug: finalSlug } : {}),
+                ...(typeof kind === 'string' ? { kind: normalizeProjectKind(kind) } : {})
+            }
+        });
+
+        return project;
+    });
+
+    fastify.post('/api/projects/:id/archive', async (request, reply) => {
+        const user = (request as any).user;
+        const { id } = request.params as any;
+        const { archived } = request.body as { archived?: boolean };
+        const projectId = parseInt(id);
+
+        const hasAccess = await authService.hasProjectAccess(user.id, projectId, 'owner');
+        if (!hasAccess) {
+            reply.code(403).send({ error: 'Only owners can archive project details' });
+            return;
+        }
+
+        const nextArchived = archived !== false;
+        const project = await prisma.project.update({
+            where: { id: projectId },
+            data: {
+                is_archived: nextArchived,
+                archived_at: nextArchived ? new Date() : null
+            }
         });
 
         return project;

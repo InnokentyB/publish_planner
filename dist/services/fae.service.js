@@ -16,9 +16,18 @@ const adapter = new adapter_pg_1.PrismaPg(pool);
 const prisma = new client_1.PrismaClient({ adapter });
 class FaeService {
     constructor() {
-        this.openai = new openai_1.default({
-            apiKey: process.env.OPENAI_API_KEY
-        });
+        this.openai = null;
+        if (process.env.OPENAI_API_KEY) {
+            this.openai = new openai_1.default({
+                apiKey: process.env.OPENAI_API_KEY
+            });
+        }
+    }
+    getOpenAIClient() {
+        if (!this.openai) {
+            throw new Error('OPENAI_API_KEY is required for feedback adaptation flows');
+        }
+        return this.openai;
     }
     /**
      * Collects manual feedback from the owner via CLI/UI
@@ -47,7 +56,7 @@ class FaeService {
 Комментарий автора: ${notes}
 
 Предложи корректировки стратегии.`;
-        const responseStr = await this.openai.chat.completions.create({
+        const responseStr = await this.getOpenAIClient().chat.completions.create({
             model: 'gpt-4o',
             messages: [
                 { role: 'system', content: systemPrompt },

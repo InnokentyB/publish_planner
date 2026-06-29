@@ -19,14 +19,19 @@ const connectionString = process.env.DATABASE_URL;
 const pool = new pg_1.Pool({ connectionString });
 const adapter = new adapter_pg_1.PrismaPg(pool);
 const prisma = new client_1.PrismaClient({ adapter });
-const openai = new openai_1.default({
-    apiKey: process.env.OPENAI_API_KEY,
-});
+function getOpenAIClient() {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+        throw new Error('OPENAI_API_KEY is required only for agent-driven content flows');
+    }
+    return new openai_1.default({ apiKey });
+}
 class AgentService {
     constructor() {
         this.history = [];
     }
     async processMessage(text, projectId = 1) {
+        const openai = getOpenAIClient();
         this.history.push({ role: 'user', content: text });
         const tools = [
             {

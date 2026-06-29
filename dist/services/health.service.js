@@ -41,7 +41,6 @@ const db_1 = __importDefault(require("../db"));
 const queue_1 = require("../queue");
 const supabase_1 = require("./supabase");
 const bootstrap_env_1 = require("../bootstrap-env");
-const schema_plan_service_1 = __importDefault(require("./schema_plan.service"));
 function nowMs() {
     return Date.now();
 }
@@ -155,8 +154,7 @@ class HealthService {
             status: 'ok',
             ts: new Date().toISOString(),
             uptime_s: Math.round(process.uptime()),
-            database: (0, bootstrap_env_1.getDatabaseRuntimeInfo)(),
-            schema_plan: schema_plan_service_1.default.getPlan()
+            database: (0, bootstrap_env_1.getDatabaseRuntimeInfo)()
         };
     }
     async getDeepHealth() {
@@ -177,7 +175,6 @@ class HealthService {
             status: overall,
             ts: new Date().toISOString(),
             uptime_s: Math.round(process.uptime()),
-            schema_plan: schema_plan_service_1.default.getPlan(),
             components
         };
     }

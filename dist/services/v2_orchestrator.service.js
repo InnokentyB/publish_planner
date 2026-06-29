@@ -16,12 +16,21 @@ const adapter = new adapter_pg_1.PrismaPg(pool);
 const prisma = new client_1.PrismaClient({ adapter });
 class V2OrchestratorService {
     constructor() {
-        this.openai = new openai_1.default({
-            apiKey: process.env.OPENAI_API_KEY
-        });
+        this.openai = null;
+        if (process.env.OPENAI_API_KEY) {
+            this.openai = new openai_1.default({
+                apiKey: process.env.OPENAI_API_KEY
+            });
+        }
+    }
+    getOpenAIClient() {
+        if (!this.openai) {
+            throw new Error('OPENAI_API_KEY is required for v2 orchestrator flows');
+        }
+        return this.openai;
     }
     async callLLM(systemPrompt, userPrompt) {
-        const completion = await this.openai.chat.completions.create({
+        const completion = await this.getOpenAIClient().chat.completions.create({
             model: 'gpt-4o',
             messages: [
                 { role: 'system', content: systemPrompt },

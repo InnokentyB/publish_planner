@@ -109,11 +109,29 @@ class AuthService {
     async getUserProjects(userId: number) {
         const memberships = await prisma.projectMember.findMany({
             where: { user_id: userId },
-            include: { project: true }
+            include: {
+                project: {
+                    include: {
+                        _count: {
+                            select: {
+                                channels: true,
+                                content_items: true
+                            }
+                        }
+                    }
+                }
+            },
+            orderBy: {
+                project: {
+                    updated_at: 'desc'
+                }
+            }
         });
         return memberships.map(m => ({
             ...m.project,
-            role: m.role
+            role: m.role,
+            channels_count: m.project._count.channels,
+            content_items_count: m.project._count.content_items
         }));
     }
 
