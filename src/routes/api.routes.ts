@@ -25,7 +25,7 @@ async function loadPublicationPlanContext(projectId: number) {
     const settings = await prisma.projectSettings.findMany({
         where: {
             project_id: projectId,
-            key: { in: ['publication_plan_meta', 'publication_plan_assets', 'publication_plan_accounts', 'publication_plan_asset_snapshots'] }
+            key: { in: ['publication_plan_meta', 'publication_plan_assets', 'publication_plan_accounts', 'publication_plan_asset_snapshots', 'publication_plan_content_file_snapshots'] }
         }
     });
 
@@ -33,6 +33,7 @@ async function loadPublicationPlanContext(projectId: number) {
     const assets = settings.find((setting) => setting.key === 'publication_plan_assets')?.value;
     const accounts = settings.find((setting) => setting.key === 'publication_plan_accounts')?.value;
     const assetSnapshots = settings.find((setting) => setting.key === 'publication_plan_asset_snapshots')?.value;
+    const contentFileSnapshots = settings.find((setting) => setting.key === 'publication_plan_content_file_snapshots')?.value;
 
     if (!meta || !assets || !accounts) {
         return null;
@@ -43,6 +44,7 @@ async function loadPublicationPlanContext(projectId: number) {
         assets: JSON.parse(assets),
         accounts: JSON.parse(accounts),
         asset_snapshots: assetSnapshots ? JSON.parse(assetSnapshots) : {},
+        content_file_snapshots: contentFileSnapshots ? JSON.parse(contentFileSnapshots) : {},
         actions: [] as any[]
     };
 }

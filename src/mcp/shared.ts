@@ -324,10 +324,11 @@ export function registerPlannerTools(server: McpServer) {
         description: 'Import a publication plan JSON payload into the planner and create or update the corresponding project.',
         inputSchema: {
             userId: z.number().int().positive().describe('Owner user ID used for project membership when a new project is created.'),
-            planJson: z.string().min(2).describe('Full publication plan JSON string with meta.plan_id, accounts, assets, and actions[].')
+            planJson: z.string().min(2).describe('Full publication plan JSON string with meta.plan_id, accounts, assets, and actions[].'),
+            workspaceRoots: z.array(z.string()).optional().describe('Optional local workspace roots where referenced content files can be resolved during import.')
         }
-    }, async ({ userId, planJson }) => {
-        const result = await mcpPublicationService.importPublicationPlanJson(planJson, userId);
+    }, async ({ userId, planJson, workspaceRoots }) => {
+        const result = await mcpPublicationService.importPublicationPlanJson(planJson, userId, workspaceRoots);
         return asToolResult(result);
     });
 
@@ -335,10 +336,11 @@ export function registerPlannerTools(server: McpServer) {
         description: 'Import a publication plan from a local JSON file path and create or update the corresponding project.',
         inputSchema: {
             userId: z.number().int().positive().describe('Owner user ID used for project membership when a new project is created.'),
-            planPath: z.string().min(1).describe('Absolute or local filesystem path to a publication plan JSON file.')
+            planPath: z.string().min(1).describe('Absolute or local filesystem path to a publication plan JSON file.'),
+            workspaceRoots: z.array(z.string()).optional().describe('Optional local workspace roots where referenced content files can be resolved during import.')
         }
-    }, async ({ userId, planPath }) => {
-        const result = await mcpPublicationService.importPublicationPlanFile(planPath, userId);
+    }, async ({ userId, planPath, workspaceRoots }) => {
+        const result = await mcpPublicationService.importPublicationPlanFile(planPath, userId, workspaceRoots);
         return asToolResult(result);
     });
 

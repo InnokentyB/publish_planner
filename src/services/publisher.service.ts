@@ -75,7 +75,17 @@ class PublisherService {
         const settings = await prisma.projectSettings.findMany({
             where: {
                 project_id: projectId,
-                key: { in: ['publication_plan_meta', 'publication_plan_assets', 'publication_plan_accounts', 'publication_plan_asset_snapshots', 'publication_plan_ongoing_rules', 'publication_plan_measurement'] }
+                key: {
+                    in: [
+                        'publication_plan_meta',
+                        'publication_plan_assets',
+                        'publication_plan_accounts',
+                        'publication_plan_asset_snapshots',
+                        'publication_plan_content_file_snapshots',
+                        'publication_plan_ongoing_rules',
+                        'publication_plan_measurement'
+                    ]
+                }
             }
         });
 
@@ -83,6 +93,7 @@ class PublisherService {
         const assets = settings.find((setting) => setting.key === 'publication_plan_assets')?.value;
         const accounts = settings.find((setting) => setting.key === 'publication_plan_accounts')?.value;
         const assetSnapshots = settings.find((setting) => setting.key === 'publication_plan_asset_snapshots')?.value;
+        const contentFileSnapshots = settings.find((setting) => setting.key === 'publication_plan_content_file_snapshots')?.value;
         const ongoingRules = settings.find((setting) => setting.key === 'publication_plan_ongoing_rules')?.value;
         const measurement = settings.find((setting) => setting.key === 'publication_plan_measurement')?.value;
 
@@ -95,6 +106,7 @@ class PublisherService {
             assets: JSON.parse(assets),
             accounts: JSON.parse(accounts),
             asset_snapshots: assetSnapshots ? JSON.parse(assetSnapshots) : {},
+            content_file_snapshots: contentFileSnapshots ? JSON.parse(contentFileSnapshots) : {},
             actions: [] as any[],
             ongoing_rules: ongoingRules ? JSON.parse(ongoingRules) : [],
             measurement: measurement ? JSON.parse(measurement) : {}

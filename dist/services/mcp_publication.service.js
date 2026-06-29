@@ -1,89 +1,99 @@
-import prisma from '../db';
-import publicationPlanService from './publication_plan.service';
-import redditService from './reddit.service';
-import vkService from './vk.service';
-import linkedinService from './linkedin.service';
-import parserIntegrationService from './parser_integration.service';
-import fs from 'fs';
-import path from 'path';
-import { normalizeProjectKind, slugifyProjectName } from '../utils/project.utils';
-
-type PublicationOutcome = 'published' | 'blocked' | 'removed' | 'restricted';
-
-type DirectPublishParams = {
-    projectId: number;
-    channelId?: number;
-    channelType?: string;
-    title?: string;
-    text: string;
-    subreddit?: string;
-    imageUrl?: string;
-    dryRun?: boolean;
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
 };
-
-type ProjectRole = 'owner' | 'editor' | 'viewer';
-
-function resolveSection(content: string, marker: string) {
+Object.defineProperty(exports, "__esModule", { value: true });
+const db_1 = __importDefault(require("../db"));
+const publication_plan_service_1 = __importDefault(require("./publication_plan.service"));
+const reddit_service_1 = __importDefault(require("./reddit.service"));
+const vk_service_1 = __importDefault(require("./vk.service"));
+const linkedin_service_1 = __importDefault(require("./linkedin.service"));
+const parser_integration_service_1 = __importDefault(require("./parser_integration.service"));
+const path_1 = __importDefault(require("path"));
+const project_utils_1 = require("../utils/project.utils");
+function resolveSection(content, marker) {
     const lines = content.split(/\r?\n/);
     const startIndex = lines.findIndex((line) => line.trim() === marker.trim());
     if (startIndex === -1) {
         return '';
     }
-
-    const result: string[] = [];
+    const result = [];
     for (let i = startIndex + 1; i < lines.length; i += 1) {
         if (lines[i].trim() === '---') {
             break;
         }
         result.push(lines[i]);
     }
-
     return result
         .join('\n')
         .replace(/\*\*Content Note\*\*[\s\S]*?(?=\n#|\n---|$)/g, '')
         .trim();
 }
-
-function redactConfig(value: any): any {
+function redactConfig(value) {
     if (Array.isArray(value)) {
         return value.map((item) => redactConfig(item));
     }
-
     if (!value || typeof value !== 'object') {
         return value;
     }
-
-    const redacted: Record<string, any> = {};
+    const redacted = {};
     for (const [key, fieldValue] of Object.entries(value)) {
         if (/(token|secret|password|session|api[_-]?key|client[_-]?secret|hash|cookie)/i.test(key)) {
             redacted[key] = '[REDACTED]';
             continue;
         }
-
         redacted[key] = redactConfig(fieldValue);
     }
-
     return redacted;
 }
-
-function normalizeTextPreview(text: string, maxLength = 280) {
+function normalizeTextPreview(text, maxLength = 280) {
     const compact = text.replace(/\s+/g, ' ').trim();
     if (compact.length <= maxLength) {
         return compact;
     }
-
     return `${compact.slice(0, maxLength - 1)}…`;
 }
-
-async function resolveTelegramPhotoSource(imageUrl: string): Promise<string | { source: Buffer } | { source: NodeJS.ReadableStream }> {
+async function resolveTelegramPhotoSource(imageUrl) {
     if (imageUrl.startsWith('data:')) {
         const base64Data = imageUrl.split(',')[1];
         return { source: Buffer.from(base64Data, 'base64') };
     }
-
     if (imageUrl.startsWith('/uploads/')) {
-        const fs = await import('fs');
-        const path = await import('path');
+        const fs = await Promise.resolve().then(() => __importStar(require('fs')));
+        const path = await Promise.resolve().then(() => __importStar(require('path')));
         const filename = imageUrl.split('/').pop();
         const localPath = path.join(__dirname, '../../uploads', filename || '');
         if (!fs.existsSync(localPath)) {
@@ -91,23 +101,20 @@ async function resolveTelegramPhotoSource(imageUrl: string): Promise<string | { 
         }
         return { source: fs.createReadStream(localPath) };
     }
-
     if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
         return imageUrl;
     }
-
     throw new Error(`Unsupported image format: ${imageUrl}`);
 }
-
 class McpPublicationService {
-    private summarizeUser(user: any) {
+    summarizeUser(user) {
         return {
             id: user.id,
             email: user.email,
             name: user.name,
             created_at: user.created_at?.toISOString?.() || user.created_at || null,
             projects: Array.isArray(user.memberships)
-                ? user.memberships.map((membership: any) => ({
+                ? user.memberships.map((membership) => ({
                     id: membership.project.id,
                     name: membership.project.name,
                     slug: membership.project.slug,
@@ -117,8 +124,7 @@ class McpPublicationService {
                 : undefined
         };
     }
-
-    private summarizeProject(project: any, role?: string | null) {
+    summarizeProject(project, role) {
         return {
             id: project.id,
             name: project.name,
@@ -131,7 +137,7 @@ class McpPublicationService {
             channels_count: project._count?.channels ?? 0,
             content_items_count: project._count?.content_items ?? 0,
             channels: Array.isArray(project.channels)
-                ? project.channels.map((channel: any) => ({
+                ? project.channels.map((channel) => ({
                     id: channel.id,
                     name: channel.name,
                     type: channel.type,
@@ -141,34 +147,11 @@ class McpPublicationService {
             role: role || undefined
         };
     }
-
-    async getParserHealth(projectId: number, userId: number) {
-        return parserIntegrationService.getHealth();
+    async getParserHealth(projectId, userId) {
+        return parser_integration_service_1.default.getHealth();
     }
-
-    async createParserSearchJob(params: {
-        userId: number;
-        projectId: number;
-        source?: 'reddit' | 'indie_hackers';
-        query: string;
-        subreddit?: string;
-        subreddits?: string[];
-        queryDefinitionId?: string;
-        intent?: string;
-        cluster?: string;
-        priority?: number;
-        matchMustIncludeAny?: string[];
-        excludeIfContains?: string[];
-        excludeRegexes?: string[];
-        limit?: number;
-        minScore?: number;
-        dateFrom?: string;
-        dateTo?: string;
-        includeComments?: boolean;
-        enrich?: boolean;
-        idempotencyKey?: string;
-    }) {
-        return parserIntegrationService.createSearchJob({
+    async createParserSearchJob(params) {
+        return parser_integration_service_1.default.createSearchJob({
             projectId: params.projectId,
             source: params.source,
             query: params.query,
@@ -190,30 +173,21 @@ class McpPublicationService {
             idempotencyKey: params.idempotencyKey
         }, { userId: params.userId, minRole: 'editor' });
     }
-
-    async getParserSearchJob(projectId: number, jobId: string, userId: number) {
-        return parserIntegrationService.getSearchJob(projectId, jobId, { userId });
+    async getParserSearchJob(projectId, jobId, userId) {
+        return parser_integration_service_1.default.getSearchJob(projectId, jobId, { userId });
     }
-
-    async refreshParserSearchJob(projectId: number, jobId: string, userId: number, idempotencyKey?: string) {
-        return parserIntegrationService.refreshSearchJob({
+    async refreshParserSearchJob(projectId, jobId, userId, idempotencyKey) {
+        return parser_integration_service_1.default.refreshSearchJob({
             projectId,
             jobId,
             idempotencyKey
         }, { userId, minRole: 'editor' });
     }
-
-    async listParserPosts(projectId: number, userId: number, limit?: number, offset?: number) {
-        return parserIntegrationService.listPosts(projectId, { userId }, { limit, offset });
+    async listParserPosts(projectId, userId, limit, offset) {
+        return parser_integration_service_1.default.listPosts(projectId, { userId }, { limit, offset });
     }
-
-    async getParserInsights(projectId: number, userId: number, options: {
-        limit?: number;
-        offset?: number;
-        jobId?: string;
-        type?: string;
-    } = {}) {
-        return parserIntegrationService.getInsights({
+    async getParserInsights(projectId, userId, options = {}) {
+        return parser_integration_service_1.default.getInsights({
             projectId,
             limit: options.limit,
             offset: options.offset,
@@ -221,33 +195,17 @@ class McpPublicationService {
             type: options.type
         }, { userId });
     }
-
-    async getParserSummary(projectId: number, jobId: string, userId: number) {
-        return parserIntegrationService.getSummary({
+    async getParserSummary(projectId, jobId, userId) {
+        return parser_integration_service_1.default.getSummary({
             projectId,
             jobId
         }, { userId });
     }
-
-    async listParserTemplates(projectId: number, userId: number) {
-        return parserIntegrationService.listTemplates(projectId, { userId });
+    async listParserTemplates(projectId, userId) {
+        return parser_integration_service_1.default.listTemplates(projectId, { userId });
     }
-
-    async importParserTemplates(params: {
-        userId: number;
-        projectId: number;
-        yamlContent?: string;
-        queryBank?: Record<string, any>;
-        scheduleDaily?: boolean;
-        limit?: number;
-        minScore?: number;
-        dateFrom?: string;
-        dateTo?: string;
-        includeComments?: boolean;
-        enrich?: boolean;
-        idempotencyKey?: string;
-    }) {
-        return parserIntegrationService.importTemplates({
+    async importParserTemplates(params) {
+        return parser_integration_service_1.default.importTemplates({
             projectId: params.projectId,
             yamlContent: params.yamlContent,
             queryBank: params.queryBank,
@@ -261,24 +219,20 @@ class McpPublicationService {
             idempotencyKey: params.idempotencyKey
         }, { userId: params.userId, minRole: 'editor' });
     }
-
-    async runParserTemplate(projectId: number, templateId: string, userId: number, idempotencyKey?: string) {
-        return parserIntegrationService.runTemplate({
+    async runParserTemplate(projectId, templateId, userId, idempotencyKey) {
+        return parser_integration_service_1.default.runTemplate({
             projectId,
             templateId,
             idempotencyKey
         }, { userId, minRole: 'editor' });
     }
-
-    async importPublicationPlanJson(planJson: string, userId: number, workspaceRoots?: string[]) {
+    async importPublicationPlanJson(planJson, userId, workspaceRoots) {
         const user = await this.requireUser(userId);
-
-        const result = await publicationPlanService.importPlan({
+        const result = await publication_plan_service_1.default.importPlan({
             rawPlan: planJson,
             userId,
             workspaceRoots
         });
-
         return {
             imported_by: user,
             project: {
@@ -290,17 +244,14 @@ class McpPublicationService {
             imported: result.imported
         };
     }
-
-    async importPublicationPlanFile(planPath: string, userId: number, workspaceRoots?: string[]) {
+    async importPublicationPlanFile(planPath, userId, workspaceRoots) {
         const user = await this.requireUser(userId);
-        const resolvedPlanPath = path.resolve(planPath);
-
-        const result = await publicationPlanService.importPlan({
+        const resolvedPlanPath = path_1.default.resolve(planPath);
+        const result = await publication_plan_service_1.default.importPlan({
             planPath: resolvedPlanPath,
             userId,
             workspaceRoots
         });
-
         return {
             imported_by: user,
             source: {
@@ -315,10 +266,8 @@ class McpPublicationService {
             imported: result.imported
         };
     }
-
-    async listProjects(options: { userId?: number; includeArchived?: boolean } = {}) {
-        const where: any = {};
-
+    async listProjects(options = {}) {
+        const where = {};
         if (options.userId) {
             where.members = {
                 some: {
@@ -326,12 +275,10 @@ class McpPublicationService {
                 }
             };
         }
-
         if (!options.includeArchived) {
             where.is_archived = false;
         }
-
-        const projects = await prisma.project.findMany({
+        const projects = await db_1.default.project.findMany({
             where,
             orderBy: { updated_at: 'desc' },
             include: {
@@ -353,31 +300,19 @@ class McpPublicationService {
                 }
             }
         });
-
         return projects.map((project) => this.summarizeProject(project, project.members?.[0]?.role || null));
     }
-
     getPublicationPlanFormat() {
-        return publicationPlanService.getPublicationPlanFormat();
+        return publication_plan_service_1.default.getPublicationPlanFormat();
     }
-
-    getPublicationPlanTemplate(input: {
-        planId?: string;
-        projectName?: string;
-        owner?: string;
-        timezone?: string;
-        channelRef?: string;
-        channelPlatform?: string;
-    } = {}) {
-        return publicationPlanService.getPublicationPlanTemplate(input);
+    getPublicationPlanTemplate(input = {}) {
+        return publication_plan_service_1.default.getPublicationPlanTemplate(input);
     }
-
-    normalizePublicationPlan(planJson: string) {
-        return publicationPlanService.normalizePublicationPlan(planJson);
+    normalizePublicationPlan(planJson) {
+        return publication_plan_service_1.default.normalizePublicationPlan(planJson);
     }
-
-    async listUsers(options: { includeArchivedProjects?: boolean } = {}) {
-        const users = await prisma.user.findMany({
+    async listUsers(options = {}) {
+        const users = await db_1.default.user.findMany({
             orderBy: { id: 'asc' },
             include: {
                 memberships: {
@@ -402,12 +337,10 @@ class McpPublicationService {
                 }
             }
         });
-
         return users.map((user) => this.summarizeUser(user));
     }
-
-    async getUser(userId: number, options: { includeArchivedProjects?: boolean } = {}) {
-        const user = await prisma.user.findUnique({
+    async getUser(userId, options = {}) {
+        const user = await db_1.default.user.findUnique({
             where: { id: userId },
             include: {
                 memberships: {
@@ -432,30 +365,20 @@ class McpPublicationService {
                 }
             }
         });
-
         if (!user) {
             throw new Error(`User ${userId} not found`);
         }
-
         return this.summarizeUser(user);
     }
-
-    async createProject(params: {
-        userId: number;
-        name: string;
-        slug?: string;
-        description?: string;
-        kind?: string;
-    }) {
+    async createProject(params) {
         const user = await this.requireUser(params.userId);
         const slug = await this.makeUniqueProjectSlug(params.slug, params.name);
-
-        const project = await prisma.project.create({
+        const project = await db_1.default.project.create({
             data: {
                 name: params.name,
                 slug,
                 description: params.description,
-                kind: normalizeProjectKind(params.kind),
+                kind: (0, project_utils_1.normalizeProjectKind)(params.kind),
                 members: {
                     create: {
                         user_id: params.userId,
@@ -476,42 +399,29 @@ class McpPublicationService {
                 }
             }
         });
-
         return {
             created_by: user,
             project: this.summarizeProject(project, 'owner')
         };
     }
-
-    async updateProject(params: {
-        userId: number;
-        projectId: number;
-        name?: string;
-        slug?: string;
-        description?: string | null;
-        kind?: string;
-    }) {
+    async updateProject(params) {
         await this.assertProjectAccess(params.userId, params.projectId, 'owner');
-
-        const existing = await prisma.project.findUnique({
+        const existing = await db_1.default.project.findUnique({
             where: { id: params.projectId }
         });
-
         if (!existing) {
             throw new Error(`Project ${params.projectId} not found`);
         }
-
         const slug = typeof params.slug === 'string' && params.slug.trim()
             ? await this.makeUniqueProjectSlug(params.slug, existing.name, existing.id)
             : undefined;
-
-        const project = await prisma.project.update({
+        const project = await db_1.default.project.update({
             where: { id: params.projectId },
             data: {
                 ...(typeof params.name === 'string' ? { name: params.name } : {}),
                 ...(typeof params.description === 'string' || params.description === null ? { description: params.description } : {}),
                 ...(slug ? { slug } : {}),
-                ...(typeof params.kind === 'string' ? { kind: normalizeProjectKind(params.kind) } : {})
+                ...(typeof params.kind === 'string' ? { kind: (0, project_utils_1.normalizeProjectKind)(params.kind) } : {})
             },
             include: {
                 channels: {
@@ -526,21 +436,14 @@ class McpPublicationService {
                 }
             }
         });
-
         return {
             project: this.summarizeProject(project, 'owner')
         };
     }
-
-    async archiveProject(params: {
-        userId: number;
-        projectId: number;
-        archived?: boolean;
-    }) {
+    async archiveProject(params) {
         await this.assertProjectAccess(params.userId, params.projectId, 'owner');
         const nextArchived = params.archived !== false;
-
-        const project = await prisma.project.update({
+        const project = await db_1.default.project.update({
             where: { id: params.projectId },
             data: {
                 is_archived: nextArchived,
@@ -559,18 +462,15 @@ class McpPublicationService {
                 }
             }
         });
-
         return {
             project: this.summarizeProject(project, 'owner')
         };
     }
-
-    async listChannels(projectId: number) {
-        const channels = await prisma.socialChannel.findMany({
+    async listChannels(projectId) {
+        const channels = await db_1.default.socialChannel.findMany({
             where: { project_id: projectId },
             orderBy: { id: 'asc' }
         });
-
         return channels.map((channel) => ({
             id: channel.id,
             name: channel.name,
@@ -579,28 +479,25 @@ class McpPublicationService {
             config: redactConfig(channel.config)
         }));
     }
-
-    async listPublicationPlanAssets(projectId: number) {
+    async listPublicationPlanAssets(projectId) {
         const plan = await this.loadPublicationPlanContext(projectId);
         if (!plan) {
             throw new Error(`No imported publication plan found for project ${projectId}`);
         }
-
-        const pipelineRoot = path.resolve(plan.meta.pipeline_root || '');
+        const pipelineRoot = path_1.default.resolve(plan.meta.pipeline_root || '');
         return {
             project_id: projectId,
             plan_id: plan.meta.plan_id,
             pipeline_root: pipelineRoot,
             assets: Object.entries(plan.assets || {}).map(([ref, asset]) => {
-                const runtime = publicationPlanService.resolveAssetRuntime(plan as any, ref);
-
+                const runtime = publication_plan_service_1.default.resolveAssetRuntime(plan, ref);
                 return {
                     ref,
-                    type: (asset as any)?.type || null,
+                    type: asset?.type || null,
                     relative_path: runtime.relative_path || null,
                     full_path: runtime.full_path || null,
-                    section_marker: (asset as any)?.section_marker || null,
-                    target_url: (asset as any)?.target_url || null,
+                    section_marker: asset?.section_marker || null,
+                    target_url: asset?.target_url || null,
                     exists: runtime.exists === true,
                     snapshot_available: runtime.snapshot_available === true,
                     content_source: runtime.content_source || null
@@ -608,20 +505,16 @@ class McpPublicationService {
             })
         };
     }
-
-    async readPublicationPlanAsset(projectId: number, assetRef: string, maxChars = 20000) {
+    async readPublicationPlanAsset(projectId, assetRef, maxChars = 20000) {
         const plan = await this.loadPublicationPlanContext(projectId);
         if (!plan) {
             throw new Error(`No imported publication plan found for project ${projectId}`);
         }
-
         const asset = plan.assets?.[assetRef];
         if (!asset) {
             throw new Error(`Asset '${assetRef}' not found in imported publication plan`);
         }
-
-        const runtime = publicationPlanService.resolveAssetRuntime(plan as any, assetRef, maxChars);
-
+        const runtime = publication_plan_service_1.default.resolveAssetRuntime(plan, assetRef, maxChars);
         return {
             project_id: projectId,
             plan_id: plan.meta.plan_id,
@@ -637,24 +530,19 @@ class McpPublicationService {
             content: runtime.content || null
         };
     }
-
-    async refreshPublicationPlanAssetSnapshots(projectId: number, assetContents: Record<string, { content: string; contentType?: string }> = {}) {
+    async refreshPublicationPlanAssetSnapshots(projectId, assetContents = {}) {
         const plan = await this.loadPublicationPlanContext(projectId);
         if (!plan) {
             throw new Error(`No imported publication plan found for project ${projectId}`);
         }
-
-        const overrides = Object.fromEntries(
-            Object.entries(assetContents).map(([ref, value]) => [
-                ref,
-                {
-                    content: value.content,
-                    content_type: value.contentType || null
-                }
-            ])
-        );
-
-        const snapshots = await publicationPlanService.refreshAssetSnapshots(projectId, plan as any, overrides);
+        const overrides = Object.fromEntries(Object.entries(assetContents).map(([ref, value]) => [
+            ref,
+            {
+                content: value.content,
+                content_type: value.contentType || null
+            }
+        ]));
+        const snapshots = await publication_plan_service_1.default.refreshAssetSnapshots(projectId, plan, overrides);
         return {
             project_id: projectId,
             plan_id: plan.meta.plan_id,
@@ -662,21 +550,17 @@ class McpPublicationService {
             asset_refs: Object.keys(snapshots)
         };
     }
-
-    async readPublicationPlanRef(projectId: number, ref: string, maxChars = 20000) {
+    async readPublicationPlanRef(projectId, ref, maxChars = 20000) {
         const plan = await this.loadPublicationPlanContext(projectId);
         if (!plan) {
             throw new Error(`No imported publication plan found for project ${projectId}`);
         }
-
         const resolved = this.resolvePlanRef(plan, ref);
         if (resolved == null) {
             throw new Error(`Reference '${ref}' could not be resolved`);
         }
-
         const assetRef = ref.split('.')[0];
         const asset = plan.assets?.[assetRef];
-
         if (asset && typeof resolved === 'object' && resolved !== null && 'path' in resolved) {
             const assetRead = await this.readPublicationPlanAsset(projectId, assetRef, maxChars);
             return {
@@ -688,7 +572,6 @@ class McpPublicationService {
                 asset: assetRead
             };
         }
-
         return {
             project_id: projectId,
             plan_id: plan.meta.plan_id,
@@ -697,23 +580,19 @@ class McpPublicationService {
             resolved_value: resolved
         };
     }
-
-    async getPublicationTaskResources(projectId: number, taskId: number, maxChars = 12000) {
-        const item = await prisma.contentItem.findFirst({
+    async getPublicationTaskResources(projectId, taskId, maxChars = 12000) {
+        const item = await db_1.default.contentItem.findFirst({
             where: { id: taskId, project_id: projectId },
             include: { channel: true }
         });
-
         if (!item) {
             throw new Error(`Publication task ${taskId} not found for project ${projectId}`);
         }
-
         const plan = await this.loadPublicationPlanContext(projectId);
         if (!plan) {
             throw new Error(`No imported publication plan found for project ${projectId}`);
         }
-
-        const action = (item.assets as any)?.action;
+        const action = item.assets?.action;
         if (!action) {
             return {
                 project_id: projectId,
@@ -721,17 +600,14 @@ class McpPublicationService {
                 resources: []
             };
         }
-
-        const bundle = publicationPlanService.buildHandoffBundle({ ...plan, actions: [action] } as any, item);
+        const bundle = publication_plan_service_1.default.buildHandoffBundle({ ...plan, actions: [action] }, item);
         const resources = Array.isArray(bundle.resource_files) ? bundle.resource_files : [];
-
         return {
             project_id: projectId,
             task_id: taskId,
-            resources: resources.map((entry: any) => {
+            resources: resources.map((entry) => {
                 const content = typeof entry.content === 'string' ? entry.content : null;
                 const truncated = Boolean(content && content.length > maxChars);
-
                 return {
                     ref: entry.ref || null,
                     type: entry.type || null,
@@ -748,29 +624,25 @@ class McpPublicationService {
             })
         };
     }
-
-    async listPublicationTasks(projectId: number, status?: string, manualOnly?: boolean) {
-        const where: any = {
+    async listPublicationTasks(projectId, status, manualOnly) {
+        const where = {
             project_id: projectId,
             assets: { not: undefined }
         };
-
         if (status === 'active') {
             where.status = { in: ['planned', 'ready_for_execution', 'awaiting_manual_publication', 'published', 'failed'] };
-        } else if (status) {
+        }
+        else if (status) {
             where.status = status;
         }
-
-        const items = await prisma.contentItem.findMany({
+        const items = await db_1.default.contentItem.findMany({
             where,
             include: { channel: true },
             orderBy: { schedule_at: 'asc' }
         });
-
         const filtered = manualOnly
-            ? items.filter((item) => (item.quality_report as any)?.execution_mode === 'manual')
+            ? items.filter((item) => item.quality_report?.execution_mode === 'manual')
             : items;
-
         return filtered.map((item) => ({
             id: item.id,
             title: item.title,
@@ -786,47 +658,40 @@ class McpPublicationService {
                     type: item.channel.type
                 }
                 : null,
-            execution_mode: (item.quality_report as any)?.execution_mode || null,
-            publication_outcome: (item.metrics as any)?.publication_outcome || (item.quality_report as any)?.publication_outcome || null
+            execution_mode: item.quality_report?.execution_mode || null,
+            publication_outcome: item.metrics?.publication_outcome || item.quality_report?.publication_outcome || null
         }));
     }
-
-    async getPublicationTask(projectId: number, taskId: number) {
-        const item = await prisma.contentItem.findFirst({
+    async getPublicationTask(projectId, taskId) {
+        const item = await db_1.default.contentItem.findFirst({
             where: { id: taskId, project_id: projectId },
             include: { channel: true }
         });
-
         if (!item) {
             throw new Error(`Publication task ${taskId} not found for project ${projectId}`);
         }
-
         const plan = await this.loadPublicationPlanContext(projectId);
-        const action = (item.assets as any)?.action;
+        const action = item.assets?.action;
         if (!plan || !action) {
             return item;
         }
-
-        const bundle = publicationPlanService.buildHandoffBundle({ ...plan, actions: [action] } as any, item);
+        const bundle = publication_plan_service_1.default.buildHandoffBundle({ ...plan, actions: [action] }, item);
         return {
             ...item,
             quality_report: {
-                ...((item.quality_report as any) || {}),
+                ...(item.quality_report || {}),
                 handoff_bundle: bundle
             }
         };
     }
-
-    async preparePublicationTask(projectId: number, taskId: number) {
-        const item = await prisma.contentItem.findFirst({
+    async preparePublicationTask(projectId, taskId) {
+        const item = await db_1.default.contentItem.findFirst({
             where: { id: taskId, project_id: projectId },
             include: { channel: true }
         });
-
         if (!item) {
             throw new Error(`Publication task ${taskId} not found for project ${projectId}`);
         }
-
         const plan = await this.loadPublicationPlanContext(projectId);
         if (!plan) {
             return {
@@ -836,47 +701,41 @@ class McpPublicationService {
                 warning: 'No imported publication plan context is available for this task.'
             };
         }
-
-        const action = (item.assets as any)?.action;
+        const action = item.assets?.action;
         plan.actions = action ? [action] : [];
-        const bundle = publicationPlanService.buildHandoffBundle(plan as any, item);
-
-        const updated = await prisma.contentItem.update({
+        const bundle = publication_plan_service_1.default.buildHandoffBundle(plan, item);
+        const updated = await db_1.default.contentItem.update({
             where: { id: item.id },
             data: {
                 status: bundle.mode === 'manual' ? 'awaiting_manual_publication' : 'ready_for_execution',
                 quality_report: {
-                    ...((item.quality_report as any) || {}),
+                    ...(item.quality_report || {}),
                     handoff_bundle: bundle,
                     prepared_at: new Date().toISOString()
-                } as any
+                }
             }
         });
-
         return {
             item: updated,
             bundle,
             reused: false
         };
     }
-
-    async confirmPublication(projectId: number, taskId: number, publishedLink: string, note?: string, outcome: PublicationOutcome = 'published') {
-        const item = await prisma.contentItem.findFirst({
+    async confirmPublication(projectId, taskId, publishedLink, note, outcome = 'published') {
+        const item = await db_1.default.contentItem.findFirst({
             where: { id: taskId, project_id: projectId }
         });
-
         if (!item) {
             throw new Error(`Publication task ${taskId} not found for project ${projectId}`);
         }
-
-        const monitoring = (item.metrics as any)?.monitoring || {};
-        return prisma.contentItem.update({
+        const monitoring = item.metrics?.monitoring || {};
+        return db_1.default.contentItem.update({
             where: { id: item.id },
             data: {
                 status: 'published',
                 published_link: publishedLink,
                 metrics: {
-                    ...((item.metrics as any) || {}),
+                    ...(item.metrics || {}),
                     manual_confirmation_at: new Date().toISOString(),
                     publication_outcome: outcome,
                     monitoring: {
@@ -884,20 +743,18 @@ class McpPublicationService {
                         awaiting_analytics: true,
                         awaiting_comment_alerts: monitoring.needs_comment_monitoring === true
                     }
-                } as any,
+                },
                 quality_report: {
-                    ...((item.quality_report as any) || {}),
+                    ...(item.quality_report || {}),
                     manual_publication_note: note || null,
                     publication_outcome: outcome
-                } as any
+                }
             }
         });
     }
-
-    async publishDirect(params: DirectPublishParams) {
+    async publishDirect(params) {
         const channel = await this.resolveChannel(params.projectId, params.channelId, params.channelType);
-        const config = (channel.config as any)?.raw_account || channel.config;
-
+        const config = channel.config?.raw_account || channel.config;
         if (params.dryRun) {
             return {
                 mode: 'dry_run',
@@ -915,10 +772,8 @@ class McpPublicationService {
                 }
             };
         }
-
-        let publishedLink: string | null = null;
-        let externalId: string | number | null = null;
-
+        let publishedLink = null;
+        let externalId = null;
         if (channel.type === 'reddit') {
             if (!params.title?.trim()) {
                 throw new Error('`title` is required for Reddit publication');
@@ -926,39 +781,36 @@ class McpPublicationService {
             if (!params.subreddit?.trim()) {
                 throw new Error('`subreddit` is required for Reddit publication');
             }
-
-            const result = await redditService.submitDiscussionPost(config, {
+            const result = await reddit_service_1.default.submitDiscussionPost(config, {
                 subreddit: params.subreddit,
                 title: params.title,
                 text: params.text
             });
             publishedLink = result.url;
             externalId = result.name;
-        } else if (channel.type === 'telegram') {
+        }
+        else if (channel.type === 'telegram') {
             const telegramService = require('./telegram.service').default;
-            const rawChannelId = (channel.config as any)?.telegram_channel_id?.toString();
+            const rawChannelId = channel.config?.telegram_channel_id?.toString();
             if (!rawChannelId) {
                 throw new Error(`Telegram channel ${channel.id} is missing telegram_channel_id`);
             }
-
             const localTestChannel = process.env.LOCAL_TEST_CHANNEL;
             const targetChannelId = (process.env.NODE_ENV !== 'production' && localTestChannel)
                 ? localTestChannel
                 : rawChannelId;
-
-            let sentMessage: any;
-            let linkMessageId: number | null = null;
-
+            let sentMessage;
+            let linkMessageId = null;
             if (params.imageUrl) {
                 const captionLimit = 1024;
                 const photoSource = await resolveTelegramPhotoSource(params.imageUrl);
-
                 if (params.text.length <= captionLimit) {
                     sentMessage = await telegramService.sendPhoto(targetChannelId, photoSource, {
                         caption: params.text
                     });
                     linkMessageId = sentMessage?.message_id || null;
-                } else {
+                }
+                else {
                     let splitIndex = params.text.lastIndexOf('\n', captionLimit);
                     if (splitIndex === -1 || splitIndex < Math.floor(captionLimit * 0.5)) {
                         splitIndex = params.text.lastIndexOf(' ', captionLimit);
@@ -966,54 +818,52 @@ class McpPublicationService {
                     if (splitIndex === -1) {
                         splitIndex = captionLimit;
                     }
-
                     const caption = params.text.substring(0, splitIndex);
                     const remainder = params.text.substring(splitIndex).trim();
-
                     const photoMessage = await telegramService.sendPhoto(targetChannelId, photoSource, {
                         caption
                     });
                     linkMessageId = photoMessage?.message_id || null;
-
                     sentMessage = remainder
                         ? await telegramService.sendMessage(targetChannelId, remainder, {
                             reply_to_message_id: photoMessage?.message_id
                         })
                         : photoMessage;
                 }
-            } else {
+            }
+            else {
                 sentMessage = await telegramService.sendMessage(targetChannelId, params.text);
                 linkMessageId = sentMessage?.message_id || null;
             }
-
             externalId = linkMessageId || sentMessage?.message_id || null;
-            const channelUsername = (channel.config as any)?.channel_username;
+            const channelUsername = channel.config?.channel_username;
             if (channelUsername && externalId) {
                 publishedLink = `https://t.me/${channelUsername}/${externalId}`;
-            } else if (String(targetChannelId).startsWith('-100') && externalId) {
+            }
+            else if (String(targetChannelId).startsWith('-100') && externalId) {
                 publishedLink = `https://t.me/c/${String(targetChannelId).slice(4)}/${externalId}`;
             }
-        } else if (channel.type === 'vk') {
+        }
+        else if (channel.type === 'vk') {
             const vkId = config?.vk_id;
             const apiKey = config?.api_key;
             if (!vkId || !apiKey) {
                 throw new Error(`VK channel ${channel.id} is missing vk_id or api_key`);
             }
-
-            publishedLink = await vkService.publishPost(vkId, apiKey, params.text, params.imageUrl);
-        } else if (channel.type === 'linkedin') {
+            publishedLink = await vk_service_1.default.publishPost(vkId, apiKey, params.text, params.imageUrl);
+        }
+        else if (channel.type === 'linkedin') {
             const urn = config?.linkedin_urn;
             const token = config?.access_token;
             if (!urn || !token) {
                 throw new Error(`LinkedIn channel ${channel.id} is missing linkedin_urn or access_token`);
             }
-
-            publishedLink = await linkedinService.publishPost(urn, token, params.text, params.imageUrl);
-        } else {
+            publishedLink = await linkedin_service_1.default.publishPost(urn, token, params.text, params.imageUrl);
+        }
+        else {
             throw new Error(`Direct MCP publication is not supported for channel type '${channel.type}'`);
         }
-
-        await prisma.event.create({
+        await db_1.default.event.create({
             data: {
                 entity_type: 'project',
                 entity_id: params.projectId,
@@ -1027,10 +877,9 @@ class McpPublicationService {
                     external_id: externalId,
                     has_image: Boolean(params.imageUrl),
                     text_preview: normalizeTextPreview(params.text, 500)
-                } as any
+                }
             }
         });
-
         return {
             mode: 'published',
             project_id: params.projectId,
@@ -1043,29 +892,24 @@ class McpPublicationService {
             external_id: externalId
         };
     }
-
-    private async resolveChannel(projectId: number, channelId?: number, channelType?: string) {
+    async resolveChannel(projectId, channelId, channelType) {
         if (channelId) {
-            const channel = await prisma.socialChannel.findFirst({
+            const channel = await db_1.default.socialChannel.findFirst({
                 where: {
                     id: channelId,
                     project_id: projectId,
                     is_active: true
                 }
             });
-
             if (!channel) {
                 throw new Error(`Channel ${channelId} not found or inactive for project ${projectId}`);
             }
-
             return channel;
         }
-
         if (!channelType) {
             throw new Error('Either `channelId` or `channelType` must be provided');
         }
-
-        const channel = await prisma.socialChannel.findFirst({
+        const channel = await db_1.default.socialChannel.findFirst({
             where: {
                 project_id: projectId,
                 type: channelType,
@@ -1073,16 +917,13 @@ class McpPublicationService {
             },
             orderBy: { id: 'asc' }
         });
-
         if (!channel) {
             throw new Error(`No active channel of type '${channelType}' found for project ${projectId}`);
         }
-
         return channel;
     }
-
-    private async requireUser(userId: number) {
-        const user = await prisma.user.findUnique({
+    async requireUser(userId) {
+        const user = await db_1.default.user.findUnique({
             where: { id: userId },
             select: {
                 id: true,
@@ -1090,16 +931,13 @@ class McpPublicationService {
                 name: true
             }
         });
-
         if (!user) {
             throw new Error(`User ${userId} not found`);
         }
-
         return user;
     }
-
-    private async assertProjectAccess(userId: number, projectId: number, minRole: ProjectRole = 'viewer') {
-        const membership = await prisma.projectMember.findUnique({
+    async assertProjectAccess(userId, projectId, minRole = 'viewer') {
+        const membership = await db_1.default.projectMember.findUnique({
             where: {
                 project_id_user_id: {
                     project_id: projectId,
@@ -1107,26 +945,21 @@ class McpPublicationService {
                 }
             }
         });
-
         if (!membership) {
             throw new Error(`User ${userId} does not have access to project ${projectId}`);
         }
-
-        const roles: ProjectRole[] = ['viewer', 'editor', 'owner'];
-        if (roles.indexOf(membership.role as ProjectRole) < roles.indexOf(minRole)) {
+        const roles = ['viewer', 'editor', 'owner'];
+        if (roles.indexOf(membership.role) < roles.indexOf(minRole)) {
             throw new Error(`User ${userId} does not have ${minRole} access to project ${projectId}`);
         }
-
         return membership;
     }
-
-    private async makeUniqueProjectSlug(baseSlug?: string, fallbackName?: string, excludeProjectId?: number) {
+    async makeUniqueProjectSlug(baseSlug, fallbackName, excludeProjectId) {
         const source = baseSlug?.trim() || fallbackName?.trim() || `project-${Date.now()}`;
-        const normalized = slugifyProjectName(source) || `project-${Date.now()}`;
+        const normalized = (0, project_utils_1.slugifyProjectName)(source) || `project-${Date.now()}`;
         let candidate = normalized;
         let suffix = 2;
-
-        while (await prisma.project.findFirst({
+        while (await db_1.default.project.findFirst({
             where: {
                 slug: candidate,
                 ...(excludeProjectId ? { id: { not: excludeProjectId } } : {})
@@ -1136,62 +969,51 @@ class McpPublicationService {
             candidate = `${normalized}-${suffix}`;
             suffix += 1;
         }
-
         return candidate;
     }
-
-    private resolvePlanRef(plan: any, ref?: string | null): any {
-        if (!ref) return null;
-
-        const resolveParts = (parts: string[]) => {
-            let current: any = plan;
+    resolvePlanRef(plan, ref) {
+        if (!ref)
+            return null;
+        const resolveParts = (parts) => {
+            let current = plan;
             for (const part of parts) {
-                if (current == null) return null;
+                if (current == null)
+                    return null;
                 current = current[part];
             }
             return current ?? null;
         };
-
         const parts = ref.split('.');
         const direct = resolveParts(parts);
         if (direct != null) {
             return direct;
         }
-
         const root = parts[0];
         if (plan.assets && root in plan.assets) {
             return resolveParts(['assets', ...parts]);
         }
-
         if (plan.accounts && root in plan.accounts) {
             return resolveParts(['accounts', ...parts]);
         }
-
         if (plan.meta && root in plan.meta) {
             return resolveParts(['meta', ...parts]);
         }
-
         return null;
     }
-
-    private resolvePlanPath(pipelineRoot: string, relativePath: string) {
+    resolvePlanPath(pipelineRoot, relativePath) {
         if (!pipelineRoot) {
             throw new Error('Imported publication plan does not define meta.pipeline_root');
         }
-
-        const normalizedRoot = path.resolve(pipelineRoot);
-        const resolvedPath = path.resolve(normalizedRoot, relativePath);
-        const rootWithSep = normalizedRoot.endsWith(path.sep) ? normalizedRoot : `${normalizedRoot}${path.sep}`;
-
+        const normalizedRoot = path_1.default.resolve(pipelineRoot);
+        const resolvedPath = path_1.default.resolve(normalizedRoot, relativePath);
+        const rootWithSep = normalizedRoot.endsWith(path_1.default.sep) ? normalizedRoot : `${normalizedRoot}${path_1.default.sep}`;
         if (resolvedPath !== normalizedRoot && !resolvedPath.startsWith(rootWithSep)) {
             throw new Error(`Refusing to read path outside pipeline_root: ${relativePath}`);
         }
-
         return resolvedPath;
     }
-
-    private async loadPublicationPlanContext(projectId: number) {
-        const settings = await prisma.projectSettings.findMany({
+    async loadPublicationPlanContext(projectId) {
+        const settings = await db_1.default.projectSettings.findMany({
             where: {
                 project_id: projectId,
                 key: {
@@ -1205,26 +1027,22 @@ class McpPublicationService {
                 }
             }
         });
-
         const meta = settings.find((setting) => setting.key === 'publication_plan_meta')?.value;
         const assets = settings.find((setting) => setting.key === 'publication_plan_assets')?.value;
         const accounts = settings.find((setting) => setting.key === 'publication_plan_accounts')?.value;
         const assetSnapshots = settings.find((setting) => setting.key === 'publication_plan_asset_snapshots')?.value;
         const contentFileSnapshots = settings.find((setting) => setting.key === 'publication_plan_content_file_snapshots')?.value;
-
         if (!meta || !assets || !accounts) {
             return null;
         }
-
         return {
             meta: JSON.parse(meta),
             assets: JSON.parse(assets),
             accounts: JSON.parse(accounts),
             asset_snapshots: assetSnapshots ? JSON.parse(assetSnapshots) : {},
             content_file_snapshots: contentFileSnapshots ? JSON.parse(contentFileSnapshots) : {},
-            actions: [] as any[]
+            actions: []
         };
     }
 }
-
-export default new McpPublicationService();
+exports.default = new McpPublicationService();

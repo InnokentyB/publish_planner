@@ -174,7 +174,28 @@ function isExternalPublicationPlanItem(item) {
 function shouldPreserveRuntimeTask(item) {
     return RUNTIME_LOCKED_TASK_STATUSES.has(String(item?.status || ''));
 }
+function contentFileSnapshotKey(relativePath, sectionMarker) {
+    return `${relativePath}::${sectionMarker || ''}`;
+}
 class PublicationPlanService {
+    resolveContentFileDescriptor(plan, file) {
+        const resolvedRef = file?.url_ref ? resolveRef(plan, file.url_ref) : null;
+        const resolvedAsset = typeof file?.url_ref === 'string' && plan.assets?.[file.url_ref]
+            ? plan.assets[file.url_ref]
+            : null;
+        const assetCandidate = resolvedAsset && typeof resolvedAsset === 'object'
+            ? resolvedAsset
+            : (resolvedRef && typeof resolvedRef === 'object' ? resolvedRef : null);
+        const relativePath = typeof file?.path === 'string' && file.path.trim()
+            ? file.path.trim()
+            : (typeof assetCandidate?.path === 'string' && assetCandidate.path.trim() ? assetCandidate.path.trim() : null);
+        const resolvedUrl = assetCandidate?.target_url || (typeof resolvedRef === 'string' ? resolvedRef : file?.url || null);
+        return {
+            relativePath,
+            resolvedUrl,
+            assetCandidate
+        };
+    }
     getPublicationPlanFormat() {
         return {
             version: '2026-06-publication-plan-v2',
@@ -397,14 +418,147 @@ class PublicationPlanService {
         }
         return parsed;
     }
+    collectReferencedRelativePaths(plan) {
+        const paths = new Set();
+        for (const asset of Object.values(plan.assets || {})) {
+            if (typeof asset?.path === 'string' && asset.path.trim()) {
+                paths.add(asset.path.trim());
+            }
+        }
+        for (const action of plan.actions || []) {
+            const contentFiles = Array.isArray(action.content_files) ? action.content_files : [];
+            for (const file of contentFiles) {
+                const descriptor = this.resolveContentFileDescriptor(plan, file);
+                if (descriptor.relativePath) {
+                    paths.add(descriptor.relativePath);
+                }
+            }
+        }
+        return [...paths];
+    }
+    discoverWorkspaceRoots() {
+        const roots = new Set();
+        roots.add(process.cwd());
+        roots.add(path.dirname(process.cwd()));
+        const parent = path.dirname(process.cwd());
+        try {
+            for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
+                if (!entry.isDirectory() || entry.name.startsWith('.'))
+                    continue;
+                roots.add(path.join(parent, entry.name));
+            }
+        }
+        catch {
+            // Ignore directory listing failures and fall back to known roots.
+        }
+        return [...roots];
+    }
+    derivePlanPathRoots(planPath) {
+        if (!planPath)
+            return [];
+        const roots = [];
+        let current = path.dirname(path.resolve(planPath));
+        for (let depth = 0; depth < 4; depth += 1) {
+            roots.push(current);
+            const parent = path.dirname(current);
+            if (parent === current)
+                break;
+            current = parent;
+        }
+        return roots;
+    }
+    resolveImportPipelineRoot(plan, workspaceRoots = [], planPath) {
+        const referencedPaths = this.collectReferencedRelativePaths(plan);
+        if (referencedPaths.length === 0) {
+            return plan.meta.pipeline_root || null;
+        }
+        const candidateRoots = [
+            ...(plan.meta.pipeline_root ? [plan.meta.pipeline_root] : []),
+            ...workspaceRoots,
+            ...this.derivePlanPathRoots(planPath),
+            ...this.discoverWorkspaceRoots()
+        ]
+            .map((entry) => path.resolve(entry))
+            .filter((entry, index, list) => Boolean(entry) && list.indexOf(entry) === index);
+        let bestRoot = null;
+        let bestScore = -1;
+        for (const candidate of candidateRoots) {
+            let score = 0;
+            for (const relativePath of referencedPaths) {
+                if (fs.existsSync(path.resolve(candidate, relativePath))) {
+                    score += 1;
+                }
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                bestRoot = candidate;
+            }
+        }
+        if (bestScore > 0 && bestRoot) {
+            return bestRoot;
+        }
+        return plan.meta.pipeline_root || null;
+    }
     loadPlanFromPath(planPath) {
         const raw = fs.readFileSync(planPath, 'utf8');
         return this.parsePlan(raw);
+    }
+    buildContentFileSnapshots(plan, existingSnapshots = {}) {
+        const snapshots = {};
+        for (const action of plan.actions || []) {
+            const contentFiles = Array.isArray(action.content_files) ? action.content_files : [];
+            for (const file of contentFiles) {
+                const descriptor = this.resolveContentFileDescriptor(plan, file);
+                const relativePath = descriptor.relativePath || '';
+                if (!relativePath)
+                    continue;
+                const sectionMarker = file.section_marker || null;
+                const snapshotKey = contentFileSnapshotKey(relativePath, sectionMarker);
+                const syntheticAsset = {
+                    path: relativePath,
+                    section_marker: sectionMarker
+                };
+                const resolved = this.readAssetContent(plan, syntheticAsset, relativePath);
+                if (resolved?.content) {
+                    snapshots[snapshotKey] = {
+                        key: snapshotKey,
+                        relative_path: relativePath,
+                        file_name: path.basename(relativePath),
+                        section_marker: sectionMarker,
+                        content: resolved.content,
+                        content_type: inferContentType(relativePath),
+                        content_length: resolved.content.length,
+                        checksum: checksumContent(resolved.content),
+                        source: 'filesystem',
+                        source_available: true,
+                        captured_at: new Date().toISOString()
+                    };
+                    continue;
+                }
+                const previous = existingSnapshots[snapshotKey];
+                if (previous?.content) {
+                    snapshots[snapshotKey] = {
+                        ...previous,
+                        key: snapshotKey,
+                        relative_path: relativePath,
+                        file_name: path.basename(relativePath),
+                        section_marker: sectionMarker,
+                        source: 'preserved',
+                        source_available: false
+                    };
+                }
+            }
+        }
+        return snapshots;
     }
     async importPlan(params) {
         const plan = params.rawPlan
             ? this.parsePlan(params.rawPlan)
             : this.loadPlanFromPath(params.planPath || '');
+        const resolvedPipelineRoot = this.resolveImportPipelineRoot(plan, params.workspaceRoots || [], params.planPath);
+        if (resolvedPipelineRoot) {
+            plan.meta.pipeline_root = resolvedPipelineRoot;
+        }
         const existingPlanMarker = await db_1.default.projectSettings.findFirst({
             where: {
                 key: 'publication_plan_id',
@@ -428,6 +582,10 @@ class PublicationPlanService {
             ? await this.loadAssetSnapshots(existingProject.id)
             : {};
         const assetSnapshots = this.buildAssetSnapshots(plan, existingSnapshots);
+        const existingContentFileSnapshots = existingProject
+            ? await this.loadContentFileSnapshots(existingProject.id)
+            : {};
+        const contentFileSnapshots = this.buildContentFileSnapshots(plan, existingContentFileSnapshots);
         const dictionaryYaml = plan.content_dictionary !== undefined
             ? content_dictionary_service_1.default.normalizeToYaml(plan.content_dictionary)
             : null;
@@ -494,6 +652,11 @@ class PublicationPlanService {
                     project_id: project.id,
                     key: 'publication_plan_asset_snapshots',
                     value: JSON.stringify(assetSnapshots)
+                },
+                {
+                    project_id: project.id,
+                    key: 'publication_plan_content_file_snapshots',
+                    value: JSON.stringify(contentFileSnapshots)
                 },
                 {
                     project_id: project.id,
@@ -773,6 +936,7 @@ class PublicationPlanService {
                     actions: plan.actions.length,
                     assets: Object.keys(plan.assets).length,
                     assetSnapshots: Object.keys(assetSnapshots).length,
+                    contentFileSnapshots: Object.keys(contentFileSnapshots).length,
                     ongoingRules: (plan.ongoing_rules || []).length,
                     updatedExistingProject: Boolean(existingProject)
                 }
@@ -793,9 +957,10 @@ class PublicationPlanService {
             return null;
         }
         const rawContent = fs.readFileSync(fullPath, 'utf8');
+        const sectionContent = asset.section_marker ? resolveSection(rawContent, asset.section_marker) : rawContent;
         return {
             fullPath,
-            content: asset.section_marker ? resolveSection(rawContent, asset.section_marker) : rawContent
+            content: sectionContent && sectionContent.trim() ? sectionContent : rawContent
         };
     }
     buildAssetSnapshots(plan, existingSnapshots = {}, overrides = {}) {
@@ -921,6 +1086,23 @@ class PublicationPlanService {
             return {};
         }
     }
+    async loadContentFileSnapshots(projectId) {
+        const snapshots = await db_1.default.projectSettings.findFirst({
+            where: {
+                project_id: projectId,
+                key: 'publication_plan_content_file_snapshots'
+            }
+        });
+        if (!snapshots?.value) {
+            return {};
+        }
+        try {
+            return JSON.parse(snapshots.value);
+        }
+        catch {
+            return {};
+        }
+    }
     async saveAssetSnapshots(projectId, snapshots) {
         await db_1.default.projectSettings.upsert({
             where: {
@@ -954,11 +1136,14 @@ class PublicationPlanService {
         const resolvedAssets = assetRefs.map((ref) => this.resolveAssetRuntime(plan, ref));
         const contentFiles = Array.isArray(action.content_files) ? action.content_files : [];
         const resolvedContentFiles = contentFiles.map((file, index) => {
-            const relativePath = file.path || null;
-            const resolvedUrl = file.url_ref ? resolveRef(plan, file.url_ref) : file.url || null;
+            const descriptor = this.resolveContentFileDescriptor(plan, file);
+            const relativePath = descriptor.relativePath;
+            const resolvedUrl = descriptor.resolvedUrl;
             let content = null;
             let exists = false;
             let fullPath = null;
+            const snapshotKey = relativePath ? contentFileSnapshotKey(relativePath, file.section_marker || null) : null;
+            const snapshot = snapshotKey ? plan.content_file_snapshots?.[snapshotKey] || null : null;
             if (relativePath) {
                 const syntheticAsset = {
                     path: relativePath,
@@ -971,6 +1156,9 @@ class PublicationPlanService {
                     content = resolved.content;
                 }
             }
+            if (!content && snapshot?.content) {
+                content = snapshot.content;
+            }
             return {
                 ref: `content_file_${index + 1}`,
                 type: 'content_file',
@@ -980,9 +1168,11 @@ class PublicationPlanService {
                 relative_path: relativePath,
                 full_path: fullPath,
                 section_marker: file.section_marker || null,
-                exists,
+                exists: exists || Boolean(snapshot?.content),
                 url: resolvedUrl,
-                content
+                content,
+                snapshot_available: Boolean(snapshot?.content),
+                content_source: exists ? 'filesystem' : (snapshot?.content ? snapshot.source || 'snapshot' : null)
             };
         });
         const primaryTextAsset = [...resolvedContentFiles, ...resolvedAssets].find((entry) => typeof entry.content === 'string' && entry.content.trim());
