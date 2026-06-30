@@ -183,6 +183,33 @@ function isExternalPublicationPlanItem(item) {
 function shouldPreserveRuntimeTask(item) {
     return RUNTIME_LOCKED_TASK_STATUSES.has(String(item?.status || ''));
 }
+function mergeImportedItemData(existingItem, nextItemData, preserveRuntimeState) {
+    const existingAssets = (existingItem?.assets || {});
+    const nextAssets = (nextItemData?.assets || {});
+    const existingQualityReport = (existingItem?.quality_report || {});
+    const nextQualityReport = (nextItemData?.quality_report || {});
+    const existingMetrics = (existingItem?.metrics || {});
+    const nextMetrics = (nextItemData?.metrics || {});
+    return {
+        ...nextItemData,
+        status: preserveRuntimeState ? existingItem.status : nextItemData.status,
+        published_link: preserveRuntimeState
+            ? (existingItem.published_link || nextItemData.published_link)
+            : (existingItem.published_link || nextItemData.published_link),
+        assets: {
+            ...existingAssets,
+            ...nextAssets
+        },
+        quality_report: {
+            ...existingQualityReport,
+            ...nextQualityReport
+        },
+        metrics: {
+            ...existingMetrics,
+            ...nextMetrics
+        }
+    };
+}
 function contentFileSnapshotKey(relativePath, sectionMarker) {
     return `${relativePath}::${sectionMarker || ''}`;
 }
@@ -942,27 +969,10 @@ class PublicationPlanService {
                 };
                 const existingItem = existingImportedItemsByTaskId.get(taskId);
                 const createdItem = existingItem
-                    ? shouldPreserveRuntimeTask(existingItem)
-                        ? existingItem
-                        : await tx.contentItem.update({
-                            where: { id: existingItem.id },
-                            data: {
-                                ...itemData,
-                                assets: {
-                                    ...(existingItem.assets || {}),
-                                    ...itemData.assets
-                                },
-                                quality_report: {
-                                    ...(existingItem.quality_report || {}),
-                                    ...itemData.quality_report
-                                },
-                                metrics: {
-                                    ...(existingItem.metrics || {}),
-                                    ...itemData.metrics
-                                },
-                                published_link: existingItem.published_link || itemData.published_link
-                            }
-                        })
+                    ? await tx.contentItem.update({
+                        where: { id: existingItem.id },
+                        data: mergeImportedItemData(existingItem, itemData, shouldPreserveRuntimeTask(existingItem))
+                    })
                     : await tx.contentItem.create({
                         data: itemData
                     });
@@ -1007,27 +1017,9 @@ class PublicationPlanService {
                     };
                     const existingFollowup = existingImportedItemsByTaskId.get(followupTaskId);
                     if (existingFollowup) {
-                        if (shouldPreserveRuntimeTask(existingFollowup)) {
-                            continue;
-                        }
                         await tx.contentItem.update({
                             where: { id: existingFollowup.id },
-                            data: {
-                                ...followupData,
-                                assets: {
-                                    ...(existingFollowup.assets || {}),
-                                    ...followupData.assets
-                                },
-                                quality_report: {
-                                    ...(existingFollowup.quality_report || {}),
-                                    ...followupData.quality_report
-                                },
-                                metrics: {
-                                    ...(existingFollowup.metrics || {}),
-                                    ...followupData.metrics
-                                },
-                                published_link: existingFollowup.published_link || null
-                            }
+                            data: mergeImportedItemData(existingFollowup, followupData, shouldPreserveRuntimeTask(existingFollowup))
                         });
                         continue;
                     }
