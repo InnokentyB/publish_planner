@@ -73,6 +73,14 @@ async function loadPublicationProjectContext(projectId: number) {
     };
 }
 
+function resolveTaskScheduleAt(item: any) {
+    const actionScheduleAt = (item?.assets as any)?.action?.scheduled_at;
+    if (typeof actionScheduleAt === 'string' && actionScheduleAt.trim()) {
+        return actionScheduleAt;
+    }
+    return item?.schedule_at?.toISOString?.() || item?.schedule_at || null;
+}
+
 export default async function apiRoutes(fastify: FastifyInstance) {
     // Auth and Project context middleware
     fastify.addHook('preHandler', async (request, reply) => {
@@ -658,12 +666,16 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         return filtered.map((item) => {
             const action = (item.assets as any)?.action;
             if (!action) {
-                return item;
+                return {
+                    ...item,
+                    schedule_at: resolveTaskScheduleAt(item)
+                };
             }
 
             const bundle = publicationPlanService.buildHandoffBundle({ ...plan, actions: [action] } as any, item);
             return {
                 ...item,
+                schedule_at: resolveTaskScheduleAt(item),
                 quality_report: {
                     ...((item.quality_report as any) || {}),
                     handoff_bundle: bundle
@@ -692,6 +704,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         if (!plan || !action) {
             return {
                 ...item,
+                schedule_at: resolveTaskScheduleAt(item),
                 project_context: {
                     glossary_available: Boolean(projectContext.glossaryYaml),
                     glossary_yaml: projectContext.glossaryYaml,
@@ -707,6 +720,7 @@ export default async function apiRoutes(fastify: FastifyInstance) {
 
         return {
             ...item,
+            schedule_at: resolveTaskScheduleAt(item),
             quality_report: {
                 ...((item.quality_report as any) || {}),
                 handoff_bundle: bundle
@@ -744,7 +758,10 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         const plan = await loadPublicationPlanContext(projectId);
         if (!plan) {
             return reply.code(200).send({
-                item,
+                item: {
+                    ...item,
+                    schedule_at: resolveTaskScheduleAt(item)
+                },
                 bundle: null,
                 reused: false,
                 warning: 'No imported publication plan context is available for this task.'
@@ -768,7 +785,10 @@ export default async function apiRoutes(fastify: FastifyInstance) {
         });
 
         return {
-            item: updated,
+            item: {
+                ...updated,
+                schedule_at: resolveTaskScheduleAt(updated)
+            },
             bundle
         };
     });

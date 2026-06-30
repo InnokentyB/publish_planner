@@ -70,6 +70,13 @@ async function loadPublicationProjectContext(projectId) {
         atomaFilesPayload: safeJsonParse(settings.find((setting) => setting.key === 'atoma_files_payload')?.value || null)
     };
 }
+function resolveTaskScheduleAt(item) {
+    const actionScheduleAt = item?.assets?.action?.scheduled_at;
+    if (typeof actionScheduleAt === 'string' && actionScheduleAt.trim()) {
+        return actionScheduleAt;
+    }
+    return item?.schedule_at?.toISOString?.() || item?.schedule_at || null;
+}
 async function apiRoutes(fastify) {
     // Auth and Project context middleware
     fastify.addHook('preHandler', async (request, reply) => {
@@ -579,11 +586,15 @@ async function apiRoutes(fastify) {
         return filtered.map((item) => {
             const action = item.assets?.action;
             if (!action) {
-                return item;
+                return {
+                    ...item,
+                    schedule_at: resolveTaskScheduleAt(item)
+                };
             }
             const bundle = publication_plan_service_1.default.buildHandoffBundle({ ...plan, actions: [action] }, item);
             return {
                 ...item,
+                schedule_at: resolveTaskScheduleAt(item),
                 quality_report: {
                     ...(item.quality_report || {}),
                     handoff_bundle: bundle
@@ -609,6 +620,7 @@ async function apiRoutes(fastify) {
         if (!plan || !action) {
             return {
                 ...item,
+                schedule_at: resolveTaskScheduleAt(item),
                 project_context: {
                     glossary_available: Boolean(projectContext.glossaryYaml),
                     glossary_yaml: projectContext.glossaryYaml,
@@ -622,6 +634,7 @@ async function apiRoutes(fastify) {
         const firstSourceContent = (bundle.resource_files || []).find((entry) => typeof entry?.content === 'string' && entry.content.trim());
         return {
             ...item,
+            schedule_at: resolveTaskScheduleAt(item),
             quality_report: {
                 ...(item.quality_report || {}),
                 handoff_bundle: bundle
@@ -656,7 +669,10 @@ async function apiRoutes(fastify) {
         const plan = await loadPublicationPlanContext(projectId);
         if (!plan) {
             return reply.code(200).send({
-                item,
+                item: {
+                    ...item,
+                    schedule_at: resolveTaskScheduleAt(item)
+                },
                 bundle: null,
                 reused: false,
                 warning: 'No imported publication plan context is available for this task.'
@@ -677,7 +693,10 @@ async function apiRoutes(fastify) {
             }
         });
         return {
-            item: updated,
+            item: {
+                ...updated,
+                schedule_at: resolveTaskScheduleAt(updated)
+            },
             bundle
         };
     });

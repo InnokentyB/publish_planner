@@ -289,11 +289,92 @@ class PublicationPlanService {
                         ],
                         optional: ['section_marker']
                     }
+                },
+                ui_mapping: {
+                    title: {
+                        source: 'action.display_name',
+                        fallback: 'resolved runtime title from action.id/type',
+                        recommendation: 'Always provide display_name so the task card and workspace header show a human-readable title.'
+                    },
+                    brief: {
+                        source: 'action.notes',
+                        fallback: 'action.human_review_reason',
+                        recommendation: 'Use notes for the short task summary shown in channel and publication task cards.'
+                    },
+                    publication_body: {
+                        source: 'action.content_files[]',
+                        recommendation: 'Put the main post/article body in content_files. This is what the UI renders in the publication editor.'
+                    },
+                    source_files_panel: {
+                        source: 'handoff_bundle.resource_files',
+                        recommendation: 'Each content_files entry becomes a visible source file/resource entry in the UI.'
+                    },
+                    target_resource_url: {
+                        source: 'action.parameters.link_url_ref',
+                        recommendation: 'Use a ref that resolves to assets.<ref>.target_url or another plan URL so the UI can show the destination resource for editing/publishing.'
+                    },
+                    schedule: {
+                        preferred: 'action.scheduled_at',
+                        fallback: 'action.scheduled_date + action.scheduled_time_window',
+                        recommendation: 'Use scheduled_at when possible for the most predictable UI sorting.'
+                    }
+                }
+            },
+            ui_ready_recipes: {
+                inline_body_asset: {
+                    when_to_use: 'When the full publication text is generated directly in chat/MCP and should be stored inside the plan.',
+                    assets: {
+                        body_post_1: {
+                            type: 'inline_publication_body',
+                            content: 'Full publication text goes here.'
+                        }
+                    },
+                    action: {
+                        display_name: 'Telegram — Founder note',
+                        notes: 'Short summary for the task card.',
+                        scheduled_at: '2026-07-01T10:00:00Z',
+                        parameters: {
+                            link_url_ref: 'assets.target_article_url.target_url'
+                        },
+                        content_files: [
+                            {
+                                role: 'post_body',
+                                purpose: 'Primary publication body shown in UI',
+                                url_ref: 'body_post_1'
+                            }
+                        ]
+                    }
+                },
+                file_backed_body: {
+                    when_to_use: 'When the full text already exists in a markdown/html file in the content workspace.',
+                    assets: {
+                        article_source_1: {
+                            type: 'markdown_source',
+                            path: 'content/weeks/w01.md'
+                        }
+                    },
+                    action: {
+                        display_name: 'LinkedIn — Thought piece',
+                        notes: 'Short summary for the task card.',
+                        scheduled_at: '2026-07-01T10:00:00Z',
+                        content_files: [
+                            {
+                                role: 'post_body',
+                                purpose: 'Primary publication body shown in UI',
+                                path: 'content/weeks/w01.md',
+                                section_marker: '## Founder voice 1'
+                            }
+                        ]
+                    }
                 }
             },
             recommendations: [
                 'Use asset.content only for compact inline text or preview notes.',
                 'Use action.content_files for the full publication body, markdown sections, or HTML fragments.',
+                'If you want inline body text to render in UI, store it in assets.<body_ref>.content and reference it from action.content_files[].url_ref.',
+                'If you want a short description on task cards, put it in action.notes.',
+                'If you want the destination/resource link in UI, put a plan ref into action.parameters.link_url_ref.',
+                'If you want reliable schedule sorting in UI, prefer action.scheduled_at.',
                 'Use unique section_marker values that match stable headings in the source file.',
                 'If a post depends on a full markdown section, make that dependency explicit in content_files.',
                 'Attach content_dictionary to import glossary/style rules together with the publication plan.',
@@ -328,6 +409,10 @@ class PublicationPlanService {
                     type: `${channelPlatform}_inline_preview`,
                     content: 'Краткая идея или превью материала для быстрых карточек в UI.'
                 },
+                body_inline_1: {
+                    type: 'inline_publication_body',
+                    content: 'Полный текст публикации, который UI должен сразу показать в редакторе публикации.'
+                },
                 article_source_1: {
                     type: 'markdown_source',
                     path: 'weeks/w01.md',
@@ -346,16 +431,16 @@ class PublicationPlanService {
                     account_ref: channelRef,
                     action_type: 'post_text',
                     status: 'planned',
-                    scheduled_date: '2026-06-03',
-                    scheduled_time_window: {
-                        start: '10:00',
-                        end: '10:00',
-                        timezone
-                    },
+                    scheduled_at: '2026-06-03T10:00:00Z',
                     asset_refs: ['teaser_note_1'],
                     content_files: [
                         {
                             role: 'post_body',
+                            purpose: 'Основной текст публикации, отображаемый в UI',
+                            url_ref: 'body_inline_1'
+                        },
+                        {
+                            role: 'source_context',
                             purpose: 'Полный текст публикации',
                             path: 'weeks/w01.md',
                             section_marker: 'Idea 1 — «Название секции»'
@@ -364,7 +449,7 @@ class PublicationPlanService {
                     parameters: {
                         link_url_ref: 'assets.target_article_url.target_url'
                     },
-                    notes: 'Краткий комментарий по задаче.'
+                    notes: 'Краткий комментарий по задаче. Это поле попадает в short summary карточки.'
                 }
             ],
             ongoing_rules: [],
@@ -411,6 +496,12 @@ class PublicationPlanService {
                 if (!normalizedAction.display_name) {
                     warnings.push(`Action '${action.id}' is missing display_name.`);
                 }
+                if (!normalizedAction.notes && !normalizedAction.human_review_reason) {
+                    warnings.push(`Action '${action.id}' is missing notes. UI task cards will have no short summary.`);
+                }
+                if (!normalizedAction.scheduled_at && !normalizedAction.scheduled_date) {
+                    warnings.push(`Action '${action.id}' is missing scheduled_at or scheduled_date. UI sorting may be unstable.`);
+                }
                 if (normalizedAction.content_files.length === 0 && normalizedAction.asset_refs.length > 0) {
                     const inlineOnlyRefs = normalizedAction.asset_refs.filter((ref) => {
                         const asset = parsed.assets?.[ref];
@@ -423,6 +514,12 @@ class PublicationPlanService {
                 normalizedAction.content_files.forEach((entry, index) => {
                     if (!entry.path && !entry.url && !entry.url_ref) {
                         warnings.push(`Action '${action.id}' content_files[${index}] should define path, url, or url_ref.`);
+                    }
+                    if (entry.url_ref) {
+                        const assetRef = this.resolveAssetRefFromUrlRef(parsed, entry.url_ref);
+                        if (!assetRef && typeof entry.url_ref === 'string' && !entry.url_ref.startsWith('http')) {
+                            warnings.push(`Action '${action.id}' content_files[${index}] uses url_ref='${entry.url_ref}', but no asset with that ref exists. Use assets.<ref> and point url_ref to that ref.`);
+                        }
                     }
                     if (entry.path && !entry.section_marker) {
                         warnings.push(`Action '${action.id}' content_files[${index}] uses a path without section_marker. This is valid, but section_marker is recommended for multi-section files.`);
