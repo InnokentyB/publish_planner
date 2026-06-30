@@ -12,6 +12,7 @@ interface PublicationTask {
     layer?: string | null
     title?: string | null
     brief?: string | null
+    key_points?: JsonRecord[] | null
     status: string
     schedule_at?: string | null
     published_link?: string | null
@@ -121,6 +122,62 @@ function supportsAutoMetrics(task: PublicationTask | null | undefined) {
     }
 
     return false
+}
+
+function assetInlineContent(entry: JsonRecord | null | undefined) {
+    if (!entry) return ''
+    if (typeof entry.content === 'string' && entry.content.trim()) return entry.content
+    if (typeof entry.asset?.content === 'string' && entry.asset.content.trim()) return entry.asset.content
+    return ''
+}
+
+function mergeSourceFiles(task: PublicationTask | null | undefined) {
+    const handoffFiles = ((task?.quality_report?.handoff_bundle as JsonRecord | undefined)?.resource_files as JsonRecord[] | undefined) || []
+    const resolvedAssets = (task?.assets?.resolved_assets as JsonRecord[] | undefined) || []
+    const merged = new Map<string, JsonRecord>()
+
+    const score = (entry: JsonRecord) => {
+        let total = 0
+        if (assetInlineContent(entry)) total += 10
+        if (entry.exists === true) total += 5
+        if (entry.relative_path || entry.asset?.path) total += 3
+        if (entry.file_name || entry.ref) total += 1
+        return total
+    }
+
+    ;[...handoffFiles, ...resolvedAssets].forEach((entry, index) => {
+        const key = String(entry?.ref || entry?.file_name || entry?.asset?.path || `fallback-${index}`)
+        const current = merged.get(key)
+        if (!current || score(entry) > score(current)) {
+            merged.set(key, entry)
+        }
+    })
+
+    return Array.from(merged.values())
+}
+
+function resolvePrimarySourceContent(task: PublicationTask | null | undefined, sourceFiles: JsonRecord[]) {
+    if (typeof task?.workspace_context?.source_content === 'string' && task.workspace_context.source_content.trim()) {
+        return task.workspace_context.source_content
+    }
+
+    const handoffBody = (task?.quality_report?.handoff_bundle as JsonRecord | undefined)?.publication?.body
+    if (typeof handoffBody === 'string' && handoffBody.trim()) {
+        return handoffBody
+    }
+
+    for (const entry of sourceFiles) {
+        const content = assetInlineContent(entry)
+        if (content) return content
+    }
+
+    const keyPoints = (task?.key_points as JsonRecord[] | undefined) || []
+    for (const entry of keyPoints) {
+        const content = assetInlineContent(entry)
+        if (content) return content
+    }
+
+    return ''
 }
 
 export default function PublicationTasks() {
@@ -314,14 +371,8 @@ export default function PublicationTasks() {
 
     const activeTask = selectedTask || selectedFromList
     const handoffBundle = activeTask?.quality_report?.handoff_bundle as JsonRecord | undefined
-    const sourceFiles = (handoffBundle?.resource_files as JsonRecord[] | undefined)
-        || (activeTask?.assets?.resolved_assets as JsonRecord[] | undefined)
-        || []
-    const primarySourceContent = activeTask?.workspace_context?.source_content
-        || (handoffBundle?.resource_files as JsonRecord[] | undefined)?.find((entry) =>
-            typeof entry?.content === 'string' && entry.content.trim().length > 0
-        )?.content
-        || ''
+    const sourceFiles = mergeSourceFiles(activeTask)
+    const primarySourceContent = resolvePrimarySourceContent(activeTask, sourceFiles)
     const executionMode = handoffBundle?.mode || activeTask?.quality_report?.execution_mode || 'manual'
     const activeOutcome = (activeTask?.quality_report?.publication_outcome || activeTask?.metrics?.publication_outcome || 'published') as PublicationOutcome
     const isTaskOverdue = !!activeTask?.schedule_at
@@ -751,6 +802,7 @@ export default function PublicationTasks() {
                                                     const purpose = entry.purpose || null
                                                     const role = entry.role || null
                                                     const url = entry.url || null
+                                                    const inlineContent = assetInlineContent(entry)
 
                                                     return (
                                                         <div key={`${entry.ref || fileName}-${index}`} className="rounded-2xl bg-white px-4 py-3 text-sm space-y-1">
@@ -770,7 +822,7 @@ export default function PublicationTasks() {
                                                             {purpose && (
                                                                 <div className="text-xs text-on-surface-variant">{purpose}</div>
                                                             )}
-                                                            {exists === false && (
+                                                            {exists === false && !inlineContent && (
                                                                 <div className="text-xs font-bold text-error">File not found from pipeline root.</div>
                                                             )}
                                                         </div>

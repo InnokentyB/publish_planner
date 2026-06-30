@@ -30,6 +30,7 @@ type PublicationTask = {
     title?: string | null
     status: string
     brief?: string | null
+    key_points?: JsonRecord[] | null
     schedule_at?: string | null
     published_link?: string | null
     assets?: JsonRecord | null
@@ -73,6 +74,38 @@ function channelIcon(type: string) {
     if (type === 'medium') return 'article'
     if (type === 'indiehackers') return 'groups'
     return 'alternate_email'
+}
+
+function resourceContent(entry: JsonRecord | null | undefined) {
+    if (!entry) return ''
+    if (typeof entry.content === 'string' && entry.content.trim()) return entry.content
+    if (typeof entry.asset?.content === 'string' && entry.asset.content.trim()) return entry.asset.content
+    return ''
+}
+
+function mergeChannelResourceFiles(task: PublicationTask | null) {
+    const handoffFiles = ((task?.quality_report?.handoff_bundle as JsonRecord | undefined)?.resource_files as ResourceFile[] | undefined) || []
+    const resolvedAssets = ((task?.assets?.resolved_assets as JsonRecord[] | undefined) || []) as ResourceFile[]
+    const merged = new Map<string, ResourceFile>()
+
+    const score = (entry: ResourceFile) => {
+        let total = 0
+        if (resourceContent(entry as JsonRecord)) total += 10
+        if (entry.exists === true) total += 5
+        if (entry.relative_path) total += 3
+        if (entry.file_name || entry.ref) total += 1
+        return total
+    }
+
+    ;[...handoffFiles, ...resolvedAssets].forEach((entry, index) => {
+        const key = String(entry?.ref || entry?.file_name || entry?.relative_path || `resource-${index}`)
+        const current = merged.get(key)
+        if (!current || score(entry) > score(current)) {
+            merged.set(key, entry)
+        }
+    })
+
+    return Array.from(merged.values())
 }
 
 export default function ChannelWorkspace() {
@@ -123,8 +156,7 @@ export default function ChannelWorkspace() {
     }, [publicationTasks, selectedChannel])
 
     const selectedTask = selectedChannelTasks[0] || null
-    const resourceFiles = ((selectedTask?.quality_report?.handoff_bundle?.resource_files as ResourceFile[] | undefined)
-        || []) as ResourceFile[]
+    const resourceFiles = mergeChannelResourceFiles(selectedTask)
     const publishedTasks = selectedChannelTasks.filter((task) => task.status === 'published').length
     const overdueTasks = selectedChannelTasks.filter((task) => {
         if (!task.schedule_at) return false
@@ -393,23 +425,31 @@ export default function ChannelWorkspace() {
                                                     <div className="space-y-4">
                                                         {resourceFiles.map((file, index) => (
                                                             <div key={`${file.ref || file.file_name || 'resource'}-${index}`} className="rounded-2xl bg-white px-4 py-4 space-y-2">
+                                                                {(() => {
+                                                                    const inlineContent = resourceContent(file as JsonRecord)
+                                                                    const isMissing = file.exists === false && !inlineContent
+                                                                    return (
+                                                                        <>
                                                                 <div className="font-bold text-sm text-on-surface">{file.file_name || file.url || file.ref || 'Ресурс'}</div>
                                                                 {file.role && <div className="text-xs text-on-surface-variant">Роль: {file.role}</div>}
                                                                 {file.relative_path && <div className="text-xs text-on-surface-variant break-all">{file.relative_path}</div>}
                                                                 {file.section_marker && <div className="text-xs text-on-surface-variant">Секция: {file.section_marker}</div>}
                                                                 {file.url && <div className="text-xs text-on-surface-variant break-all">{file.url}</div>}
                                                                 {file.purpose && <div className="text-xs leading-6 text-on-surface-variant">{file.purpose}</div>}
-                                                                <div className={`text-xs font-bold ${file.exists === false ? 'text-error' : 'text-success'}`}>
-                                                                    {file.exists === false ? 'Недоступно в текущем runtime-пути' : 'Доступно'}
+                                                                <div className={`text-xs font-bold ${isMissing ? 'text-error' : 'text-success'}`}>
+                                                                    {isMissing ? 'Недоступно в текущем runtime-пути' : 'Доступно'}
                                                                 </div>
-                                                                {file.content && (
+                                                                {inlineContent && (
                                                                     <ContentMarkupRenderer
-                                                                        content={file.content}
+                                                                        content={inlineContent}
                                                                         contentType="auto"
                                                                         title={file.file_name || file.ref || `resource-${index}`}
                                                                         className="mt-3"
                                                                     />
                                                                 )}
+                                                                        </>
+                                                                    )
+                                                                })()}
                                                             </div>
                                                         ))}
                                                     </div>

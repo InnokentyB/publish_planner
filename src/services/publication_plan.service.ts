@@ -1385,14 +1385,71 @@ class PublicationPlanService {
         const accountRef = item.assets?.account_ref || null;
         const account = accountRef ? plan.accounts[accountRef] : null;
         const assetRefs = item.assets?.asset_refs || [];
-        const resolvedAssets = assetRefs.map((ref: string) => this.resolveAssetRuntime(plan, ref));
+        const persistedResolvedAssets = Array.isArray(item.assets?.resolved_assets) ? item.assets.resolved_assets : [];
+        const persistedKeyPoints = Array.isArray(item.key_points) ? item.key_points : [];
+        const persistedAssetsByRef = new Map<string, any>();
+        const inferPersistedFileName = (runtimeFileName: string | null | undefined, persistedAsset: any) => {
+            if (runtimeFileName) return runtimeFileName;
+            if (typeof persistedAsset?.path === 'string' && persistedAsset.path.trim()) {
+                return path.basename(persistedAsset.path);
+            }
+            return null;
+        };
+
+        [...persistedResolvedAssets, ...persistedKeyPoints].forEach((entry: any) => {
+            const ref = typeof entry?.ref === 'string' ? entry.ref : null;
+            if (!ref) return;
+            const asset = entry?.asset || entry;
+            if (!asset) return;
+            persistedAssetsByRef.set(ref, asset);
+        });
+
+        const resolvedAssets = assetRefs.map((ref: string) => {
+            const runtimeAsset = this.resolveAssetRuntime(plan, ref);
+            const persistedAsset = persistedAssetsByRef.get(ref);
+
+            if (!persistedAsset) {
+                return runtimeAsset;
+            }
+
+            return {
+                ...runtimeAsset,
+                asset: runtimeAsset.asset || persistedAsset,
+                file_name: inferPersistedFileName(runtimeAsset.file_name, persistedAsset),
+                relative_path: runtimeAsset.relative_path || persistedAsset.path || null,
+                section_marker: runtimeAsset.section_marker || persistedAsset.section_marker || null,
+                content: runtimeAsset.content || persistedAsset.content || null,
+                exists: runtimeAsset.exists === true || typeof persistedAsset.content === 'string',
+                snapshot_available: runtimeAsset.snapshot_available === true || typeof persistedAsset.content === 'string',
+                content_source: runtimeAsset.content_source || (typeof persistedAsset.content === 'string' ? 'persisted_inline_asset' : null)
+            };
+        });
         const contentFiles = Array.isArray(action.content_files) ? action.content_files : [];
         const resolvedContentFiles = contentFiles.map((file: any, index: number) => {
             const descriptor = this.resolveContentFileDescriptor(plan, file);
             const relativePath = descriptor.relativePath;
             const resolvedUrl = descriptor.resolvedUrl;
             const assetRuntime = descriptor.resolvedAssetRef
-                ? this.resolveAssetRuntime(plan, descriptor.resolvedAssetRef)
+                ? (() => {
+                    const runtime = this.resolveAssetRuntime(plan, descriptor.resolvedAssetRef);
+                    const persistedAsset = persistedAssetsByRef.get(descriptor.resolvedAssetRef);
+
+                    if (!persistedAsset) {
+                        return runtime;
+                    }
+
+                    return {
+                        ...runtime,
+                        asset: runtime.asset || persistedAsset,
+                        file_name: inferPersistedFileName(runtime.file_name, persistedAsset),
+                        relative_path: runtime.relative_path || persistedAsset.path || null,
+                        section_marker: runtime.section_marker || persistedAsset.section_marker || null,
+                        content: runtime.content || persistedAsset.content || null,
+                        exists: runtime.exists === true || typeof persistedAsset.content === 'string',
+                        snapshot_available: runtime.snapshot_available === true || typeof persistedAsset.content === 'string',
+                        content_source: runtime.content_source || (typeof persistedAsset.content === 'string' ? 'persisted_inline_asset' : null)
+                    };
+                })()
                 : null;
             let content: string | null = null;
             let exists = false;
