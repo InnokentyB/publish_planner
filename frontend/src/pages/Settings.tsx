@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { api, presetsApi, keysApi, modelsApi, projectsApi, skillConnectionsApi, contentDictionaryApi, atomaContextApi } from '../api'
 import { useAuth } from '../context/AuthContext'
 
@@ -282,6 +282,7 @@ export default function Settings() {
     const [newKeyName, setNewKeyName] = useState('')
     const [newKeyValue, setNewKeyValue] = useState('')
     const [dictionaryYaml, setDictionaryYaml] = useState('')
+    const dictionaryFileInputRef = useRef<HTMLInputElement | null>(null)
     const [atomaDescription, setAtomaDescription] = useState('')
     const [atomaPayloadText, setAtomaPayloadText] = useState('')
 
@@ -528,6 +529,26 @@ export default function Settings() {
         setEditingPresetId(null)
         setPresetName('')
         setPresetPrompt('')
+    }
+
+    const handleDictionaryFileUpload = (file: File | null) => {
+        if (!file) return
+
+        const normalizedName = file.name.toLowerCase()
+        if (!normalizedName.endsWith('.yaml') && !normalizedName.endsWith('.yml')) {
+            alert('Choose a .yaml or .yml glossary file')
+            return
+        }
+
+        const reader = new FileReader()
+        reader.onload = () => {
+            const text = typeof reader.result === 'string' ? reader.result : ''
+            setDictionaryYaml(text)
+        }
+        reader.onerror = () => {
+            alert('Failed to read glossary file')
+        }
+        reader.readAsText(file)
     }
 
 
@@ -939,6 +960,29 @@ export default function Settings() {
                     <div className="grid-2" style={{ gap: '1.5rem', alignItems: 'start' }}>
                         <div>
                             <p className="text-muted mb-2">Upload or edit a YAML dictionary for project terminology, forbidden variants and style rules. This dictionary is used to validate content consistency.</p>
+
+                            <div className="flex mb-2" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <input
+                                    ref={dictionaryFileInputRef}
+                                    type="file"
+                                    accept=".yaml,.yml,text/yaml,application/yaml"
+                                    style={{ display: 'none' }}
+                                    onChange={(event) => {
+                                        handleDictionaryFileUpload(event.target.files?.[0] || null)
+                                        event.target.value = ''
+                                    }}
+                                />
+                                <button
+                                    type="button"
+                                    className="btn-secondary"
+                                    onClick={() => dictionaryFileInputRef.current?.click()}
+                                >
+                                    Upload YAML File
+                                </button>
+                                <span className="text-muted" style={{ alignSelf: 'center', fontSize: '0.85rem' }}>
+                                    Supports .yaml and .yml glossary files
+                                </span>
+                            </div>
 
                             <div className="mb-2">
                                 <label>Dictionary YAML</label>

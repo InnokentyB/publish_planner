@@ -1035,79 +1035,134 @@ class PublisherService {
 
         for (const task of dueTasks) {
             try {
-                const dependencyState = await this.areTaskDependenciesSatisfied(task);
-                if (!dependencyState.ready) {
-                    if (dependencyState.kind === 'waiting_on_deferred') {
-                        logToFile('INFO', `[Publisher] Task ${task.id} is parked because a dependency is deferred.`, dependencyState.details);
-                    } else if (dependencyState.kind === 'blocked_by_skipped') {
-                        logToFile('WARN', `[Publisher] Task ${task.id} is blocked because a dependency was skipped.`, dependencyState.details);
-                    }
-                    continue;
-                }
-
-                const plan = await this.loadPublicationPlanContext(task.project_id);
-                if (!plan) {
-                    continue;
-                }
-
-                const blockingState = await this.evaluateBlockingConditions(task, plan);
-                if (!blockingState.ready) {
-                    logToFile('INFO', `[Publisher] Task ${task.id} is waiting on blocking conditions.`, blockingState.details);
-                    continue;
-                }
-
-                const action = (task.assets as any)?.action;
-                plan.actions = action ? [action] : [];
-                const bundle = publicationPlanService.buildHandoffBundle(plan as any, task);
-                const channelConfig: any = task.channel?.config || {};
-                const executionMode = bundle.mode;
-
-                if (executionMode === 'manual') {
-                    await prisma.contentItem.update({
-                        where: { id: task.id },
-                        data: {
-                            status: 'awaiting_manual_publication',
-                            quality_report: {
-                                ...((task.quality_report as any) || {}),
-                                handoff_bundle: bundle,
-                                prepared_at: new Date().toISOString()
-                            } as any
-                        }
-                    });
-
-                    logToFile('INFO', `[Publisher] Prepared publication task ${task.id} (${bundle.task.action_type}) for manual execution.`);
-                    continue;
-                }
-
-                const automatedResult = await this.executeAutomatedPublicationTask(task, bundle, channelConfig, plan as any);
-                const nextStatus = automatedResult.manualFallback ? 'awaiting_manual_publication' : 'published';
-
-                await prisma.contentItem.update({
-                    where: { id: task.id },
-                    data: {
-                        status: nextStatus,
-                        published_link: automatedResult.publishedLink || task.published_link,
-                        quality_report: {
-                            ...((task.quality_report as any) || {}),
-                            handoff_bundle: bundle,
-                            execution_result: automatedResult,
-                            prepared_at: new Date().toISOString()
-                        } as any,
-                        metrics: {
-                            ...((task.metrics as any) || {}),
-                            last_execution_at: new Date().toISOString(),
-                            ...(automatedResult.metrics ? automatedResult.metrics : {})
-                        } as any
-                    }
-                });
-
-                logToFile('INFO', `[Publisher] Processed publication task ${task.id} (${bundle.task.action_type}) via automated adapter.`);
+                await this.processPublicationTaskItem(task);
             } catch (error) {
                 logToFile('ERROR', `[Publisher] Failed to process publication task ${task.id}`, error);
             }
         }
 
         return dueTasks.length;
+    }
+
+    async processPublicationTaskNow(taskId: number) {
+        const task = await prisma.contentItem.findUnique({
+            where: { id: taskId },
+            include: { channel: true }
+        });
+
+        if (!task) {
+            throw new Error(`Publication task ${taskId} not found`);
+        }
+
+        if (task.status === 'published') {
+            throw new Error('This publication task is already published');
+        }
+
+        if (task.status === 'deferred' || task.status === 'skipped') {
+            throw new Error(`This publication task cannot be executed from status '${task.status}'`);
+        }
+
+        return this.processPublicationTaskItem(task, { manualTrigger: true });
+    }
+
+    private async processPublicationTaskItem(task: any, options: { manualTrigger?: boolean } = {}) {
+        const dependencyState = await this.areTaskDependenciesSatisfied(task);
+        if (!dependencyState.ready) {
+            if (options.manualTrigger) {
+                if (dependencyState.kind === 'waiting_on_deferred') {
+                    throw new Error('Task is blocked by a deferred dependency');
+                }
+                if (dependencyState.kind === 'blocked_by_skipped') {
+                    throw new Error('Task is blocked by a skipped dependency');
+                }
+                throw new Error('Task dependencies are not satisfied yet');
+            }
+
+            if (dependencyState.kind === 'waiting_on_deferred') {
+                logToFile('INFO', `[Publisher] Task ${task.id} is parked because a dependency is deferred.`, dependencyState.details);
+            } else if (dependencyState.kind === 'blocked_by_skipped') {
+                logToFile('WARN', `[Publisher] Task ${task.id} is blocked because a dependency was skipped.`, dependencyState.details);
+            }
+            return { success: false, status: task.status, skipped: true };
+        }
+
+        const plan = await this.loadPublicationPlanContext(task.project_id);
+        if (!plan) {
+            throw new Error('No imported publication plan context is available for this task');
+        }
+
+        const blockingState = await this.evaluateBlockingConditions(task, plan);
+        if (!blockingState.ready) {
+            if (options.manualTrigger) {
+                throw new Error('Task is waiting on blocking conditions');
+            }
+            logToFile('INFO', `[Publisher] Task ${task.id} is waiting on blocking conditions.`, blockingState.details);
+            return { success: false, status: task.status, skipped: true };
+        }
+
+        const action = (task.assets as any)?.action;
+        plan.actions = action ? [action] : [];
+        const bundle = publicationPlanService.buildHandoffBundle(plan as any, task);
+        const channelConfig: any = task.channel?.config || {};
+        const executionMode = bundle.mode;
+
+        if (executionMode === 'manual') {
+            await prisma.contentItem.update({
+                where: { id: task.id },
+                data: {
+                    status: 'awaiting_manual_publication',
+                    quality_report: {
+                        ...((task.quality_report as any) || {}),
+                        handoff_bundle: bundle,
+                        prepared_at: new Date().toISOString()
+                    } as any
+                }
+            });
+
+            logToFile('INFO', `[Publisher] Prepared publication task ${task.id} (${bundle.task.action_type}) for manual execution.`);
+
+            return {
+                success: true,
+                mode: 'manual',
+                status: 'awaiting_manual_publication',
+                adapter: task.channel?.type || task.layer || null,
+                publishedLink: task.published_link || null
+            };
+        }
+
+        const automatedResult = await this.executeAutomatedPublicationTask(task, bundle, channelConfig, plan as any);
+        const nextStatus = automatedResult.manualFallback ? 'awaiting_manual_publication' : 'published';
+
+        await prisma.contentItem.update({
+            where: { id: task.id },
+            data: {
+                status: nextStatus,
+                published_link: automatedResult.publishedLink || task.published_link,
+                quality_report: {
+                    ...((task.quality_report as any) || {}),
+                    handoff_bundle: bundle,
+                    execution_result: automatedResult,
+                    prepared_at: new Date().toISOString()
+                } as any,
+                metrics: {
+                    ...((task.metrics as any) || {}),
+                    last_execution_at: new Date().toISOString(),
+                    ...(automatedResult.metrics ? automatedResult.metrics : {})
+                } as any
+            }
+        });
+
+        logToFile('INFO', `[Publisher] Processed publication task ${task.id} (${bundle.task.action_type}) via automated adapter.`);
+
+        return {
+            success: true,
+            mode: automatedResult.manualFallback ? 'manual' : 'automated',
+            status: nextStatus,
+            adapter: automatedResult.adapter || task.channel?.type || task.layer || null,
+            publishedLink: automatedResult.publishedLink || task.published_link || null,
+            manualFallback: automatedResult.manualFallback === true,
+            reason: automatedResult.reason || null
+        };
     }
 
     private async areTaskDependenciesSatisfied(task: any): Promise<{

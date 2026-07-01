@@ -759,6 +759,38 @@ async function apiRoutes(fastify) {
             bundle
         };
     });
+    fastify.post('/api/publication-tasks/:id/publish-now', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const { id } = request.params;
+        const taskId = parseInt(id);
+        const item = await prisma.contentItem.findFirst({
+            where: { id: taskId, project_id: projectId },
+            include: { channel: true }
+        });
+        if (!item) {
+            return reply.code(404).send({ error: 'Publication task not found' });
+        }
+        try {
+            const result = await publisher_service_1.default.processPublicationTaskNow(taskId);
+            const refreshed = await prisma.contentItem.findFirst({
+                where: { id: taskId, project_id: projectId },
+                include: { channel: true }
+            });
+            return {
+                success: true,
+                result,
+                item: refreshed ? {
+                    ...refreshed,
+                    schedule_at: resolveTaskScheduleAt(refreshed)
+                } : null
+            };
+        }
+        catch (error) {
+            return reply.code(400).send({ error: error.message || 'Failed to publish task now' });
+        }
+    });
     fastify.post('/api/publication-tasks/:id/confirm-publication', async (request, reply) => {
         const projectId = request.projectId;
         if (!projectId)

@@ -361,6 +361,22 @@ export default function PublicationTasks() {
         }
     })
 
+    const publishTaskNow = useMutation({
+        mutationFn: () => {
+            if (!selectedTaskId) throw new Error('Задача не выбрана')
+            return publicationTasksApi.publishNow(selectedTaskId)
+        },
+        onSuccess: (result: any) => {
+            const outcome = result?.result
+            if (outcome?.manualFallback) {
+                setTaskMessage(`Автопубликация потребовала ручного шага${outcome?.reason ? `. ${outcome.reason}` : '.'}`)
+            } else {
+                setTaskMessage(`Публикация запущена через адаптер${outcome?.adapter ? `: ${outcome.adapter}` : ''}.`)
+            }
+            refreshTasks()
+        }
+    })
+
     const runCriticCheck = useMutation({
         mutationFn: () => {
             if (!selectedTaskId) throw new Error('Задача не выбрана')
@@ -439,6 +455,9 @@ export default function PublicationTasks() {
         && ['planned', 'ready_for_execution', 'awaiting_manual_publication'].includes(activeTask.status)
         && new Date(activeTask.schedule_at).getTime() < Date.now()
     const canPrepareHandoff = !!activeTask && !['published', 'skipped'].includes(activeTask.status)
+    const canPublishNow = !!activeTask
+        && executionMode === 'automated'
+        && ['planned', 'ready_for_execution', 'failed'].includes(activeTask.status)
     const canFetchMetrics = !!activeTask?.published_link && supportsAutoMetrics(activeTask)
     const targetResourceUrl = activeTask?.workspace_context?.target_resource_url || handoffBundle?.publication?.link_url || ''
     const planItemRef = activeTask?.workspace_context?.plan_item_ref || (activeTask?.assets as JsonRecord | undefined)?.action?.id || (activeTask?.metrics as JsonRecord | undefined)?.task_id || ''
@@ -636,15 +655,26 @@ export default function PublicationTasks() {
                                             )}
                                         </div>
 
-                                        {canPrepareHandoff && (
-                                            <button
-                                                onClick={() => prepareHandoff.mutate(activeTask.id)}
-                                                disabled={prepareHandoff.isPending || isLoadingTask}
-                                                className="bg-primary text-white font-black text-sm px-5 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
-                                            >
-                                                {prepareHandoff.isPending ? 'Preparing...' : 'Prepare Handoff'}
-                                            </button>
-                                        )}
+                                        <div className="flex flex-wrap items-center gap-3">
+                                            {canPrepareHandoff && (
+                                                <button
+                                                    onClick={() => prepareHandoff.mutate(activeTask.id)}
+                                                    disabled={prepareHandoff.isPending || isLoadingTask || publishTaskNow.isPending}
+                                                    className="bg-primary text-white font-black text-sm px-5 py-3 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
+                                                >
+                                                    {prepareHandoff.isPending ? 'Preparing...' : 'Prepare Handoff'}
+                                                </button>
+                                            )}
+                                            {canPublishNow && (
+                                                <button
+                                                    onClick={() => publishTaskNow.mutate()}
+                                                    disabled={publishTaskNow.isPending || prepareHandoff.isPending || isLoadingTask}
+                                                    className="bg-success text-white font-black text-sm px-5 py-3 rounded-2xl shadow-lg hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
+                                                >
+                                                    {publishTaskNow.isPending ? 'Публикуем...' : 'Опубликовать сейчас'}
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
 
                                     {taskMessage && (
@@ -653,10 +683,11 @@ export default function PublicationTasks() {
                                         </div>
                                     )}
 
-                                    {(prepareHandoff.error || saveTaskContent.error || confirmPublication.error || collectMetrics.error || recordMetrics.error || sendCommentAlert.error) && (
+                                    {(prepareHandoff.error || publishTaskNow.error || saveTaskContent.error || confirmPublication.error || collectMetrics.error || recordMetrics.error || sendCommentAlert.error) && (
                                         <div className="mt-4 rounded-2xl bg-error-container/30 text-error px-4 py-3 text-sm font-medium">
                                             {[
                                                 prepareHandoff.error,
+                                                publishTaskNow.error,
                                                 saveTaskContent.error,
                                                 confirmPublication.error,
                                                 collectMetrics.error,
@@ -665,6 +696,7 @@ export default function PublicationTasks() {
                                             ].find(Boolean) instanceof Error
                                                 ? (([
                                                     prepareHandoff.error,
+                                                    publishTaskNow.error,
                                                     saveTaskContent.error,
                                                     confirmPublication.error,
                                                     collectMetrics.error,
