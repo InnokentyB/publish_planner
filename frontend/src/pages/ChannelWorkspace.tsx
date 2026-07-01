@@ -222,7 +222,7 @@ export default function ChannelWorkspace() {
                         <div className="max-w-4xl">
                             <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Рабочая область канала</div>
                             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-black uppercase tracking-[0.24em]">
-                                <Link to="/projects" className="text-primary/70 hover:text-primary transition-colors">Проект</Link>
+                                <Link to="/projects" className="text-primary/70 hover:text-primary transition-colors">Обзор</Link>
                                 <span className="text-on-surface-variant/50">/</span>
                                 <span className="text-on-surface-variant">{currentProject.name}</span>
                             </div>
@@ -230,7 +230,7 @@ export default function ChannelWorkspace() {
                                 {selectedChannel?.name || 'Загружаем канал'}
                             </h1>
                             <p className="mt-4 text-sm leading-7 text-on-surface-variant max-w-3xl">
-                                Этот канал — исполнительная поверхность, где перед публикацией сходятся файлы из плана, входы из парсеров, ручные загрузки и сгенерированные черновики.
+                                Этот канал — исполнительная поверхность, где перед публикацией сходятся файлы из плана, входы из исследований, ручные загрузки и сгенерированные черновики.
                             </p>
                             {selectedChannel && (
                                 <div className="mt-6 flex flex-wrap gap-3">
@@ -263,13 +263,13 @@ export default function ChannelWorkspace() {
                                 to="/analytics"
                                 className="rounded-2xl bg-surface-container-high px-5 py-4 text-sm font-black text-on-surface text-center hover:bg-primary/10 hover:text-primary transition-all"
                             >
-                                Смотреть аналитику
+                                Открыть метрики
                             </Link>
                             <Link
                                 to="/parsers"
                                 className="rounded-2xl bg-surface-container-high px-5 py-4 text-sm font-black text-on-surface text-center hover:bg-primary/10 hover:text-primary transition-all"
                             >
-                                Лаборатория парсеров
+                                Исследования
                             </Link>
                         </div>
                     </div>
@@ -606,25 +606,25 @@ export default function ChannelWorkspace() {
                                     {sourceMode === 'mcp' && (
                                         <section className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-6">
                                             <div className="rounded-[1.5rem] bg-surface-container-low p-6">
-                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Парсер и MCP</div>
+                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Исследования и MCP</div>
                                                 <h3 className="mt-3 text-2xl font-headline font-black text-on-surface">Поверхность исследования и intake</h3>
                                                 <p className="mt-4 text-sm leading-7 text-on-surface-variant max-w-3xl">
-                                                    Переводи внешние исследования в материал для канала: запускай parser jobs, смотри результаты, переиспользуй рецепты и передавай сильнейшие сигналы в контентный поток.
+                                                    Переводи внешние исследования в материал для канала: запускай parser jobs, смотри результаты, переиспользуй шаблоны и передавай сильнейшие сигналы в контентный поток.
                                                 </p>
                                             </div>
                                             <div className="space-y-4">
                                                 <Link to="/parsers" className="block rounded-[1.5rem] ai-gradient text-white p-6 shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all">
                                                     <div className="text-[10px] font-black uppercase tracking-[0.25em] text-white/70">Исследовательская лаборатория</div>
-                                                    <h3 className="mt-3 text-2xl font-headline font-black">Открыть парсеры</h3>
+                                                    <h3 className="mt-3 text-2xl font-headline font-black">Открыть исследования</h3>
                                                     <p className="mt-4 text-sm leading-7 text-white/80">
-                                                        Перейди в интерфейс парсеров для discovery, скоринга и работы с источниками через MCP.
+                                                        Перейди в интерфейс исследований для discovery, скоринга и работы с источниками через MCP.
                                                     </p>
                                                 </Link>
                                                 <Link to="/recipes" className="block rounded-[1.5rem] bg-surface-container-low p-6 border border-outline-variant/10 hover:bg-primary/5 transition-all">
                                                     <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Переиспользуемые активы</div>
-                                                    <h3 className="mt-3 text-xl font-headline font-black text-on-surface">Сохранённые рецепты</h3>
+                                                    <h3 className="mt-3 text-xl font-headline font-black text-on-surface">Сохранённые шаблоны</h3>
                                                     <p className="mt-3 text-sm leading-7 text-on-surface-variant">
-                                                        Просматривай рецепты парсеров и заново запускай те, что подходят под discovery-паттерн этого канала.
+                                                        Просматривай исследовательские шаблоны и заново запускай те, что подходят под discovery-паттерн этого канала.
                                                     </p>
                                                 </Link>
                                             </div>

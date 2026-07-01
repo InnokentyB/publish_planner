@@ -46,8 +46,9 @@ export default function Login() {
                     <div className="w-20 h-20 ai-gradient text-white rounded-3xl flex items-center justify-center mb-6 shadow-xl shadow-primary/20 rotate-3 group hover:rotate-0 transition-transform duration-300">
                         <span className="material-symbols-outlined text-4xl">rocket_launch</span>
                     </div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60 mb-2">Workspace</div>
                     <h1 className="text-3xl font-headline font-black tracking-tight text-on-surface mb-2">Project Alpha</h1>
-                    <p className="text-sm font-label uppercase tracking-widest text-primary font-bold">Матрица управления контентом</p>
+                    <p className="text-sm font-label uppercase tracking-widest text-primary font-bold">Рабочая область контентных операций</p>
                 </div>
 
                 {error && (

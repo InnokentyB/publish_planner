@@ -118,9 +118,9 @@ export default function PostPublicationAnalytics() {
                 <section className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm p-8 lg:p-10">
                     <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-8">
                         <div className="max-w-4xl">
-                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Пост-публикационная аналитика</div>
+                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Метрики проекта</div>
                             <h1 className="mt-3 text-4xl lg:text-5xl font-headline font-black tracking-tight text-on-surface">
-                                Разбор того, что произошло после публикации
+                                Метрики и результаты после публикации
                             </h1>
                             <p className="mt-4 text-sm leading-7 text-on-surface-variant max-w-3xl">
                                 Эта рабочая область собирает эффективность каналов, недостающие метрики и негативные исходы, чтобы проект сохранял операционную память после выхода контента.
@@ -132,7 +132,7 @@ export default function PostPublicationAnalytics() {
                                 Открыть публикации
                             </Link>
                             <Link to="/projects" className="rounded-2xl bg-surface-container-high px-5 py-4 text-sm font-black text-on-surface text-center hover:bg-primary/10 hover:text-primary transition-all">
-                                Назад к проекту
+                                Назад к обзору
                             </Link>
                         </div>
                     </div>
@@ -237,7 +237,7 @@ export default function PostPublicationAnalytics() {
 
                 {(isLoading || error) && (
                     <section className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm p-6 text-sm text-on-surface-variant">
-                        {isLoading ? 'Загружаем аналитику...' : (error as Error)?.message}
+                        {isLoading ? 'Загружаем метрики...' : (error as Error)?.message}
                     </section>
                 )}
             </div>

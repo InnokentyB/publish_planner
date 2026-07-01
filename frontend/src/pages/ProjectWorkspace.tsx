@@ -188,12 +188,12 @@ export default function ProjectWorkspace() {
                 <section className="rounded-[2rem] bg-white border border-outline-variant/10 shadow-sm p-8 lg:p-10">
                     <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-8">
                         <div className="max-w-4xl">
-                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Рабочая область проекта</div>
+                            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Обзор проекта</div>
                             <h1 className="mt-3 text-4xl lg:text-5xl font-headline font-black tracking-tight text-on-surface">
                                 {currentProject.name}
                             </h1>
                             <p className="mt-4 text-sm leading-7 text-on-surface-variant max-w-3xl">
-                                Проект — это центральная контентная сеть: один план публикаций, несколько каналов, общие входы из исследований и единый исполнительный слой для публикаций и аналитики.
+                                Центральный обзор текущего проекта: план публикаций, каналы, исследования и метрики в одном рабочем контуре.
                             </p>
 
                             <div className="mt-6 flex flex-wrap gap-3">
@@ -222,7 +222,7 @@ export default function ProjectWorkspace() {
                                 to="/parsers"
                                 className="rounded-2xl bg-surface-container-high px-5 py-4 text-sm font-black text-on-surface text-center hover:bg-primary/10 hover:text-primary transition-all"
                             >
-                                Открыть парсеры
+                                Открыть исследования
                             </Link>
                             <Link
                                 to="/publication-tasks"
@@ -234,7 +234,7 @@ export default function ProjectWorkspace() {
                                 to="/analytics"
                                 className="rounded-2xl bg-surface-container-high px-5 py-4 text-sm font-black text-on-surface text-center hover:bg-primary/10 hover:text-primary transition-all"
                             >
-                                Смотреть аналитику
+                                Открыть метрики
                             </Link>
                         </div>
                     </div>
@@ -318,19 +318,19 @@ export default function ProjectWorkspace() {
                             <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Операционные поверхности</div>
                             <div className="mt-4 grid grid-cols-1 gap-3">
                                 <Link to="/parsers" className="rounded-2xl bg-surface-container-low px-4 py-4 hover:bg-primary/5 transition-all">
-                                    <div className="font-bold text-on-surface">Лаборатория парсеров</div>
+                                    <div className="font-bold text-on-surface">Исследовательская лаборатория</div>
                                     <div className="mt-2 text-sm text-on-surface-variant">Задавай критерии, смотри результаты и передавай сигналы в работу каналов.</div>
                                 </Link>
                                 <Link to="/recipes" className="rounded-2xl bg-surface-container-low px-4 py-4 hover:bg-primary/5 transition-all">
-                                    <div className="font-bold text-on-surface">Сохранённые рецепты</div>
-                                    <div className="mt-2 text-sm text-on-surface-variant">Переиспользуй настройки парсеров вместо того, чтобы собирать discovery-запросы заново.</div>
+                                    <div className="font-bold text-on-surface">Сохранённые шаблоны</div>
+                                    <div className="mt-2 text-sm text-on-surface-variant">Переиспользуй настройки исследований вместо того, чтобы собирать discovery-запросы заново.</div>
                                 </Link>
                                 <Link to="/publication-tasks" className="rounded-2xl bg-surface-container-low px-4 py-4 hover:bg-primary/5 transition-all">
                                     <div className="font-bold text-on-surface">Консоль публикаций</div>
                                     <div className="mt-2 text-sm text-on-surface-variant">Подтверждай live URL, handoff, алерты по комментариям и сбор метрик.</div>
                                 </Link>
                                 <Link to="/analytics" className="rounded-2xl bg-surface-container-low px-4 py-4 hover:bg-primary/5 transition-all">
-                                    <div className="font-bold text-on-surface">Пост-публикационная аналитика</div>
+                                    <div className="font-bold text-on-surface">Панель метрик</div>
                                     <div className="mt-2 text-sm text-on-surface-variant">Смотри эффективность каналов, недостающие метрики и здоровье результатов.</div>
                                 </Link>
                             </div>

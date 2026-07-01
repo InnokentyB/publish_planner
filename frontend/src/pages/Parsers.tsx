@@ -276,7 +276,7 @@ export default function Parsers() {
                 throw new Error('Сначала выбери проект')
             }
             if (!query.trim()) {
-                throw new Error('Сначала добавь запрос для парсера')
+                throw new Error('Сначала добавь запрос для исследования')
             }
 
             return parserApi.createSearchJob(currentProject.id, {
@@ -308,7 +308,7 @@ export default function Parsers() {
     const refreshJob = useMutation({
         mutationFn: () => {
             if (!currentProject?.id || !activeJobId) {
-                throw new Error('Не выбрана активная parser-задача')
+            throw new Error('Не выбрана активная исследовательская задача')
             }
             return parserApi.refreshSearchJob(currentProject.id, activeJobId)
         },
@@ -355,12 +355,12 @@ export default function Parsers() {
                 <section className="overflow-hidden rounded-[2.25rem] border border-outline-variant/10 bg-white shadow-sm">
                     <div className="grid grid-cols-1 gap-0 xl:grid-cols-[minmax(0,1.15fr)_420px]">
                         <div className="px-8 py-9 lg:px-10 lg:py-10">
-                            <div className="text-[10px] font-black uppercase tracking-[0.32em] text-primary/60">Интерфейс парсеров 2.0</div>
+                            <div className="text-[10px] font-black uppercase tracking-[0.32em] text-primary/60">Исследовательская лаборатория</div>
                             <h1 className="mt-3 max-w-4xl text-4xl font-headline font-black tracking-tight text-on-surface lg:text-5xl">
-                                Discovery, скоринг и разведка источников для каждого канала проекта.
+                                Исследования, скоринг и разведка источников для каждого канала проекта.
                             </h1>
                             <p className="mt-4 max-w-3xl text-sm leading-7 text-on-surface-variant">
-                                Выбери источник, задай критерии включения и исключения, запусти парсер, а затем оцени сырые результаты и fit score со стороны планнера, прежде чем превращать находки в посты, брифы или задачи канала.
+                                Выбери источник, задай критерии включения и исключения, запусти исследование, а затем оцени сырые результаты и fit score со стороны планнера, прежде чем превращать находки в посты, брифы или задачи канала.
                             </p>
 
                             <div className="mt-7 flex flex-wrap gap-3">
@@ -394,15 +394,15 @@ export default function Parsers() {
                             <div className="mt-5 space-y-4">
                                 <div className="rounded-[1.5rem] bg-white px-5 py-5">
                                     <div className="flex items-center justify-between gap-3">
-                                        <span className="text-sm font-bold text-on-surface">Состояние парсера</span>
+                                        <span className="text-sm font-bold text-on-surface">Состояние интеграции</span>
                                         <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${parserHealth.isError ? 'bg-error-container/40 text-error' : 'bg-success/10 text-success'}`}>
                                             {parserHealth.isError ? 'Проблема' : 'Готово'}
                                         </span>
                                     </div>
                                     <p className="mt-3 text-sm leading-6 text-on-surface-variant">
                                         {parserHealth.isError
-                                            ? 'Связка с парсером доступна из планнера, но верхний parser endpoint вернул ошибку.'
-                                            : 'Планнер может разговаривать со слоем интеграции парсеров. Здесь удобно запускать discovery до того, как контент попадёт в каналы.'}
+                                            ? 'Связка с исследовательским сервисом доступна из планнера, но верхний parser endpoint вернул ошибку.'
+                                            : 'Планнер может разговаривать со слоем исследовательских интеграций. Здесь удобно запускать discovery до того, как контент попадёт в каналы.'}
                                     </p>
                                 </div>
 
@@ -410,7 +410,7 @@ export default function Parsers() {
                                     <div className="text-sm font-bold text-on-surface">Что делает эта рабочая область</div>
                                     <ul className="mt-3 space-y-2 text-sm leading-6 text-on-surface-variant">
                                         <li>Задаёт source-specific критерии поиска и quality gates.</li>
-                                        <li>Показывает сырые результаты парсера до попадания в publishing network.</li>
+                                        <li>Показывает сырые результаты исследования до попадания в publishing network.</li>
                                         <li>Применяет fit score со стороны планнера, чтобы ранжировать сильнейшие контентные сигналы.</li>
                                     </ul>
                                 </div>
@@ -501,7 +501,7 @@ export default function Parsers() {
                             <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
                                 <div>
                                     <div className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">Лаборатория критериев</div>
-                                    <h2 className="mt-2 text-2xl font-headline font-black text-on-surface">Опиши парсеру, что именно искать</h2>
+                                    <h2 className="mt-2 text-2xl font-headline font-black text-on-surface">Опиши исследованию, что именно искать</h2>
                                 </div>
                                 <div className="flex gap-3">
                                     <button
@@ -516,7 +516,7 @@ export default function Parsers() {
                                         disabled={createSearchJob.isPending || !currentProject}
                                         className="rounded-2xl ai-gradient px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary/20 transition-all hover:scale-[1.01] active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
                                     >
-                                        {createSearchJob.isPending ? 'Запускаем...' : 'Запустить парсер'}
+                                        {createSearchJob.isPending ? 'Запускаем...' : 'Запустить исследование'}
                                     </button>
                                 </div>
                             </div>
@@ -667,7 +667,7 @@ export default function Parsers() {
                                                     {post.title}
                                                 </h3>
                                                 <p className="mt-3 line-clamp-4 text-sm leading-7 text-on-surface-variant">
-                                                    {post.body || 'Парсер не вернул body-preview для этого результата.'}
+                                                    {post.body || 'Сервис не вернул body-preview для этого результата.'}
                                                 </p>
                                             </div>
 
@@ -718,7 +718,7 @@ export default function Parsers() {
 
                                 {!scoredResults.length && (
                                     <div className="rounded-[1.5rem] bg-surface-container-low px-5 py-8 text-sm leading-7 text-on-surface-variant">
-                                        Запусти поиск парсера или снизь порог fit score, чтобы здесь появились подходящие результаты.
+                                        Запусти исследование или снизь порог fit score, чтобы здесь появились подходящие результаты.
                                     </div>
                                 )}
                             </div>
@@ -778,7 +778,7 @@ export default function Parsers() {
 
                                 {!insights.length && (
                                     <div className="rounded-[1.35rem] bg-surface-container-low px-4 py-5 text-sm leading-6 text-on-surface-variant">
-                                        Группы инсайтов появятся здесь после того, как у парсера будет достаточно сырого материала для summary.
+                                        Группы инсайтов появятся здесь после того, как у исследования будет достаточно сырого материала для summary.
                                     </div>
                                 )}
                             </div>
@@ -794,7 +794,7 @@ export default function Parsers() {
                                     to="/projects"
                                     className="rounded-2xl bg-surface-container-high px-4 py-3 text-sm font-black text-on-surface transition-all hover:bg-primary/10 hover:text-primary"
                                 >
-                                    Назад к проекту
+                                    Назад к обзору
                                 </Link>
                             </div>
 
@@ -802,7 +802,7 @@ export default function Parsers() {
                                 {templates.map((template: any, index: number) => {
                                     const templateId = String(template.id || template.template_id || `template-${index}`)
                                     const label = template.display_name || template.name || template.query || templateId
-                                    const detail = template.intent || template.cluster || template.source || 'Шаблон парсера'
+                                    const detail = template.intent || template.cluster || template.source || 'Исследовательский шаблон'
 
                                     return (
                                         <div key={templateId} className="rounded-[1.35rem] bg-surface-container-low px-4 py-4">
@@ -825,7 +825,7 @@ export default function Parsers() {
 
                                 {!templates.length && (
                                     <div className="rounded-[1.35rem] bg-surface-container-low px-4 py-5 text-sm leading-6 text-on-surface-variant">
-                                        Для этого проекта пока не найдено шаблонов парсера.
+                                        Для этого проекта пока не найдено исследовательских шаблонов.
                                     </div>
                                 )}
                             </div>

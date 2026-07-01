@@ -19,14 +19,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   };
 
   const navItems = [
-    { label: 'Проекты', path: '/projects', icon: 'folder_open' },
-    { label: 'Аналитика', path: '/analytics', icon: 'monitoring' },
-    { label: 'Парсеры', path: '/parsers', icon: 'hub' },
-    { label: 'Рецепты', path: '/recipes', icon: 'book_2' },
-    { label: 'Публикации', path: '/publication-tasks', icon: 'publish' },
-    { label: 'Гайд', path: '/guide', icon: 'help_outline' },
+    { label: 'Обзор', path: '/projects', icon: 'folder_open' },
+    { label: 'Метрики', path: '/analytics', icon: 'monitoring' },
+    { label: 'Исследования', path: '/parsers', icon: 'hub' },
+    { label: 'Шаблоны', path: '/recipes', icon: 'book_2' },
+    { label: 'План публикаций', path: '/publication-tasks', icon: 'publish' },
+    { label: 'Справка', path: '/guide', icon: 'help_outline' },
     { label: 'Календарь', path: '/calendar', icon: 'calendar_month' },
-    { label: 'Настройки', path: '/settings', icon: 'settings' },
+    { label: 'Настройки проекта', path: '/settings', icon: 'settings' },
   ];
 
   return (
@@ -35,13 +35,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <aside className="bg-surface-container-low w-64 h-full flex flex-col py-8 px-4 border-r-0 shrink-0 border-outline-variant/10">
         <div className="mb-10 px-2 space-y-4">
           <Link to="/projects" className="block hover:opacity-80 transition-opacity">
-            <h1 className="text-2xl font-black text-primary tracking-tighter font-headline">Project Alpha</h1>
-            <p className="text-xs text-on-surface-variant font-label mt-1">Бета-версия рабочей среды</p>
+            <div className="text-[10px] font-black uppercase tracking-[0.22em] text-primary/60">Workspace</div>
+            <h1 className="mt-2 text-2xl font-black text-primary tracking-tighter font-headline">Project Alpha</h1>
+            <p className="text-xs text-on-surface-variant font-label mt-1">Рабочая область контентных операций</p>
           </Link>
           
           {/* Project Switcher */}
           {projects.length > 0 && (
             <div className="relative group">
+              <div className="mb-2 text-[10px] font-black uppercase tracking-[0.22em] text-on-surface-variant">Текущий проект</div>
               <select
                 className="w-full appearance-none bg-surface-container-high hover:bg-surface-container-highest border border-outline-variant/10 rounded-xl py-3 pl-4 pr-10 text-sm font-bold text-on-surface cursor-pointer focus:ring-2 focus:ring-primary/20 transition-all outline-none shadow-sm group-hover:shadow-md"
                 value={currentProject?.id || ''}
@@ -126,17 +128,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             </div>
           </div>
           <nav className="flex items-center gap-8 h-full">
-            <Link to="/projects" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Проекты</Link>
+            <Link to="/projects" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Обзор</Link>
             <Link to="/publication-tasks" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Публикации</Link>
-            <Link to="/analytics" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Аналитика</Link>
-            <Link to="/recipes" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Рецепты</Link>
+            <Link to="/analytics" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Метрики</Link>
+            <Link to="/recipes" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Шаблоны</Link>
             <Link to="/calendar" className="text-on-surface-variant hover:text-primary font-label text-sm transition-opacity">Календарь</Link>
             <div className="flex items-center gap-4 ml-4">
               <button className="p-2 text-on-surface-variant hover:opacity-80 transition-opacity">
                 <span className="material-symbols-outlined">notifications_active</span>
               </button>
               <Link to="/projects" className="bg-primary text-white px-5 py-2 rounded-full font-bold text-sm shadow-sm hover:opacity-90 transition-opacity">
-                Открыть рабочую область
+                Открыть обзор
               </Link>
             </div>
           </nav>
