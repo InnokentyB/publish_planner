@@ -228,6 +228,7 @@ export default function PublicationTasks() {
 
     const [statusFilter, setStatusFilter] = useState('active')
     const [manualOnly, setManualOnly] = useState(true)
+    const [hidePublished, setHidePublished] = useState(true)
     const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null)
     const [planJson, setPlanJson] = useState(PUBLICATION_PLAN_TEMPLATE)
     const [planMessage, setPlanMessage] = useState<string | null>(null)
@@ -252,9 +253,14 @@ export default function PublicationTasks() {
         enabled: !!currentProject
     })
 
+    const filteredTasks = useMemo(
+        () => (tasks || []).filter((task) => !hidePublished || task.status !== 'published'),
+        [tasks, hidePublished]
+    )
+
     const selectedFromList = useMemo(
-        () => tasks?.find((task) => task.id === selectedTaskId) || null,
-        [tasks, selectedTaskId]
+        () => filteredTasks.find((task) => task.id === selectedTaskId) || null,
+        [filteredTasks, selectedTaskId]
     )
 
     const { data: selectedTask, isFetching: isLoadingTask } = useQuery<PublicationTask>({
@@ -264,16 +270,16 @@ export default function PublicationTasks() {
     })
 
     useEffect(() => {
-        if (!tasks?.length) {
+        if (!filteredTasks.length) {
             setSelectedTaskId(null)
             return
         }
 
-        const exists = tasks.some((task) => task.id === selectedTaskId)
+        const exists = filteredTasks.some((task) => task.id === selectedTaskId)
         if (!exists) {
-            setSelectedTaskId(tasks[0].id)
+            setSelectedTaskId(filteredTasks[0].id)
         }
-    }, [tasks, selectedTaskId])
+    }, [filteredTasks, selectedTaskId])
 
     useEffect(() => {
         const nextBody = ((selectedTask?.quality_report?.handoff_bundle as JsonRecord | undefined)?.publication?.body
@@ -514,13 +520,20 @@ export default function PublicationTasks() {
                                     <option value="failed">С ошибкой</option>
                                 </select>
 
-                                <button
-                                    onClick={() => setManualOnly((value) => !value)}
-                                    className={`rounded-xl px-4 py-3 text-sm font-black transition-all ${manualOnly ? 'bg-primary text-white' : 'bg-surface-container-low text-on-surface-variant'}`}
-                                >
-                                    {manualOnly ? 'Только ручные' : 'Все режимы'}
-                                </button>
-                            </div>
+                                    <button
+                                        onClick={() => setManualOnly((value) => !value)}
+                                        className={`rounded-xl px-4 py-3 text-sm font-black transition-all ${manualOnly ? 'bg-primary text-white' : 'bg-surface-container-low text-on-surface-variant'}`}
+                                    >
+                                        {manualOnly ? 'Только ручные' : 'Все режимы'}
+                                    </button>
+                                </div>
+
+                            <button
+                                onClick={() => setHidePublished((value) => !value)}
+                                className={`w-full rounded-xl px-4 py-3 text-sm font-black transition-all ${hidePublished ? 'bg-surface-container-high text-on-surface' : 'bg-surface-container-low text-on-surface-variant'}`}
+                            >
+                                {hidePublished ? 'Опубликованные скрыты' : 'Показывать опубликованные'}
+                            </button>
                         </div>
 
                         <div className="max-h-[720px] overflow-y-auto">
@@ -542,13 +555,13 @@ export default function PublicationTasks() {
                                 </div>
                             )}
 
-                            {currentProject && !isLoading && !tasks?.length && (
+                            {currentProject && !isLoading && !filteredTasks.length && (
                                 <div className="p-8 text-sm text-on-surface-variant leading-relaxed">
                                     Под текущий фильтр задач не найдено. Попробуй отключить режим `Только ручные` или синхронизировать свежий план публикаций.
                                 </div>
                             )}
 
-                            {tasks?.map((task) => {
+                            {filteredTasks.map((task) => {
                                 const isSelected = task.id === activeTask?.id
                                 const mode = task.quality_report?.execution_mode || 'manual'
                                 const isOverdue = !!task.schedule_at
