@@ -11,6 +11,9 @@ Use it to:
 - publish directly when appropriate
 - confirm manual publication back into the planner
 
+Related product backlog:
+- [docs/publication-workflow-ideas-ru.md](/Users/innokentyb/Ba_post_planner/docs/publication-workflow-ideas-ru.md)
+
 ## Connection modes
 There are two supported ways to use this MCP server:
 

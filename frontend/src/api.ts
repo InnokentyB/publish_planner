@@ -167,6 +167,7 @@ export const publicationTasksApi = {
         return api.get(`/api/publication-tasks${suffix}`);
     },
     get: (id: number) => api.get(`/api/publication-tasks/${id}`),
+    saveContent: (id: number, data: { body: string }) => api.put(`/api/publication-tasks/${id}/content`, data),
     prepareHandoff: (id: number) => api.post(`/api/publication-tasks/${id}/prepare-handoff`),
     confirmPublication: (id: number, data: { publishedLink: string; note?: string; outcome?: 'published' | 'blocked' | 'removed' | 'restricted' }) =>
         api.post(`/api/publication-tasks/${id}/confirm-publication`, data),

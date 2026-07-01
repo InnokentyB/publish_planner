@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import { projectsApi, publicationTasksApi } from '../api'
 import { useAuth } from '../context/AuthContext'
+import ContentMarkupRenderer from '../components/ContentMarkupRenderer'
 
 type JsonRecord = Record<string, any>
 
@@ -38,6 +39,12 @@ interface PublicationTask {
         source_content?: string | null
         source_file_name?: string | null
     } | null
+}
+
+type ContentEditHistoryEntry = {
+    edited_at?: string
+    previous_body?: string
+    next_body?: string
 }
 
 type PublicationOutcome = 'published' | 'blocked' | 'removed' | 'restricted'
@@ -195,6 +202,7 @@ export default function PublicationTasks() {
     const [publishedLink, setPublishedLink] = useState('')
     const [publicationNote, setPublicationNote] = useState('')
     const [publicationOutcome, setPublicationOutcome] = useState<PublicationOutcome>('published')
+    const [publicationBody, setPublicationBody] = useState('')
     const [metricsJson, setMetricsJson] = useState('{\n  "views": 0,\n  "clicks": 0,\n  "comments": 0\n}')
     const [commentAuthor, setCommentAuthor] = useState('')
     const [commentUrl, setCommentUrl] = useState('')
@@ -233,6 +241,10 @@ export default function PublicationTasks() {
     }, [tasks, selectedTaskId])
 
     useEffect(() => {
+        const nextBody = ((selectedTask?.quality_report?.handoff_bundle as JsonRecord | undefined)?.publication?.body
+            || selectedTask?.workspace_context?.source_content
+            || '') as string
+        setPublicationBody(nextBody)
         setPublishedLink(selectedTask?.published_link || '')
         setPublicationNote(selectedTask?.quality_report?.manual_publication_note || '')
         setPublicationOutcome((selectedTask?.quality_report?.publication_outcome || selectedTask?.metrics?.publication_outcome || 'published') as PublicationOutcome)
@@ -280,6 +292,19 @@ export default function PublicationTasks() {
         mutationFn: (taskId: number) => publicationTasksApi.prepareHandoff(taskId),
         onSuccess: () => {
             setTaskMessage('Handoff-пакет подготовлен.')
+            refreshTasks()
+        }
+    })
+
+    const saveTaskContent = useMutation({
+        mutationFn: () => {
+            if (!selectedTaskId) throw new Error('Задача не выбрана')
+            return publicationTasksApi.saveContent(selectedTaskId, {
+                body: publicationBody
+            })
+        },
+        onSuccess: () => {
+            setTaskMessage('Текст публикации сохранён.')
             refreshTasks()
         }
     })
@@ -388,6 +413,9 @@ export default function PublicationTasks() {
     const atomaPayload = activeTask?.project_context?.atoma_files_payload
     const latestGeneratedImage = (((activeTask?.assets as JsonRecord | undefined)?.generated_visuals as JsonRecord[] | undefined)?.[0])
         || ((activeTask?.quality_report as JsonRecord | undefined)?.generated_image as JsonRecord | undefined)
+    const currentPublicationBody = (handoffBundle?.publication?.body || '') as string
+    const isPublicationBodyDirty = publicationBody !== currentPublicationBody
+    const contentEditHistory = (((activeTask?.quality_report as JsonRecord | undefined)?.content_edit_history as ContentEditHistoryEntry[] | undefined) || [])
 
     return (
         <div className="flex-1 w-full p-8 lg:p-10 space-y-8 overflow-y-auto">
@@ -589,10 +617,11 @@ export default function PublicationTasks() {
                                         </div>
                                     )}
 
-                                    {(prepareHandoff.error || confirmPublication.error || collectMetrics.error || recordMetrics.error || sendCommentAlert.error) && (
+                                    {(prepareHandoff.error || saveTaskContent.error || confirmPublication.error || collectMetrics.error || recordMetrics.error || sendCommentAlert.error) && (
                                         <div className="mt-4 rounded-2xl bg-error-container/30 text-error px-4 py-3 text-sm font-medium">
                                             {[
                                                 prepareHandoff.error,
+                                                saveTaskContent.error,
                                                 confirmPublication.error,
                                                 collectMetrics.error,
                                                 recordMetrics.error,
@@ -600,6 +629,7 @@ export default function PublicationTasks() {
                                             ].find(Boolean) instanceof Error
                                                 ? (([
                                                     prepareHandoff.error,
+                                                    saveTaskContent.error,
                                                     confirmPublication.error,
                                                     collectMetrics.error,
                                                     recordMetrics.error,
@@ -648,17 +678,51 @@ export default function PublicationTasks() {
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
                                             <div className="flex items-center justify-between gap-3">
                                                 <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Текст публикации</div>
-                                                <span className="text-xs text-on-surface-variant">{handoffBundle?.publication?.body?.length || 0} chars</span>
+                                                <span className="text-xs text-on-surface-variant">{publicationBody.length} chars</span>
                                             </div>
                                             <textarea
-                                                readOnly
-                                                value={handoffBundle?.publication?.body || ''}
+                                                value={publicationBody}
+                                                onChange={(event) => setPublicationBody(event.target.value)}
                                                 rows={16}
-                                                className="w-full bg-white border-none rounded-2xl p-4 text-sm leading-6 focus:outline-none resize-none"
+                                                className="w-full bg-white border-none rounded-2xl p-4 text-sm leading-6 focus:ring-2 focus:ring-primary/20 outline-none resize-y min-h-[22rem]"
                                             />
+                                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                                <div className="text-xs text-on-surface-variant">
+                                                    Правки сохраняются в задачу публикации и используются для handoff, критика и ручной публикации.
+                                                </div>
+                                                <div className="flex items-center gap-3">
+                                                    <button
+                                                        onClick={() => setPublicationBody(currentPublicationBody)}
+                                                        disabled={!isPublicationBodyDirty || saveTaskContent.isPending}
+                                                        className="rounded-2xl bg-surface-container-highest text-on-surface font-black text-xs px-4 py-3 hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50"
+                                                    >
+                                                        Сбросить
+                                                    </button>
+                                                    <button
+                                                        onClick={() => saveTaskContent.mutate()}
+                                                        disabled={!isPublicationBodyDirty || saveTaskContent.isPending}
+                                                        className="rounded-2xl bg-primary text-white font-black text-xs px-4 py-3 shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-95 transition-all disabled:opacity-50"
+                                                    >
+                                                        {saveTaskContent.isPending ? 'Сохраняем текст...' : 'Сохранить текст'}
+                                                    </button>
+                                                </div>
+                                            </div>
                                         </div>
 
                                         <div className="space-y-6">
+                                            <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Предпросмотр публикации</div>
+                                                    <span className="text-xs text-on-surface-variant">Markdown / HTML</span>
+                                                </div>
+                                                <ContentMarkupRenderer
+                                                    content={publicationBody}
+                                                    title={`publication-task-preview-${activeTask.id}`}
+                                                    emptyMessage="Текст публикации пока пуст."
+                                                    className="min-h-[22rem]"
+                                                />
+                                            </div>
+
                                             <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
                                                 <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Контекст публикации</div>
                                                 <div className="space-y-4">
@@ -776,6 +840,48 @@ export default function PublicationTasks() {
                                                 )}
                                             </div>
                                         </div>
+                                    </section>
+
+                                    <section className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">История правок текста</div>
+                                            <span className="text-xs text-on-surface-variant">{contentEditHistory.length} saved revisions</span>
+                                        </div>
+                                        {contentEditHistory.length === 0 ? (
+                                            <div className="rounded-2xl bg-white px-4 py-3 text-sm text-on-surface-variant">
+                                                После первого сохранения здесь появятся предыдущие версии текста.
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-3">
+                                                {contentEditHistory.map((entry, index) => (
+                                                    <div key={`${entry.edited_at || 'revision'}-${index}`} className="rounded-2xl bg-white p-4 space-y-3">
+                                                        <div className="text-xs font-black uppercase tracking-[0.18em] text-primary/60">
+                                                            {entry.edited_at ? formatDate(entry.edited_at) : `Revision ${index + 1}`}
+                                                        </div>
+                                                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                                                            <div className="space-y-2">
+                                                                <div className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface-variant">Было</div>
+                                                                <textarea
+                                                                    readOnly
+                                                                    value={entry.previous_body || ''}
+                                                                    rows={6}
+                                                                    className="w-full bg-surface-container-low border-none rounded-2xl p-3 text-xs leading-5 resize-none"
+                                                                />
+                                                            </div>
+                                                            <div className="space-y-2">
+                                                                <div className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface-variant">Стало</div>
+                                                                <textarea
+                                                                    readOnly
+                                                                    value={entry.next_body || ''}
+                                                                    rows={6}
+                                                                    className="w-full bg-surface-container-low border-none rounded-2xl p-3 text-xs leading-5 resize-none"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                     </section>
 
                                     <section className="grid grid-cols-1 xl:grid-cols-[minmax(320px,0.72fr)_minmax(0,1.28fr)] gap-6 items-start">

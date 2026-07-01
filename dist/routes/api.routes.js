@@ -654,6 +654,62 @@ async function apiRoutes(fastify) {
             }
         };
     });
+    fastify.put('/api/publication-tasks/:id/content', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const { id } = request.params;
+        const { body } = request.body;
+        if (typeof body !== 'string') {
+            return reply.code(400).send({ error: 'body must be a string' });
+        }
+        const item = await prisma.contentItem.findFirst({
+            where: { id: parseInt(id), project_id: projectId }
+        });
+        if (!item) {
+            return reply.code(404).send({ error: 'Publication task not found' });
+        }
+        const nextQualityReport = {
+            ...(item.quality_report || {})
+        };
+        const previousBody = String(nextQualityReport.handoff_bundle?.publication?.body
+            || item.draft_text
+            || '');
+        const history = Array.isArray(nextQualityReport.content_edit_history)
+            ? nextQualityReport.content_edit_history
+            : [];
+        if (body !== previousBody) {
+            nextQualityReport.content_edit_history = [
+                {
+                    edited_at: new Date().toISOString(),
+                    previous_body: previousBody,
+                    next_body: body
+                },
+                ...history
+            ].slice(0, 20);
+        }
+        if (nextQualityReport.handoff_bundle?.publication) {
+            nextQualityReport.handoff_bundle = {
+                ...nextQualityReport.handoff_bundle,
+                publication: {
+                    ...nextQualityReport.handoff_bundle.publication,
+                    body
+                }
+            };
+        }
+        const updated = await prisma.contentItem.update({
+            where: { id: item.id },
+            data: {
+                draft_text: body,
+                quality_report: nextQualityReport
+            }
+        });
+        return {
+            id: updated.id,
+            draft_text: updated.draft_text,
+            quality_report: updated.quality_report
+        };
+    });
     fastify.post('/api/publication-tasks/:id/prepare-handoff', async (request, reply) => {
         const projectId = request.projectId;
         if (!projectId)
