@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
+import { useNavigate } from 'react-router-dom'
 import { projectsApi, publicationTasksApi } from '../api'
 import { useAuth } from '../context/AuthContext'
 import ContentMarkupRenderer from '../components/ContentMarkupRenderer'
@@ -104,6 +105,39 @@ function prettyJson(value: unknown) {
     return JSON.stringify(value, null, 2)
 }
 
+function summarizeAtomaContext(description?: string | null, payload?: unknown) {
+    const summary: string[] = [
+        'ATOMA context explains which source fragments and editorial rules the critic should use when checking the publication text.'
+    ]
+
+    if (description?.trim()) {
+        summary.push(description.trim())
+    }
+
+    if (Array.isArray(payload)) {
+        summary.push(`Payload contains ${payload.length} structured ATOMA item${payload.length === 1 ? '' : 's'}.`)
+    } else if (payload && typeof payload === 'object') {
+        const record = payload as JsonRecord
+        const sourceMap = Array.isArray(record.source_map) ? record.source_map.length : 0
+        const editorialRules = Array.isArray(record.editorial_rules) ? record.editorial_rules.length : 0
+        const topLevelKeys = Object.keys(record)
+
+        if (sourceMap > 0) {
+            summary.push(`Source map includes ${sourceMap} linked fragment${sourceMap === 1 ? '' : 's'} from the original materials.`)
+        }
+
+        if (editorialRules > 0) {
+            summary.push(`Editorial rules include ${editorialRules} machine-readable instruction${editorialRules === 1 ? '' : 's'} for the editor and critic.`)
+        }
+
+        if (sourceMap === 0 && editorialRules === 0 && topLevelKeys.length > 0) {
+            summary.push(`Payload is present with ${topLevelKeys.length} top-level field${topLevelKeys.length === 1 ? '' : 's'}: ${topLevelKeys.join(', ')}.`)
+        }
+    }
+
+    return summary.join('\n\n')
+}
+
 function statusTone(status: string) {
     if (status === 'published') return 'bg-success text-white'
     if (status === 'awaiting_manual_publication') return 'bg-primary text-white'
@@ -190,6 +224,7 @@ function resolvePrimarySourceContent(task: PublicationTask | null | undefined, s
 export default function PublicationTasks() {
     const queryClient = useQueryClient()
     const { currentProject, projects, createProject, setCurrentProject } = useAuth()
+    const navigate = useNavigate()
 
     const [statusFilter, setStatusFilter] = useState('active')
     const [manualOnly, setManualOnly] = useState(true)
@@ -411,6 +446,7 @@ export default function PublicationTasks() {
     const glossaryYaml = activeTask?.project_context?.glossary_yaml || ''
     const atomaDescription = activeTask?.project_context?.atoma_files_description || ''
     const atomaPayload = activeTask?.project_context?.atoma_files_payload
+    const atomaSummary = summarizeAtomaContext(atomaDescription, atomaPayload)
     const latestGeneratedImage = (((activeTask?.assets as JsonRecord | undefined)?.generated_visuals as JsonRecord[] | undefined)?.[0])
         || ((activeTask?.quality_report as JsonRecord | undefined)?.generated_image as JsonRecord | undefined)
     const currentPublicationBody = (handoffBundle?.publication?.body || '') as string
@@ -1040,7 +1076,17 @@ export default function PublicationTasks() {
                                         </div>
 
                                         <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
-                                            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Глоссарий и atoma-контекст</div>
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">Глоссарий и atoma-контекст</div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => navigate('/settings?tab=dictionary')}
+                                                    className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-primary transition hover:scale-[1.01] active:scale-95"
+                                                >
+                                                    <span className="material-symbols-outlined text-base">menu_book</span>
+                                                    <span>Content Dictionary</span>
+                                                </button>
+                                            </div>
                                             <div className="grid grid-cols-1 gap-4">
                                                 <div>
                                                     <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface-variant">Глоссарий проекта</div>
@@ -1051,6 +1097,33 @@ export default function PublicationTasks() {
                                                         className="mt-2 w-full bg-white border-none rounded-2xl p-4 text-xs leading-6 focus:outline-none resize-none"
                                                     />
                                                 </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="rounded-[1.5rem] bg-surface-container-low p-5 space-y-4">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/60">ATOMA Context</div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => navigate('/settings?tab=dictionary')}
+                                                    className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-primary transition hover:scale-[1.01] active:scale-95"
+                                                >
+                                                    <span className="material-symbols-outlined text-base">tune</span>
+                                                    <span>Edit Context</span>
+                                                </button>
+                                            </div>
+
+                                            <div>
+                                                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface-variant">Что это значит</div>
+                                                <textarea
+                                                    readOnly
+                                                    value={atomaSummary}
+                                                    rows={7}
+                                                    className="mt-2 w-full bg-white border-none rounded-2xl p-4 text-xs leading-6 focus:outline-none resize-none"
+                                                />
+                                            </div>
+
+                                            <div className="grid grid-cols-1 gap-4">
                                                 <div>
                                                     <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface-variant">Описание atoma files</div>
                                                     <textarea

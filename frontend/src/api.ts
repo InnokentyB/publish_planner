@@ -129,6 +129,11 @@ export const contentDictionaryApi = {
     validatePost: (postId: number, text: string) => api.post(`/api/posts/${postId}/validate-dictionary`, { text })
 };
 
+export const atomaContextApi = {
+    get: () => api.get('/api/settings/atoma-context'),
+    save: (data: { description: string; payloadText: string }) => api.put('/api/settings/atoma-context', data)
+};
+
 export const modelsApi = {
     fetch: (params: { provider?: string; keyId?: string; key?: string }) => {
         const query = new URLSearchParams(params as any).toString();

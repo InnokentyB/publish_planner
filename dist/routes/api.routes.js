@@ -57,6 +57,9 @@ function safeJsonParse(value) {
         return null;
     }
 }
+function formatJson(value) {
+    return JSON.stringify(value, null, 2);
+}
 async function loadPublicationProjectContext(projectId) {
     const settings = await prisma.projectSettings.findMany({
         where: {
@@ -1328,6 +1331,105 @@ async function apiRoutes(fastify) {
         catch (error) {
             return reply.code(400).send({ error: error.message || 'Invalid dictionary YAML' });
         }
+    });
+    fastify.get('/api/settings/atoma-context', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const settings = await prisma.projectSettings.findMany({
+            where: {
+                project_id: projectId,
+                key: { in: ['atoma_files_description', 'atoma_files_payload'] }
+            }
+        });
+        const descriptionSetting = settings.find((setting) => setting.key === 'atoma_files_description') || null;
+        const payloadSetting = settings.find((setting) => setting.key === 'atoma_files_payload') || null;
+        const parsedPayload = safeJsonParse(payloadSetting?.value || null);
+        const updatedAt = [descriptionSetting?.updated_at, payloadSetting?.updated_at]
+            .filter(Boolean)
+            .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || null;
+        return {
+            description: descriptionSetting?.value || '',
+            payload: parsedPayload,
+            payload_text: payloadSetting?.value
+                ? (parsedPayload !== null ? formatJson(parsedPayload) : payloadSetting.value)
+                : '',
+            updated_at: updatedAt
+        };
+    });
+    fastify.put('/api/settings/atoma-context', async (request, reply) => {
+        const projectId = request.projectId;
+        if (!projectId)
+            return reply.code(400).send({ error: 'Project ID required' });
+        const { description, payloadText } = request.body;
+        if (typeof description !== 'string' || typeof payloadText !== 'string') {
+            return reply.code(400).send({ error: 'description and payloadText are required' });
+        }
+        const normalizedDescription = description.trim();
+        const normalizedPayloadText = payloadText.trim();
+        let normalizedPayloadValue = '';
+        let parsedPayload = null;
+        if (normalizedPayloadText) {
+            try {
+                parsedPayload = JSON.parse(normalizedPayloadText);
+                normalizedPayloadValue = formatJson(parsedPayload);
+            }
+            catch (error) {
+                return reply.code(400).send({ error: error.message || 'Invalid ATOMA payload JSON' });
+            }
+        }
+        await prisma.$transaction(async (tx) => {
+            if (normalizedDescription) {
+                await tx.projectSettings.upsert({
+                    where: { project_id_key: { project_id: projectId, key: 'atoma_files_description' } },
+                    update: { value: normalizedDescription },
+                    create: {
+                        project_id: projectId,
+                        key: 'atoma_files_description',
+                        value: normalizedDescription
+                    }
+                });
+            }
+            else {
+                await tx.projectSettings.deleteMany({
+                    where: { project_id: projectId, key: 'atoma_files_description' }
+                });
+            }
+            if (normalizedPayloadValue) {
+                await tx.projectSettings.upsert({
+                    where: { project_id_key: { project_id: projectId, key: 'atoma_files_payload' } },
+                    update: { value: normalizedPayloadValue },
+                    create: {
+                        project_id: projectId,
+                        key: 'atoma_files_payload',
+                        value: normalizedPayloadValue
+                    }
+                });
+            }
+            else {
+                await tx.projectSettings.deleteMany({
+                    where: { project_id: projectId, key: 'atoma_files_payload' }
+                });
+            }
+        });
+        const refreshed = await prisma.projectSettings.findMany({
+            where: {
+                project_id: projectId,
+                key: { in: ['atoma_files_description', 'atoma_files_payload'] }
+            }
+        });
+        const savedDescription = refreshed.find((setting) => setting.key === 'atoma_files_description')?.value || '';
+        const savedPayloadValue = refreshed.find((setting) => setting.key === 'atoma_files_payload')?.value || '';
+        const savedPayload = safeJsonParse(savedPayloadValue);
+        const updatedAt = refreshed
+            .map((setting) => setting.updated_at)
+            .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || null;
+        return {
+            description: savedDescription,
+            payload: savedPayload,
+            payload_text: savedPayloadValue ? (savedPayload !== null ? formatJson(savedPayload) : savedPayloadValue) : '',
+            updated_at: updatedAt
+        };
     });
     fastify.get('/api/settings/skill-connections', async (request, reply) => {
         const projectId = request.projectId;

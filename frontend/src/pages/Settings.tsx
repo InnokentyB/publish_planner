@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
-import { api, presetsApi, keysApi, modelsApi, projectsApi, skillConnectionsApi, contentDictionaryApi } from '../api'
+import { api, presetsApi, keysApi, modelsApi, projectsApi, skillConnectionsApi, contentDictionaryApi, atomaContextApi } from '../api'
 import { useAuth } from '../context/AuthContext'
 
 interface AgentConfig {
@@ -46,6 +46,13 @@ interface SocialChannel {
     name: string;
     config: any;
     is_active: boolean;
+}
+
+interface AtomaContextResponse {
+    description: string
+    payload: any
+    payload_text: string
+    updated_at: string | null
 }
 
 const AGENT_ROLES = [
@@ -243,10 +250,20 @@ function AgentSettingsRow({
     )
 }
 
+type SettingsTab = 'general' | 'keys' | 'dictionary' | 'skills' | 'channels' | 'team' | 'agents' | 'presets' | 'history'
+
+const SETTINGS_TABS: SettingsTab[] = ['general', 'keys', 'dictionary', 'skills', 'channels', 'team', 'agents', 'presets', 'history']
+
 export default function Settings() {
     const queryClient = useQueryClient()
     const { currentProject } = useAuth()
-    const [activeTab, setActiveTab] = useState<'general' | 'keys' | 'dictionary' | 'skills' | 'channels' | 'team' | 'agents' | 'presets' | 'history'>('general')
+    const queryParams = new URLSearchParams(window.location.search)
+    const linkedinError = queryParams.get('error')
+    const requestedTab = queryParams.get('tab')
+    const initialTab: SettingsTab = requestedTab && SETTINGS_TABS.includes(requestedTab as SettingsTab)
+        ? (requestedTab as SettingsTab)
+        : 'general'
+    const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
 
     // Project State
     const [projectName, setProjectName] = useState('')
@@ -265,6 +282,8 @@ export default function Settings() {
     const [newKeyName, setNewKeyName] = useState('')
     const [newKeyValue, setNewKeyValue] = useState('')
     const [dictionaryYaml, setDictionaryYaml] = useState('')
+    const [atomaDescription, setAtomaDescription] = useState('')
+    const [atomaPayloadText, setAtomaPayloadText] = useState('')
 
     const [skillConnectionName, setSkillConnectionName] = useState('')
     const [skillConnectionProvider, setSkillConnectionProvider] = useState('Anthropic')
@@ -316,6 +335,12 @@ export default function Settings() {
     const { data: contentDictionary } = useQuery<{ yaml: string; parsed: any; updated_at: string | null }>({
         queryKey: ['content-dictionary', currentProject?.id],
         queryFn: () => contentDictionaryApi.get(),
+        enabled: !!currentProject && activeTab === 'dictionary'
+    })
+
+    const { data: atomaContext } = useQuery<AtomaContextResponse>({
+        queryKey: ['atoma-context', currentProject?.id],
+        queryFn: () => atomaContextApi.get(),
         enabled: !!currentProject && activeTab === 'dictionary'
     })
 
@@ -395,6 +420,17 @@ export default function Settings() {
         onError: (err: any) => alert(err.message || 'Failed to save content dictionary')
     })
 
+    const saveAtomaContext = useMutation({
+        mutationFn: (data: { description: string; payloadText: string }) => atomaContextApi.save(data),
+        onSuccess: (result: AtomaContextResponse) => {
+            setAtomaDescription(result.description || '')
+            setAtomaPayloadText(result.payload_text || '')
+            queryClient.invalidateQueries({ queryKey: ['atoma-context'] })
+            alert('ATOMA context saved')
+        },
+        onError: (err: any) => alert(err.message || 'Failed to save ATOMA context')
+    })
+
     const updateAgent = useMutation({
         mutationFn: (data: { role: string; prompt: string; apiKey: string; model: string }) =>
             api.put(`/api/settings/agents/${data.role}`, data),
@@ -462,6 +498,13 @@ export default function Settings() {
             setDictionaryYaml(contentDictionary.yaml || '')
         }
     }, [contentDictionary, activeTab])
+
+    useEffect(() => {
+        if (atomaContext && activeTab === 'dictionary') {
+            setAtomaDescription(atomaContext.description || '')
+            setAtomaPayloadText(atomaContext.payload_text || '')
+        }
+    }, [atomaContext, activeTab])
 
 
 
@@ -883,44 +926,108 @@ export default function Settings() {
 
             {activeTab === 'dictionary' && (
                 <div className="card">
-                    <h2>Content Dictionary</h2>
-                    <p className="text-muted mb-2">Upload or edit a YAML dictionary for project terminology, forbidden variants and style rules. This dictionary is used to validate content consistency.</p>
+                    <h2>Content Dictionary & ATOMA Context</h2>
+                    <p className="text-muted mb-2">Manage both terminology rules and atomized source context used by the critic, editor and publication workflow.</p>
 
-                    <div className="mb-2">
-                        <label>Dictionary YAML</label>
-                        <textarea
-                            value={dictionaryYaml}
-                            onChange={e => setDictionaryYaml(e.target.value)}
-                            rows={22}
-                            spellCheck={false}
-                            style={{ fontFamily: 'monospace' }}
-                            placeholder={'terms:\n  - canonical: "system analysis"'}
-                        />
+                    <div className="mb-4 p-2" style={{ background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
+                        <strong>What is ATOMA context?</strong>
+                        <div className="text-muted" style={{ fontSize: '0.9rem', marginTop: '0.5rem', lineHeight: 1.5 }}>
+                            This is structured source context for the editor and critic. The description explains in plain language how to use the atomized materials, while the payload stores the machine-readable JSON with source fragments, mappings and editorial rules.
+                        </div>
                     </div>
 
-                    <div className="flex" style={{ gap: '0.5rem', marginBottom: '1rem' }}>
-                        <button className="btn-primary" onClick={() => saveContentDictionary.mutate(dictionaryYaml)} disabled={!dictionaryYaml.trim() || saveContentDictionary.isPending}>
-                            {saveContentDictionary.isPending ? 'Saving...' : 'Save Dictionary'}
-                        </button>
-                        {contentDictionary?.updated_at && (
-                            <span className="text-muted" style={{ alignSelf: 'center', fontSize: '0.85rem' }}>
-                                Updated: {new Date(contentDictionary.updated_at).toLocaleString()}
-                            </span>
-                        )}
-                    </div>
+                    <div className="grid-2" style={{ gap: '1.5rem', alignItems: 'start' }}>
+                        <div>
+                            <p className="text-muted mb-2">Upload or edit a YAML dictionary for project terminology, forbidden variants and style rules. This dictionary is used to validate content consistency.</p>
 
-                    {contentDictionary?.parsed && (
-                        <div className="p-2" style={{ background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
-                            <strong>Quick Summary</strong>
-                            <div className="text-muted" style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
-                                Terms: {contentDictionary.parsed.terms?.length || 0}
-                                {' • '}
-                                Required phrases: {contentDictionary.parsed.style_rules?.required_phrases?.length || 0}
-                                {' • '}
-                                Forbidden phrases: {contentDictionary.parsed.style_rules?.forbidden_phrases?.length || 0}
+                            <div className="mb-2">
+                                <label>Dictionary YAML</label>
+                                <textarea
+                                    value={dictionaryYaml}
+                                    onChange={e => setDictionaryYaml(e.target.value)}
+                                    rows={22}
+                                    spellCheck={false}
+                                    style={{ fontFamily: 'monospace' }}
+                                    placeholder={'terms:\n  - canonical: "system analysis"'}
+                                />
+                            </div>
+
+                            <div className="flex" style={{ gap: '0.5rem', marginBottom: '1rem' }}>
+                                <button className="btn-primary" onClick={() => saveContentDictionary.mutate(dictionaryYaml)} disabled={!dictionaryYaml.trim() || saveContentDictionary.isPending}>
+                                    {saveContentDictionary.isPending ? 'Saving...' : 'Save Dictionary'}
+                                </button>
+                                {contentDictionary?.updated_at && (
+                                    <span className="text-muted" style={{ alignSelf: 'center', fontSize: '0.85rem' }}>
+                                        Updated: {new Date(contentDictionary.updated_at).toLocaleString()}
+                                    </span>
+                                )}
+                            </div>
+
+                            {contentDictionary?.parsed && (
+                                <div className="p-2" style={{ background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
+                                    <strong>Quick Summary</strong>
+                                    <div className="text-muted" style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
+                                        Terms: {contentDictionary.parsed.terms?.length || 0}
+                                        {' • '}
+                                        Required phrases: {contentDictionary.parsed.style_rules?.required_phrases?.length || 0}
+                                        {' • '}
+                                        Forbidden phrases: {contentDictionary.parsed.style_rules?.forbidden_phrases?.length || 0}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div>
+                            <p className="text-muted mb-2">Edit the human explanation and the raw JSON payload that describe atomized source files, mappings and rules for the publication pipeline.</p>
+
+                            <div className="mb-2">
+                                <label>ATOMA Description</label>
+                                <textarea
+                                    value={atomaDescription}
+                                    onChange={e => setAtomaDescription(e.target.value)}
+                                    rows={8}
+                                    spellCheck={false}
+                                    placeholder="Explain in plain language what these source files contain and how the editor/critic should use them."
+                                />
+                            </div>
+
+                            <div className="mb-2">
+                                <label>ATOMA Payload JSON</label>
+                                <textarea
+                                    value={atomaPayloadText}
+                                    onChange={e => setAtomaPayloadText(e.target.value)}
+                                    rows={14}
+                                    spellCheck={false}
+                                    style={{ fontFamily: 'monospace' }}
+                                    placeholder={'{\n  "source_map": [],\n  "editorial_rules": []\n}'}
+                                />
+                            </div>
+
+                            <div className="flex" style={{ gap: '0.5rem', marginBottom: '1rem' }}>
+                                <button
+                                    className="btn-primary"
+                                    onClick={() => saveAtomaContext.mutate({ description: atomaDescription, payloadText: atomaPayloadText })}
+                                    disabled={saveAtomaContext.isPending}
+                                >
+                                    {saveAtomaContext.isPending ? 'Saving...' : 'Save ATOMA Context'}
+                                </button>
+                                {atomaContext?.updated_at && (
+                                    <span className="text-muted" style={{ alignSelf: 'center', fontSize: '0.85rem' }}>
+                                        Updated: {new Date(atomaContext.updated_at).toLocaleString()}
+                                    </span>
+                                )}
+                            </div>
+
+                            <div className="p-2" style={{ background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
+                                <strong>Quick Summary</strong>
+                                <div className="text-muted" style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
+                                    Description: {atomaContext?.description?.trim() ? 'configured' : 'empty'}
+                                    {' • '}
+                                    Payload: {atomaContext?.payload ? 'configured' : 'empty'}
+                                </div>
                             </div>
                         </div>
-                    )}
+                    </div>
                 </div>
             )}
 
@@ -1182,5 +1289,3 @@ export default function Settings() {
         </div>
     )
 }
-    const queryParams = new URLSearchParams(window.location.search)
-    const linkedinError = queryParams.get('error')
